@@ -187,7 +187,7 @@ export const ScrapeModal: React.FC<ScrapeModalProps> = ({
                     }`}
                   >
                     <div className="w-12 shrink-0">
-                      <PosterImage filePath={r.posterUrl} alt={r.title} />
+                      <PosterImage filePath={r.posterUrl} alt={r.title} compact />
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">

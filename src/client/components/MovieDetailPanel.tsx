@@ -285,7 +285,7 @@ export const MovieDetailPanel: React.FC<{
           <div className="flex items-center gap-3.5 min-w-0 flex-1">
             {tab !== 'metadata' && (
               <div className="w-12 shrink-0 shadow-lg">
-                <PosterImage filePath={movie.artwork.poster} alt={movie.title} cacheKey={artCacheKey} />
+                <PosterImage filePath={movie.artwork.poster} alt={movie.title} cacheKey={artCacheKey} compact />
               </div>
             )}
             {clearlogoUrl && (

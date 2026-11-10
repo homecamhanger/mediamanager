@@ -8,6 +8,7 @@ interface PosterImageProps {
   className?: string;
   aspect?: 'poster' | 'fanart' | 'banner' | 'square' | 'logo';
   cacheKey?: string | number;
+  compact?: boolean;
 }
 
 export const PosterImage: React.FC<PosterImageProps> = ({
@@ -16,6 +17,7 @@ export const PosterImage: React.FC<PosterImageProps> = ({
   className = '',
   aspect = 'poster',
   cacheKey,
+  compact = false,
 }) => {
   const [failed, setFailed] = useState(false);
   const url = getArtworkUrl(filePath, cacheKey);
@@ -36,9 +38,20 @@ export const PosterImage: React.FC<PosterImageProps> = ({
             : 'aspect-[800/310]';
 
   if (!url || failed) {
+    if (compact) {
+      return (
+        <div
+          aria-label={alt}
+          className={`w-full ${aspectClass} bg-slate-900/90 border border-slate-800 rounded-lg flex items-center justify-center text-slate-600 overflow-hidden ${className}`}
+        >
+          {filePath ? <ImageOff className="w-3.5 h-3.5 opacity-60" /> : <Film className="w-3.5 h-3.5 opacity-50" />}
+        </div>
+      );
+    }
+
     return (
       <div
-        className={`${aspectClass} bg-slate-900/90 border border-slate-800 rounded-lg flex flex-col items-center justify-center text-slate-600 p-3 text-center ${className}`}
+        className={`w-full ${aspectClass} bg-slate-900/90 border border-slate-800 rounded-lg flex flex-col items-center justify-center text-slate-600 p-3 text-center overflow-hidden ${className}`}
       >
         {filePath ? <ImageOff className="w-6 h-6 mb-1.5 opacity-60" /> : <Film className="w-6 h-6 mb-1.5 opacity-50" />}
         <span className="text-[11px] leading-tight line-clamp-2 text-slate-500">{alt}</span>
@@ -51,7 +64,7 @@ export const PosterImage: React.FC<PosterImageProps> = ({
       src={url}
       alt={alt}
       onError={() => setFailed(true)}
-      className={`${aspectClass} ${aspect === 'logo' ? 'object-contain' : 'object-cover'} rounded-lg bg-slate-900 ${className}`}
+      className={`block w-full ${aspectClass} ${aspect === 'logo' ? 'object-contain' : 'object-cover'} rounded-lg bg-slate-900 ${className}`}
       loading="lazy"
     />
   );

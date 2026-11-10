@@ -544,8 +544,8 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                     {isChecked ? <CheckSquare className="w-3.5 h-3.5 text-sky-400" /> : <Square className="w-3.5 h-3.5" />}
                   </button>
 
-                  <div className="w-6 shrink-0">
-                    <PosterImage filePath={m.artwork.poster} alt={m.title} className="rounded" />
+                  <div className="w-6 h-9 shrink-0 overflow-hidden rounded">
+                    <PosterImage filePath={m.artwork.poster} alt={m.title} compact className="rounded" />
                   </div>
 
                   <div className="min-w-0 flex-1">
@@ -646,8 +646,8 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                       {isShowExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                     </button>
 
-                    <div className="w-6 shrink-0">
-                      <PosterImage filePath={show.artwork.poster} alt={show.title} className="rounded" />
+                    <div className="w-6 h-9 shrink-0 overflow-hidden rounded">
+                      <PosterImage filePath={show.artwork.poster} alt={show.title} compact className="rounded" />
                     </div>
 
                     <div className="min-w-0 flex-1">

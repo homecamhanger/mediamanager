@@ -277,7 +277,12 @@ export const EpisodeDetailPanel: React.FC<{
             <div className="flex items-center gap-3.5 min-w-0 flex-1">
               {tab !== 'metadata' && (
                 <div className="w-24 shrink-0">
-                  <PosterImage filePath={episode.thumbPath ?? show.artwork.fanart} alt={episode.title} aspect="fanart" />
+                  <PosterImage
+                    filePath={episode.thumbPath ?? show.artwork.fanart}
+                    alt={episode.title}
+                    aspect="fanart"
+                    compact
+                  />
                 </div>
               )}
               {clearlogoUrl && (

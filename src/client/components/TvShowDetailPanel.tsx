@@ -449,6 +449,7 @@ export const TvShowDetailPanel: React.FC<{
                   filePath={activeSeasonRecord?.posterPath ?? show.artwork.poster}
                   alt={show.title}
                   cacheKey={artCacheKey}
+                  compact
                 />
               </div>
             )}
