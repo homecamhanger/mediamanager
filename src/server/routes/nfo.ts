@@ -203,7 +203,38 @@ export function createNfoRouter(db: MediaDatabase): Router {
       const base = path.basename(ep.filePath, path.extname(ep.filePath));
       const nfoPath = ep.nfoPath ?? path.join(ep.folderPath, `${base}.nfo`);
       fs.writeFileSync(nfoPath, xml, 'utf-8');
-      const parsed = parseEpisodeNfoXml(xml)[0];
+      const parsedBlocks = parseEpisodeNfoXml(xml);
+      const parsed = parsedBlocks[0];
+      const primarySeason = parsed?.seasonNumber ?? ep.seasonNumber;
+      const primaryEp = parsed?.episodeNumber ?? ep.episodeNumber;
+      const multiEpisodeParts = parsedBlocks.slice(1).map((sub, idx) => ({
+        seasonNumber: sub.seasonNumber ?? primarySeason,
+        episodeNumber: sub.episodeNumber ?? primaryEp + idx + 1,
+        displaySeason: sub.displaySeason ?? null,
+        displayEpisode: sub.displayEpisode ?? null,
+        title: sub.title || `Episode ${sub.episodeNumber ?? primaryEp + idx + 1}`,
+        aired: sub.aired ?? null,
+        plot: sub.plot || '',
+        runtimeMinutes: sub.runtimeMinutes ?? ep.runtimeMinutes,
+        directors: sub.directors ?? [],
+        writers: sub.writers ?? [],
+        actors: sub.actors ?? [],
+        uniqueIds: sub.uniqueIds ?? {},
+        ratings: sub.ratings ?? [],
+        userRating: sub.userRating ?? null,
+        playCount: sub.playCount ?? 0,
+        watched: sub.watched ?? false,
+        lastPlayed: sub.lastPlayed ?? null,
+      }));
+      const sameSeasonMax = multiEpisodeParts
+        .filter((p) => p.seasonNumber === primarySeason)
+        .reduce((max, p) => Math.max(max, p.episodeNumber), primaryEp);
+      const nextMultiEnd =
+        sameSeasonMax > primaryEp
+          ? sameSeasonMax
+          : ep.multiEpisodeEnd && ep.multiEpisodeEnd > primaryEp && parsedBlocks.length > 1
+            ? ep.multiEpisodeEnd
+            : null;
       const updated = db.updateTvEpisode(mediaId, {
         nfoPath,
         hasNfo: true,
@@ -212,20 +243,24 @@ export function createNfoRouter(db: MediaDatabase): Router {
         ...(parsed
           ? {
               title: parsed.title ?? ep.title,
-              seasonNumber: parsed.seasonNumber ?? ep.seasonNumber,
-              episodeNumber: parsed.episodeNumber ?? ep.episodeNumber,
+              seasonNumber: primarySeason,
+              episodeNumber: primaryEp,
               displaySeason: parsed.displaySeason ?? null,
               displayEpisode: parsed.displayEpisode ?? null,
+              multiEpisodeEnd: nextMultiEnd,
+              multiEpisodeParts,
               plot: parsed.plot ?? ep.plot,
               aired: parsed.aired ?? ep.aired,
               runtimeMinutes: parsed.runtimeMinutes ?? ep.runtimeMinutes,
               directors: parsed.directors ?? ep.directors,
               writers: parsed.writers ?? ep.writers,
+              actors: parsed.actors?.length ? parsed.actors : ep.actors,
               ratings: parsed.ratings?.length ? parsed.ratings : ep.ratings,
               uniqueIds: parsed.uniqueIds ?? ep.uniqueIds,
               userRating: parsed.userRating ?? ep.userRating,
               playCount: parsed.playCount ?? ep.playCount,
               watched: parsed.watched ?? ep.watched,
+              lastPlayed: parsed.lastPlayed ?? ep.lastPlayed,
             }
           : {}),
       });

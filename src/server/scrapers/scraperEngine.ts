@@ -4,14 +4,19 @@ import type {
   AppPreferences,
   ArtworkCandidate,
   ArtworkKind,
+  EpisodeScrapePreview,
   MovieRecord,
   RatingEntry,
+  ScrapedEpisodePart,
   ScrapedMetadataBundle,
   ScraperFieldMapping,
   ScraperProviderConfig,
   ScraperProviderId,
   ScraperSearchResult,
+  TvEpisodeRecord,
+  TvEpisodeSubEntry,
   TvShowRecord,
+  UniqueIds,
 } from '../../shared/types.js';
 import {
   DEFAULT_FIELD_MAPPING,
@@ -27,7 +32,7 @@ import {
   findCatalogMovies,
   findCatalogShows,
 } from './catalogData.js';
-import { fetchTmdbDetailsLive, searchTmdbLive } from './providers/tmdb.js';
+import { fetchTmdbDetailsLive, fetchTmdbEpisodeLive, searchTmdbLive } from './providers/tmdb.js';
 import { fetchOmdbDetailsLive, fetchOmdbEnrichmentLive, searchOmdbLive } from './providers/omdb.js';
 import {
   fetchFanartLive,
@@ -36,6 +41,7 @@ import {
   fetchTraktRatingsLive,
   fetchTvdbDetailsLive,
   fetchTvmazeDetailsLive,
+  fetchTvmazeEpisodeLive,
   fetchWikidataDetailsLive,
   searchItunesLive,
   searchJikanLive,
@@ -709,6 +715,50 @@ export class ScraperEngine {
         rating: match?.ratings?.[0]?.value ?? null,
       });
 
+      const existingParts = ep.multiEpisodeParts ?? [];
+      const multiEpisodeParts: TvEpisodeSubEntry[] = [...existingParts];
+      if (ep.multiEpisodeEnd != null && ep.multiEpisodeEnd > ep.episodeNumber) {
+        const existingByKey = new Map(
+          existingParts.map((p) => [`${p.seasonNumber}:${p.episodeNumber}`, p])
+        );
+        const rebuilt: TvEpisodeSubEntry[] = [];
+        for (let num = ep.episodeNumber + 1; num <= ep.multiEpisodeEnd; num++) {
+          const prev = existingByKey.get(`${ep.seasonNumber}:${num}`);
+          const subMatch = bundle.episodes?.find(
+            (bep) => bep.seasonNumber === ep.seasonNumber && bep.episodeNumber === num
+          );
+          rebuilt.push({
+            seasonNumber: ep.seasonNumber,
+            episodeNumber: num,
+            displaySeason: prev?.displaySeason ?? null,
+            displayEpisode: prev?.displayEpisode ?? null,
+            title: subMatch?.title ?? prev?.title ?? `Episode ${num}`,
+            aired: subMatch?.aired ?? prev?.aired ?? null,
+            plot: subMatch?.plot ?? prev?.plot ?? '',
+            runtimeMinutes: subMatch?.runtimeMinutes ?? prev?.runtimeMinutes ?? ep.runtimeMinutes,
+            directors: subMatch?.directors?.length ? subMatch.directors : prev?.directors ?? [],
+            writers: subMatch?.writers?.length ? subMatch.writers : prev?.writers ?? [],
+            actors: subMatch?.actors?.length ? subMatch.actors : prev?.actors ?? [],
+            uniqueIds: subMatch?.uniqueIds ? { ...(prev?.uniqueIds ?? {}), ...subMatch.uniqueIds } : prev?.uniqueIds ?? {},
+            ratings: subMatch?.ratings?.length ? subMatch.ratings : prev?.ratings ?? [],
+            userRating: prev?.userRating ?? null,
+            playCount: prev?.playCount ?? 0,
+            watched: prev?.watched ?? false,
+            lastPlayed: prev?.lastPlayed ?? null,
+          });
+        }
+        for (const prev of existingParts) {
+          if (
+            prev.seasonNumber !== ep.seasonNumber ||
+            prev.episodeNumber <= ep.episodeNumber ||
+            prev.episodeNumber > ep.multiEpisodeEnd
+          ) {
+            rebuilt.push(prev);
+          }
+        }
+        multiEpisodeParts.splice(0, multiEpisodeParts.length, ...rebuilt);
+      }
+
       const updatedEp = this.db.updateTvEpisode(ep.id, {
         scraped: true,
         showTitle: bundle.title,
@@ -718,8 +768,10 @@ export class ScraperEngine {
         runtimeMinutes: match?.runtimeMinutes ?? ep.runtimeMinutes,
         directors: match?.directors ?? ep.directors,
         writers: match?.writers ?? ep.writers,
+        actors: match?.actors?.length ? match.actors : ep.actors,
         ratings: match?.ratings?.length ? match.ratings : ep.ratings,
         uniqueIds: match?.uniqueIds ?? ep.uniqueIds,
+        multiEpisodeParts,
         thumbPath,
       });
 
@@ -817,6 +869,395 @@ export class ScraperEngine {
     if (!bundle) return { show, matched: false };
     const updated = await this.applyToTvShow(showId, bundle);
     return { show: updated, matched: true };
+  }
+
+  private async resolveShowBundleForEpisode(
+    show: TvShowRecord,
+    opts?: { provider?: ScraperProviderId; externalId?: string }
+  ): Promise<{
+    showIds: UniqueIds;
+    showTitle: string;
+    genres: string[];
+    bundle: ScrapedMetadataBundle | null;
+    matchedProvider: ScraperProviderId;
+  }> {
+    const providers = this.getProviders();
+    const byId = new Map(providers.map((p) => [p.id, p]));
+    const mapping = this.getFieldMapping();
+
+    let bundle: ScrapedMetadataBundle | null = null;
+    let matchedProvider: ScraperProviderId | null = null;
+
+    if (opts?.externalId && opts?.provider) {
+      bundle = await this.fetchBundle({
+        externalId: opts.externalId,
+        provider: opts.provider,
+        mediaKind: 'tvshow',
+      });
+      if (bundle) matchedProvider = opts.provider;
+    }
+
+    if (!bundle) {
+      // Check built-in catalog first by uniqueIds or title if demo fallback / kodi-catalog enabled
+      const demoFallbackActive =
+        byId.get('kodi-catalog')?.enabled || providers.some((p) => p.enabled && p.useDemoFallback);
+      if (demoFallbackActive) {
+        for (const [key, item] of Object.entries(CATALOG_SHOWS)) {
+          const sameId =
+            (show.uniqueIds.tmdb && item.uniqueIds.tmdb === show.uniqueIds.tmdb) ||
+            (show.uniqueIds.tvdb && item.uniqueIds.tvdb === show.uniqueIds.tvdb) ||
+            (show.uniqueIds.imdb && item.uniqueIds.imdb === show.uniqueIds.imdb);
+          if (sameId || isConfidentMatch(show.title, show.year, item.title, item.year, item.originalTitle)) {
+            bundle = this.buildCatalogBundle(key, 'tvshow', byId, mapping);
+            if (bundle) {
+              matchedProvider = 'kodi-catalog';
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    if (!bundle && show.uniqueIds.tmdb && byId.get('tmdb')?.enabled && byId.get('tmdb')?.apiKey) {
+      bundle = await this.fetchBundle({ externalId: show.uniqueIds.tmdb, provider: 'tmdb', mediaKind: 'tvshow' });
+      if (bundle) matchedProvider = 'tmdb';
+    }
+    if (!bundle && show.uniqueIds.tvmaze && byId.get('tvmaze')?.enabled) {
+      bundle = await this.fetchBundle({ externalId: show.uniqueIds.tvmaze, provider: 'tvmaze', mediaKind: 'tvshow' });
+      if (bundle) matchedProvider = 'tvmaze';
+    }
+    if (!bundle && show.uniqueIds.tvdb && byId.get('tvdb')?.enabled && byId.get('tvdb')?.apiKey) {
+      bundle = await this.fetchBundle({ externalId: show.uniqueIds.tvdb, provider: 'tvdb', mediaKind: 'tvshow' });
+      if (bundle) matchedProvider = 'tvdb';
+    }
+    if (!bundle) {
+      const results = await this.search({ query: show.title, mediaKind: 'tvshow', year: show.year });
+      if (results.length > 0) {
+        const best = results[0];
+        bundle = await this.fetchBundle({
+          externalId: best.externalId,
+          provider: best.provider,
+          mediaKind: 'tvshow',
+        });
+        if (bundle) matchedProvider = best.provider;
+      }
+    }
+
+    const showIds: UniqueIds = { ...show.uniqueIds, ...(bundle?.uniqueIds ?? {}) };
+    return {
+      showIds,
+      showTitle: bundle?.title ?? show.title,
+      genres: bundle?.genres ?? show.genres,
+      bundle,
+      matchedProvider: matchedProvider || bundle?.sourcesUsed[0] || 'kodi-catalog',
+    };
+  }
+
+  async scrapeEpisodePreview(
+    episodeId: number,
+    opts?: {
+      provider?: ScraperProviderId;
+      externalId?: string;
+      seasonNumber?: number;
+      episodeNumber?: number;
+      multiEpisodeEnd?: number | null;
+    }
+  ): Promise<EpisodeScrapePreview | null> {
+    const ep = this.db.getTvEpisode(episodeId);
+    if (!ep) return null;
+    const show = this.db.getTvShow(ep.showId);
+    if (!show) return null;
+
+    const targetSeason = opts?.seasonNumber ?? ep.seasonNumber;
+    const targetEpisode = opts?.episodeNumber ?? ep.episodeNumber;
+    const targetMultiEnd =
+      opts?.multiEpisodeEnd !== undefined
+        ? opts.multiEpisodeEnd != null && opts.multiEpisodeEnd > targetEpisode
+          ? opts.multiEpisodeEnd
+          : null
+        : ep.multiEpisodeEnd != null && ep.multiEpisodeEnd > targetEpisode
+          ? ep.multiEpisodeEnd
+          : null;
+
+    const { showIds, showTitle, bundle, matchedProvider } = await this.resolveShowBundleForEpisode(show, opts);
+    const providers = this.getProviders();
+    const byId = new Map(providers.map((p) => [p.id, p]));
+    const tmdbCfg = byId.get('tmdb');
+    const tvmazeCfg = byId.get('tvmaze');
+
+    const epNums: number[] = [];
+    const endNum = targetMultiEnd && targetMultiEnd > targetEpisode ? targetMultiEnd : targetEpisode;
+    for (let n = targetEpisode; n <= endNum; n++) {
+      epNums.push(n);
+    }
+
+    const parts: ScrapedEpisodePart[] = [];
+    const sourcesUsedSet = new Set<ScraperProviderId>(bundle?.sourcesUsed ?? []);
+    let sawLive = bundle?.dataOrigin === 'live-api' || bundle?.dataOrigin === 'hybrid';
+    let sawCatalog = bundle?.dataOrigin === 'builtin-catalog' || bundle?.dataOrigin === 'hybrid';
+
+    for (const num of epNums) {
+      const bundleEp = bundle?.episodes?.find(
+        (bep) => bep.seasonNumber === targetSeason && bep.episodeNumber === num
+      );
+
+      let tmdbEp: ScrapedEpisodePart | null = null;
+      if (tmdbCfg?.enabled && tmdbCfg.apiKey && showIds.tmdb) {
+        tmdbEp = await fetchTmdbEpisodeLive(showIds.tmdb, targetSeason, num, tmdbCfg);
+        if (tmdbEp) sawLive = true;
+      }
+
+      let tvmazeEp: ScrapedEpisodePart | null = null;
+      if (tvmazeCfg?.enabled && showIds.tvmaze && !tmdbEp) {
+        tvmazeEp = await fetchTvmazeEpisodeLive(showIds.tvmaze, targetSeason, num);
+        if (tvmazeEp) sawLive = true;
+      }
+
+      const mergedSources = new Set<ScraperProviderId>([
+        ...(bundleEp ? [matchedProvider] : []),
+        ...(tmdbEp?.sourcesUsed ?? []),
+        ...(tvmazeEp?.sourcesUsed ?? []),
+      ]);
+      for (const s of mergedSources) sourcesUsedSet.add(s);
+
+      const mergedRatings: RatingEntry[] = [];
+      for (const r of [...(tmdbEp?.ratings ?? []), ...(bundleEp?.ratings ?? []), ...(tvmazeEp?.ratings ?? [])]) {
+        if (!mergedRatings.some((x) => x.source === r.source)) mergedRatings.push(r);
+      }
+
+      const mergedUniqueIds: UniqueIds = {
+        ...(bundleEp?.uniqueIds ?? {}),
+        ...(tvmazeEp?.uniqueIds ?? {}),
+        ...(tmdbEp?.uniqueIds ?? {}),
+      };
+
+      const title =
+        tmdbEp?.title ||
+        bundleEp?.title ||
+        tvmazeEp?.title ||
+        (num === ep.episodeNumber ? ep.title : `Episode ${num}`);
+      const plot = tmdbEp?.plot || bundleEp?.plot || tvmazeEp?.plot || (num === ep.episodeNumber ? ep.plot : '');
+      const aired = tmdbEp?.aired ?? bundleEp?.aired ?? tvmazeEp?.aired ?? (num === ep.episodeNumber ? ep.aired : null);
+      const runtimeMinutes =
+        tmdbEp?.runtimeMinutes ??
+        bundleEp?.runtimeMinutes ??
+        tvmazeEp?.runtimeMinutes ??
+        ep.runtimeMinutes;
+      const directors = tmdbEp?.directors?.length
+        ? tmdbEp.directors
+        : bundleEp?.directors?.length
+          ? bundleEp.directors
+          : num === ep.episodeNumber
+            ? ep.directors
+            : [];
+      const writers = tmdbEp?.writers?.length
+        ? tmdbEp.writers
+        : bundleEp?.writers?.length
+          ? bundleEp.writers
+          : num === ep.episodeNumber
+            ? ep.writers
+            : [];
+      const actors = tmdbEp?.actors?.length
+        ? tmdbEp.actors
+        : bundleEp?.actors?.length
+          ? bundleEp.actors
+          : tvmazeEp?.actors?.length
+            ? tvmazeEp.actors
+            : [];
+      const thumbUrl = tmdbEp?.thumbUrl || bundleEp?.thumbUrl || tvmazeEp?.thumbUrl;
+
+      parts.push({
+        seasonNumber: targetSeason,
+        episodeNumber: num,
+        title,
+        aired,
+        plot,
+        runtimeMinutes,
+        directors,
+        writers,
+        actors,
+        ratings: mergedRatings,
+        uniqueIds: mergedUniqueIds,
+        thumbUrl,
+        sourcesUsed: [...mergedSources],
+      });
+    }
+
+    const matched = parts.some(
+      (p) => Boolean(p.plot) || Object.keys(p.uniqueIds).length > 0 || p.sourcesUsed.length > 0
+    );
+    const dataOrigin: EpisodeScrapePreview['dataOrigin'] =
+      sawLive && sawCatalog ? 'hybrid' : sawLive ? 'live-api' : 'builtin-catalog';
+
+    return {
+      episodeId: ep.id,
+      showId: show.id,
+      showTitle,
+      showUniqueIds: showIds,
+      seasonNumber: targetSeason,
+      episodeNumber: targetEpisode,
+      multiEpisodeEnd: targetMultiEnd,
+      matched,
+      sourcesUsed: [...sourcesUsedSet],
+      dataOrigin,
+      parts,
+    };
+  }
+
+  async applyEpisodeScrape(
+    episodeId: number,
+    payload: {
+      parts: ScrapedEpisodePart[];
+      showUniqueIds?: UniqueIds;
+      seasonNumber?: number;
+      episodeNumber?: number;
+      multiEpisodeEnd?: number | null;
+      writeNfo?: boolean;
+    }
+  ): Promise<TvEpisodeRecord | null> {
+    const ep = this.db.getTvEpisode(episodeId);
+    if (!ep) return null;
+    const show = this.db.getTvShow(ep.showId);
+    if (!show) return null;
+
+    const prefs = this.getPreferences();
+    const parts = payload.parts ?? [];
+    const primary = parts[0];
+    if (!primary) return ep;
+
+    const seasonNumber = payload.seasonNumber ?? primary.seasonNumber ?? ep.seasonNumber;
+    const episodeNumber = payload.episodeNumber ?? primary.episodeNumber ?? ep.episodeNumber;
+    const explicitEnd =
+      payload.multiEpisodeEnd !== undefined
+        ? payload.multiEpisodeEnd
+        : parts.length > 1
+          ? Math.max(...parts.map((p) => p.episodeNumber))
+          : ep.multiEpisodeEnd;
+    const multiEpisodeEnd = explicitEnd != null && explicitEnd > episodeNumber ? explicitEnd : null;
+
+    const base = path.basename(ep.filePath, path.extname(ep.filePath));
+    const thumbPath = path.join(ep.folderPath, `${base}-thumb.jpg`);
+    await saveArtworkToDisk(thumbPath, primary.thumbUrl, {
+      kind: 'thumb',
+      title: primary.title || ep.title,
+      subtitle: show.title,
+      episodeCode: `S${String(seasonNumber).padStart(2, '0')}E${String(episodeNumber).padStart(2, '0')}`,
+      genres: show.genres,
+      rating: primary.ratings?.[0]?.value ?? null,
+    });
+
+    const existingSubByKey = new Map(
+      (ep.multiEpisodeParts ?? []).map((p) => [`${p.seasonNumber}:${p.episodeNumber}`, p])
+    );
+    const multiEpisodeParts: TvEpisodeSubEntry[] = parts.slice(1).map((part) => {
+      const prev = existingSubByKey.get(`${part.seasonNumber}:${part.episodeNumber}`);
+      return {
+        seasonNumber: part.seasonNumber,
+        episodeNumber: part.episodeNumber,
+        displaySeason: prev?.displaySeason ?? null,
+        displayEpisode: prev?.displayEpisode ?? null,
+        title: part.title || `Episode ${part.episodeNumber}`,
+        aired: part.aired ?? null,
+        plot: part.plot || '',
+        runtimeMinutes: part.runtimeMinutes ?? ep.runtimeMinutes,
+        directors: part.directors ?? [],
+        writers: part.writers ?? [],
+        actors: part.actors ?? [],
+        uniqueIds: { ...(prev?.uniqueIds ?? {}), ...(part.uniqueIds ?? {}) },
+        ratings: part.ratings?.length ? part.ratings : prev?.ratings ?? [],
+        userRating: prev?.userRating ?? null,
+        playCount: prev?.playCount ?? 0,
+        watched: prev?.watched ?? false,
+        lastPlayed: prev?.lastPlayed ?? null,
+      };
+    });
+
+    const updated = this.db.updateTvEpisode(ep.id, {
+      scraped: true,
+      showTitle: show.title,
+      seasonNumber,
+      episodeNumber,
+      multiEpisodeEnd,
+      multiEpisodeParts,
+      title: primary.title || ep.title,
+      aired: primary.aired ?? ep.aired,
+      plot: primary.plot || ep.plot,
+      runtimeMinutes: primary.runtimeMinutes ?? ep.runtimeMinutes,
+      directors: primary.directors?.length ? primary.directors : ep.directors,
+      writers: primary.writers?.length ? primary.writers : ep.writers,
+      actors: primary.actors?.length ? primary.actors : ep.actors,
+      ratings: primary.ratings?.length ? primary.ratings : ep.ratings,
+      uniqueIds: { ...ep.uniqueIds, ...(primary.uniqueIds ?? {}) },
+      thumbPath,
+    });
+
+    if (payload.showUniqueIds && Object.keys(payload.showUniqueIds).length > 0) {
+      const mergedShowIds: UniqueIds = { ...show.uniqueIds };
+      let changed = false;
+      for (const [k, v] of Object.entries(payload.showUniqueIds)) {
+        if (v && !mergedShowIds[k]) {
+          mergedShowIds[k] = v;
+          changed = true;
+        }
+      }
+      if (changed) {
+        this.db.updateTvShow(show.id, { uniqueIds: mergedShowIds });
+      }
+    }
+
+    const shouldWriteNfo = payload.writeNfo ?? prefs.autoWriteNfoOnScrape;
+    if (updated && shouldWriteNfo) {
+      const epNfoPath = ep.nfoPath ?? path.join(ep.folderPath, `${base}.nfo`);
+      const xml = serializeEpisodeNfo(updated);
+      fs.writeFileSync(epNfoPath, xml, 'utf-8');
+      const report = validateKodiNfoXml(xml);
+      this.db.updateTvEpisode(updated.id, {
+        nfoPath: epNfoPath,
+        hasNfo: true,
+        nfoValid: report.valid,
+        nfoWarnings: report.warnings,
+      });
+    }
+
+    const codeLabel =
+      multiEpisodeEnd != null && multiEpisodeEnd > episodeNumber
+        ? `S${String(seasonNumber).padStart(2, '0')}E${String(episodeNumber).padStart(2, '0')}-E${String(multiEpisodeEnd).padStart(2, '0')}`
+        : `S${String(seasonNumber).padStart(2, '0')}E${String(episodeNumber).padStart(2, '0')}`;
+    this.db.logActivity(
+      'scrape',
+      'Scrape Episode',
+      `Scraped ${show.title} ${codeLabel} (${parts.length} part${parts.length === 1 ? '' : 's'})`,
+      'success'
+    );
+
+    return this.db.getTvEpisode(ep.id);
+  }
+
+  async scrapeEpisode(
+    episodeId: number,
+    opts?: {
+      provider?: ScraperProviderId;
+      externalId?: string;
+      seasonNumber?: number;
+      episodeNumber?: number;
+      multiEpisodeEnd?: number | null;
+      writeNfo?: boolean;
+    }
+  ): Promise<{ episode: TvEpisodeRecord | null; preview: EpisodeScrapePreview | null }> {
+    const preview = await this.scrapeEpisodePreview(episodeId, opts);
+    if (!preview) return { episode: null, preview: null };
+    if (!preview.matched) {
+      return { episode: this.db.getTvEpisode(episodeId), preview };
+    }
+    const episode = await this.applyEpisodeScrape(episodeId, {
+      parts: preview.parts,
+      showUniqueIds: preview.showUniqueIds,
+      seasonNumber: preview.seasonNumber,
+      episodeNumber: preview.episodeNumber,
+      multiEpisodeEnd: preview.multiEpisodeEnd,
+      writeNfo: opts?.writeNfo,
+    });
+    return { episode, preview };
   }
 
   async getArtworkCandidates(params: {
@@ -1078,6 +1519,7 @@ function mergeBundles(
         plot: (preferSecEps && m.plot) || ep.plot || m.plot,
         runtimeMinutes: ep.runtimeMinutes || m.runtimeMinutes,
         thumbUrl: (preferSecEps && m.thumbUrl) || ep.thumbUrl || m.thumbUrl,
+        actors: ep.actors?.length ? ep.actors : m.actors,
         ratings: ep.ratings.length > 0 ? ep.ratings : m.ratings,
         uniqueIds: { ...m.uniqueIds, ...ep.uniqueIds },
       };

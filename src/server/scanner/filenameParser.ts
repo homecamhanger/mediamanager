@@ -75,20 +75,50 @@ export function parseMediaFilename(filePath: string, hintKind?: 'movie' | 'tvsho
       ? groupMatch[1]
       : null;
 
-  // Detect TV episode patterns: S01E02, S01E01-E02, S01E01E02, 1x02
-  const epMultiMatch =
-    rawName.match(/\bS(\d{1,2})E(\d{1,3})(?:-?E(\d{1,3}))\b/i) ??
-    rawName.match(/\bS(\d{1,2})E(\d{1,3})\b/i) ??
-    rawName.match(/\b(\d{1,2})x(\d{1,3})\b/i);
+  // Detect TV episode patterns: S01E02, S01E01-E02, S01E01E02, S01E01-E03, S01E01-02, 1x02, 1x01-02, 1x01-1x02
+  const sxxExxChain = rawName.match(/\bS(\d{1,2})E(\d{1,3})((?:-?E\d{1,3})+)\b/i);
+  const sxxHyphenNum = !sxxExxChain ? rawName.match(/\bS(\d{1,2})E(\d{1,3})-(\d{1,2})\b/i) : null;
+  const xMultiMatch =
+    !sxxExxChain && !sxxHyphenNum
+      ? rawName.match(/\b(\d{1,2})x(\d{1,3})(?:-(?:\d{1,2}x)?(\d{1,2}))?\b/i)
+      : null;
+  const sxxSingle = !sxxExxChain && !sxxHyphenNum && !xMultiMatch ? rawName.match(/\bS(\d{1,2})E(\d{1,3})\b/i) : null;
 
-  const isEpisode = hintKind === 'tvshow' || Boolean(epMultiMatch);
+  let epMatch: RegExpMatchArray | null = null;
+  let seasonNumber = 0;
+  let episodeNumber = 0;
+  let multiEpisodeEnd: number | null = null;
 
-  if (isEpisode && epMultiMatch) {
-    const seasonNumber = Number(epMultiMatch[1]);
-    const episodeNumber = Number(epMultiMatch[2]);
-    const multiEpisodeEnd = epMultiMatch[3] ? Number(epMultiMatch[3]) : null;
-    const beforeEp = rawName.slice(0, epMultiMatch.index ?? rawName.length);
-    const afterEp = rawName.slice((epMultiMatch.index ?? 0) + epMultiMatch[0].length);
+  if (sxxExxChain) {
+    epMatch = sxxExxChain;
+    seasonNumber = Number(sxxExxChain[1]);
+    episodeNumber = Number(sxxExxChain[2]);
+    const nums = [...sxxExxChain[3].matchAll(/E(\d{1,3})/gi)].map((m) => Number(m[1]));
+    const lastNum = nums[nums.length - 1];
+    if (lastNum && lastNum > episodeNumber) multiEpisodeEnd = lastNum;
+  } else if (sxxHyphenNum && Number(sxxHyphenNum[3]) > Number(sxxHyphenNum[2]) && Number(sxxHyphenNum[3]) - Number(sxxHyphenNum[2]) <= 12) {
+    epMatch = sxxHyphenNum;
+    seasonNumber = Number(sxxHyphenNum[1]);
+    episodeNumber = Number(sxxHyphenNum[2]);
+    multiEpisodeEnd = Number(sxxHyphenNum[3]);
+  } else if (xMultiMatch) {
+    epMatch = xMultiMatch;
+    seasonNumber = Number(xMultiMatch[1]);
+    episodeNumber = Number(xMultiMatch[2]);
+    if (xMultiMatch[3] && Number(xMultiMatch[3]) > episodeNumber && Number(xMultiMatch[3]) - episodeNumber <= 12) {
+      multiEpisodeEnd = Number(xMultiMatch[3]);
+    }
+  } else if (sxxSingle) {
+    epMatch = sxxSingle;
+    seasonNumber = Number(sxxSingle[1]);
+    episodeNumber = Number(sxxSingle[2]);
+  }
+
+  const isEpisode = hintKind === 'tvshow' || Boolean(epMatch);
+
+  if (isEpisode && epMatch) {
+    const beforeEp = rawName.slice(0, epMatch.index ?? rawName.length);
+    const afterEp = rawName.slice((epMatch.index ?? 0) + epMatch[0].length);
     const { title: showPart, year } = extractTitleAndYear(beforeEp);
 
     const epTitle = cleanReleaseNoise(afterEp);

@@ -1,5 +1,6 @@
 import type {
   ArtworkCandidate,
+  ScrapedEpisodePart,
   ScrapedMetadataBundle,
   ScraperProviderConfig,
   ScraperSearchResult,
@@ -182,4 +183,77 @@ function extractTmdbCert(d: Record<string, unknown>, mediaKind: 'movie' | 'tvsho
   }
   const cr = ((d.content_ratings as { results?: Array<{ iso_3166_1: string; rating: string }> })?.results ?? []);
   return cr.find((r) => r.iso_3166_1 === 'US')?.rating ?? '';
+}
+
+export async function fetchTmdbEpisodeLive(
+  tmdbShowId: string,
+  seasonNumber: number,
+  episodeNumber: number,
+  cfg: ScraperProviderConfig
+): Promise<ScrapedEpisodePart | null> {
+  if (!cfg.apiKey || !tmdbShowId) return null;
+  const params = new URLSearchParams({
+    language: cfg.language || 'en-US',
+    append_to_response: 'credits,external_ids',
+  });
+  const headers: Record<string, string> = {};
+  if (cfg.apiKey.startsWith('eyJ')) {
+    headers.Authorization = `Bearer ${cfg.apiKey}`;
+  } else {
+    params.set('api_key', cfg.apiKey);
+  }
+
+  const d = await fetchJsonWithTimeout<Record<string, unknown>>(
+    `https://api.themoviedb.org/3/tv/${encodeURIComponent(tmdbShowId)}/season/${seasonNumber}/episode/${episodeNumber}?${params.toString()}`,
+    { headers }
+  );
+  if (!d || !d.id) return null;
+
+  const credits = (d.credits as Record<string, unknown> | undefined) ?? {};
+  const crewRaw = ((d.crew as Array<Record<string, unknown>> | undefined) ?? (credits.crew as Array<Record<string, unknown>> | undefined) ?? []);
+  const guestsRaw = (
+    (d.guest_stars as Array<Record<string, unknown>> | undefined) ??
+    (credits.guest_stars as Array<Record<string, unknown>> | undefined) ??
+    []
+  );
+  const castRaw = (credits.cast as Array<Record<string, unknown>> | undefined) ?? [];
+  const extIds = (d.external_ids as Record<string, unknown> | undefined) ?? {};
+
+  const seenActors = new Set<string>();
+  const actors = [...guestsRaw, ...castRaw]
+    .filter((a) => {
+      const name = String(a.name ?? '').trim();
+      if (!name || seenActors.has(name.toLowerCase())) return false;
+      seenActors.add(name.toLowerCase());
+      return true;
+    })
+    .slice(0, 12)
+    .map((a, idx) => ({
+      name: String(a.name),
+      role: String(a.character ?? ''),
+      order: idx,
+      thumb: a.profile_path ? `https://image.tmdb.org/t/p/w185${a.profile_path}` : undefined,
+    }));
+
+  return {
+    seasonNumber: Number(d.season_number ?? seasonNumber),
+    episodeNumber: Number(d.episode_number ?? episodeNumber),
+    title: String(d.name ?? `Episode ${episodeNumber}`),
+    aired: d.air_date ? String(d.air_date) : null,
+    plot: String(d.overview ?? ''),
+    runtimeMinutes: d.runtime ? Number(d.runtime) : null,
+    directors: [...new Set(crewRaw.filter((c) => c.job === 'Director').map((c) => String(c.name)))],
+    writers: [...new Set(crewRaw.filter((c) => c.department === 'Writing').map((c) => String(c.name)).slice(0, 4))],
+    actors,
+    ratings: d.vote_average
+      ? [{ source: 'tmdb', value: Number(Number(d.vote_average).toFixed(1)), max: 10, votes: Number(d.vote_count ?? 0) }]
+      : [],
+    uniqueIds: {
+      tmdb: String(d.id),
+      imdb: extIds.imdb_id ? String(extIds.imdb_id) : undefined,
+      tvdb: extIds.tvdb_id ? String(extIds.tvdb_id) : undefined,
+    },
+    thumbUrl: d.still_path ? `https://image.tmdb.org/t/p/original${d.still_path}` : undefined,
+    sourcesUsed: ['tmdb'],
+  };
 }

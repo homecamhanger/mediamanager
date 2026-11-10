@@ -165,6 +165,110 @@ describe('Kodi NFO parser, serializer, and validator', () => {
     expect(parsed).toHaveLength(2);
     expect(parsed[0].episodeNumber).toBe(1);
     expect(parsed[1].episodeNumber).toBe(2);
+    // Clean fallback for Part 2 should NOT clone Part 1's uniqueId or plot
+    expect(parsed[1].title).toBe('Two-Part Premiere (Part 2)');
+    expect(parsed[1].uniqueIds?.tvdb).toBeUndefined();
+    expect(parsed[1].plot).toBe('');
+  });
+
+  it('serializes distinct multiEpisodeParts and validates all sibling <episodedetails> blocks', () => {
+    const ep: TvEpisodeRecord = {
+      id: 2,
+      showId: 1,
+      seasonNumber: 1,
+      episodeNumber: 1,
+      multiEpisodeEnd: 2,
+      multiEpisodeParts: [
+        {
+          seasonNumber: 1,
+          episodeNumber: 2,
+          title: 'That Would Be Me',
+          aired: '2022-09-21',
+          plot: 'Part 2 distinct plot.',
+          runtimeMinutes: 37,
+          directors: ['Toby Haynes'],
+          writers: ['Tony Gilroy'],
+          actors: [{ name: 'Kyle Soller', role: 'Syril Karn', order: 0 }],
+          uniqueIds: { imdb: 'tt15159840' },
+          ratings: [{ source: 'imdb', value: 7.6, max: 10, votes: 9800, isDefault: true }],
+          userRating: 8,
+          playCount: 1,
+          watched: true,
+          lastPlayed: '2026-10-10 20:00:00',
+        },
+      ],
+      folderPath: '/tv/Andor/Season 01',
+      filePath: '/tv/Andor/Season 01/Andor - S01E01-E02.mp4',
+      fileName: 'Andor - S01E01-E02.mp4',
+      fileSizeBytes: 500,
+      movieHash: null,
+      nfoPath: null,
+      hasNfo: false,
+      nfoValid: false,
+      nfoWarnings: [],
+      scraped: true,
+      title: 'Kassa',
+      showTitle: 'Andor',
+      aired: '2022-09-21',
+      plot: 'Part 1 distinct plot.',
+      runtimeMinutes: 42,
+      directors: ['Toby Haynes'],
+      writers: ['Tony Gilroy'],
+      actors: [],
+      uniqueIds: { imdb: 'tt13622776' },
+      ratings: [{ source: 'imdb', value: 7.5, max: 10, votes: 10400, isDefault: true }],
+      userRating: null,
+      playCount: 0,
+      watched: false,
+      lastPlayed: null,
+      thumbPath: null,
+      streamDetails: {
+        video: [{ codec: 'HEVC', width: 1920, height: 1080, aspect: '1.78', durationSeconds: 2520 }],
+        audio: [{ codec: 'EAC3', language: 'eng', channels: 6 }],
+        subtitle: [],
+      },
+      subtitles: [],
+      parsedInfo: {
+        cleanTitle: 'Kassa',
+        year: null,
+        mediaKind: 'episode',
+        seasonNumber: 1,
+        episodeNumber: 1,
+        multiEpisodeEnd: 2,
+        resolution: '1080p',
+        source: null,
+        videoCodec: null,
+        audioCodec: null,
+        audioChannels: null,
+        hdr: null,
+        edition: null,
+        releaseGroup: null,
+      },
+    };
+
+    const xml = serializeEpisodeNfo(ep);
+    const parsed = parseEpisodeNfoXml(xml);
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0].title).toBe('Kassa');
+    expect(parsed[0].uniqueIds?.imdb).toBe('tt13622776');
+    expect(parsed[1].title).toBe('That Would Be Me');
+    expect(parsed[1].plot).toBe('Part 2 distinct plot.');
+    expect(parsed[1].uniqueIds?.imdb).toBe('tt15159840');
+    expect(parsed[1].watched).toBe(true);
+    expect(parsed[1].actors?.[0]?.name).toBe('Kyle Soller');
+
+    const rep = validateKodiNfoXml(xml);
+    expect(rep.valid).toBe(true);
+    expect(rep.warnings).toHaveLength(0);
+
+    // Multi-block validator catches duplicate season/episode keys and Part 2 warnings
+    const dupXml = `<?xml version="1.0" encoding="UTF-8"?>
+<episodedetails><title>A</title><season>1</season><episode>1</episode><uniqueid type="imdb" default="true">tt1</uniqueid></episodedetails>
+<episodedetails><title>B</title><season>1</season><episode>1</episode></episodedetails>`;
+    const dupRep = validateKodiNfoXml(dupXml);
+    expect(dupRep.valid).toBe(true);
+    expect(dupRep.warnings.some((w) => w.includes('Duplicate season/episode number'))).toBe(true);
+    expect(dupRep.warnings.some((w) => w.includes('Part 2'))).toBe(true);
   });
 
   it('flags legacy NFO warnings cleanly', () => {

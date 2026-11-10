@@ -1,4 +1,10 @@
-import type { ArtworkCandidate, ScrapedMetadataBundle, ScraperProviderConfig, ScraperSearchResult } from '../../../shared/types.js';
+import type {
+  ArtworkCandidate,
+  ScrapedEpisodePart,
+  ScrapedMetadataBundle,
+  ScraperProviderConfig,
+  ScraperSearchResult,
+} from '../../../shared/types.js';
 import { fetchJsonWithTimeout } from './httpHelper.js';
 
 export async function searchTvmazeLive(query: string): Promise<ScraperSearchResult[]> {
@@ -112,6 +118,49 @@ export async function fetchTvmazeDetailsLive(showId: string): Promise<ScrapedMet
       uniqueIds: { tvmaze: String(e.id) },
       thumbUrl: (e.image as { original?: string } | undefined)?.original,
     })),
+  };
+}
+
+export async function fetchTvmazeEpisodeLive(
+  tvmazeShowId: string,
+  seasonNumber: number,
+  episodeNumber: number
+): Promise<ScrapedEpisodePart | null> {
+  if (!tvmazeShowId) return null;
+  const e = await fetchJsonWithTimeout<Record<string, unknown>>(
+    `https://api.tvmaze.com/shows/${encodeURIComponent(tvmazeShowId)}/episodebynumber?season=${seasonNumber}&number=${episodeNumber}`
+  );
+  if (!e || !e.id) return null;
+
+  const guests = await fetchJsonWithTimeout<
+    Array<{ person?: { name?: string; image?: { medium?: string } }; character?: { name?: string } }>
+  >(`https://api.tvmaze.com/episodes/${encodeURIComponent(String(e.id))}/guestcast`);
+
+  const ratingObj = e.rating as { average?: number } | undefined;
+  return {
+    seasonNumber: Number(e.season ?? seasonNumber),
+    episodeNumber: Number(e.number ?? episodeNumber),
+    title: String(e.name ?? `Episode ${episodeNumber}`),
+    aired: e.airdate ? String(e.airdate) : null,
+    plot: String(e.summary ?? '').replace(/<[^>]+>/g, ''),
+    runtimeMinutes: e.runtime ? Number(e.runtime) : null,
+    directors: [],
+    writers: [],
+    actors: Array.isArray(guests)
+      ? guests
+          .filter((g) => g.person?.name)
+          .slice(0, 12)
+          .map((g, idx) => ({
+            name: String(g.person!.name),
+            role: String(g.character?.name ?? ''),
+            order: idx,
+            thumb: g.person?.image?.medium,
+          }))
+      : [],
+    ratings: ratingObj?.average ? [{ source: 'tvmaze', value: Number(ratingObj.average), max: 10 }] : [],
+    uniqueIds: { tvmaze: String(e.id) },
+    thumbUrl: (e.image as { original?: string } | undefined)?.original,
+    sourcesUsed: ['tvmaze'],
   };
 }
 

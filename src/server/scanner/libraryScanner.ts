@@ -602,16 +602,45 @@ export class LibraryScanner {
           epNfoWarnings = [...rep.errors, ...rep.warnings];
         }
         const epNfo = epNfoList[0];
+        const primarySeason = epNfo?.seasonNumber ?? seasonNum;
+        const primaryEp = epNfo?.episodeNumber ?? episodeNum;
+        const multiEpisodeParts = epNfoList.slice(1).map((sub, idx) => ({
+          seasonNumber: sub.seasonNumber ?? primarySeason,
+          episodeNumber: sub.episodeNumber ?? primaryEp + idx + 1,
+          displaySeason: sub.displaySeason ?? null,
+          displayEpisode: sub.displayEpisode ?? null,
+          title: sub.title || `Episode ${sub.episodeNumber ?? primaryEp + idx + 1}`,
+          aired: sub.aired ?? null,
+          plot: sub.plot || '',
+          runtimeMinutes: sub.runtimeMinutes ?? epNfo?.runtimeMinutes ?? 45,
+          directors: sub.directors ?? [],
+          writers: sub.writers ?? [],
+          actors: sub.actors ?? [],
+          uniqueIds: sub.uniqueIds ?? {},
+          ratings: sub.ratings ?? [],
+          userRating: sub.userRating ?? null,
+          playCount: sub.playCount ?? 0,
+          watched: sub.watched ?? false,
+          lastPlayed: sub.lastPlayed ?? null,
+        }));
+        const sameSeasonMaxFromNfo = multiEpisodeParts
+          .filter((p) => p.seasonNumber === primarySeason)
+          .reduce((max, p) => Math.max(max, p.episodeNumber), primaryEp);
+        const computedMultiEnd =
+          epItem.parsed.multiEpisodeEnd != null || multiEpisodeParts.length > 0
+            ? Math.max(epItem.parsed.multiEpisodeEnd ?? 0, sameSeasonMaxFromNfo) || null
+            : null;
         const thumbPath = findEpisodeThumb(epItem.epDir, epItem.base);
         const epScraped = Boolean(epNfo && (epNfo.plot || (epNfo.uniqueIds && Object.keys(epNfo.uniqueIds).length > 0)));
 
         const savedEp = this.db.upsertTvEpisode({
           showId: showRecord.id,
-          seasonNumber: epNfo?.seasonNumber ?? seasonNum,
-          episodeNumber: epNfo?.episodeNumber ?? episodeNum,
+          seasonNumber: primarySeason,
+          episodeNumber: primaryEp,
           displaySeason: epNfo?.displaySeason ?? null,
           displayEpisode: epNfo?.displayEpisode ?? null,
-          multiEpisodeEnd: epItem.parsed.multiEpisodeEnd ?? (epNfoList.length > 1 ? episodeNum + epNfoList.length - 1 : null),
+          multiEpisodeEnd: computedMultiEnd && computedMultiEnd > primaryEp ? computedMultiEnd : null,
+          multiEpisodeParts,
           folderPath: epItem.epDir,
           filePath: epItem.epPath,
           fileName: path.basename(epItem.epPath),

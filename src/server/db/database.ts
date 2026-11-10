@@ -19,6 +19,7 @@ import type {
   StreamDetails,
   SubtitleFileRecord,
   TvEpisodeRecord,
+  TvEpisodeSubEntry,
   TvSeasonRecord,
   TvShowRecord,
 } from '../../shared/types.js';
@@ -362,6 +363,7 @@ export class MediaDatabase {
         display_season INTEGER,
         display_episode INTEGER,
         multi_episode_end INTEGER,
+        multi_episode_parts_json TEXT NOT NULL DEFAULT '[]',
         folder_path TEXT NOT NULL,
         file_path TEXT NOT NULL UNIQUE,
         file_name TEXT NOT NULL,
@@ -437,6 +439,10 @@ export class MediaDatabase {
     }
     if (!tvCols.some((c) => c.name === 'artwork_candidates_json')) {
       this.db.exec("ALTER TABLE tv_shows ADD COLUMN artwork_candidates_json TEXT NOT NULL DEFAULT '{}'");
+    }
+    const epCols = this.db.prepare('PRAGMA table_info(tv_episodes)').all() as Array<{ name: string }>;
+    if (!epCols.some((c) => c.name === 'multi_episode_parts_json')) {
+      this.db.exec("ALTER TABLE tv_episodes ADD COLUMN multi_episode_parts_json TEXT NOT NULL DEFAULT '[]'");
     }
   }
 
@@ -1282,7 +1288,7 @@ export class MediaDatabase {
       episodeGuide.length > 0
         ? (this.db
             .prepare(
-              'SELECT season_number, episode_number, display_season, display_episode, multi_episode_end FROM tv_episodes WHERE show_id = ?'
+              'SELECT season_number, episode_number, display_season, display_episode, multi_episode_end, multi_episode_parts_json FROM tv_episodes WHERE show_id = ?'
             )
             .all(id) as Array<Record<string, unknown>>)
         : [];
@@ -1298,6 +1304,7 @@ export class MediaDatabase {
               displaySeason: e.display_season != null ? Number(e.display_season) : null,
               displayEpisode: e.display_episode != null ? Number(e.display_episode) : null,
               multiEpisodeEnd: e.multi_episode_end != null ? Number(e.multi_episode_end) : null,
+              multiEpisodeParts: safeJson<TvEpisodeSubEntry[]>(e.multi_episode_parts_json, []),
             })),
             []
           ).length
@@ -1440,7 +1447,7 @@ export class MediaDatabase {
       this.db
         .prepare(
           `UPDATE tv_episodes SET
-            show_id = ?, season_number = ?, episode_number = ?, display_season = ?, display_episode = ?, multi_episode_end = ?,
+            show_id = ?, season_number = ?, episode_number = ?, display_season = ?, display_episode = ?, multi_episode_end = ?, multi_episode_parts_json = ?,
             folder_path = ?, file_name = ?, file_size_bytes = ?, movie_hash = ?, nfo_path = ?, has_nfo = ?, nfo_valid = ?, nfo_warnings_json = ?,
             scraped = ?, title = ?, show_title = ?, aired = ?, plot = ?, runtime_minutes = ?,
             directors_json = ?, writers_json = ?, actors_json = ?, unique_ids_json = ?, ratings_json = ?,
@@ -1454,6 +1461,7 @@ export class MediaDatabase {
           ep.displaySeason ?? null,
           ep.displayEpisode ?? null,
           ep.multiEpisodeEnd ?? null,
+          JSON.stringify(ep.multiEpisodeParts ?? []),
           ep.folderPath,
           ep.fileName,
           ep.fileSizeBytes,
@@ -1488,12 +1496,12 @@ export class MediaDatabase {
     const res = this.db
       .prepare(
         `INSERT INTO tv_episodes (
-          show_id, season_number, episode_number, display_season, display_episode, multi_episode_end,
+          show_id, season_number, episode_number, display_season, display_episode, multi_episode_end, multi_episode_parts_json,
           folder_path, file_path, file_name, file_size_bytes, movie_hash, nfo_path, has_nfo, nfo_valid, nfo_warnings_json,
           scraped, title, show_title, aired, plot, runtime_minutes,
           directors_json, writers_json, actors_json, unique_ids_json, ratings_json,
           user_rating, play_count, watched, last_played, thumb_path, stream_details_json, parsed_info_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         ep.showId,
@@ -1502,6 +1510,7 @@ export class MediaDatabase {
         ep.displaySeason ?? null,
         ep.displayEpisode ?? null,
         ep.multiEpisodeEnd ?? null,
+        JSON.stringify(ep.multiEpisodeParts ?? []),
         ep.folderPath,
         ep.filePath,
         ep.fileName,
@@ -1580,6 +1589,7 @@ export class MediaDatabase {
     const merged = {
       ...cur,
       ...patch,
+      multiEpisodeParts: patch.multiEpisodeParts ?? cur.multiEpisodeParts ?? [],
       directors: patch.directors ?? cur.directors,
       writers: patch.writers ?? cur.writers,
       actors: patch.actors ?? cur.actors,
@@ -1592,7 +1602,7 @@ export class MediaDatabase {
     this.db
       .prepare(
         `UPDATE tv_episodes SET
-          season_number = ?, episode_number = ?, display_season = ?, display_episode = ?, multi_episode_end = ?,
+          season_number = ?, episode_number = ?, display_season = ?, display_episode = ?, multi_episode_end = ?, multi_episode_parts_json = ?,
           folder_path = ?, file_path = ?, file_name = ?, file_size_bytes = ?, movie_hash = ?,
           nfo_path = ?, has_nfo = ?, nfo_valid = ?, nfo_warnings_json = ?, scraped = ?,
           title = ?, show_title = ?, aired = ?, plot = ?, runtime_minutes = ?,
@@ -1606,6 +1616,7 @@ export class MediaDatabase {
         merged.displaySeason ?? null,
         merged.displayEpisode ?? null,
         merged.multiEpisodeEnd ?? null,
+        JSON.stringify(merged.multiEpisodeParts ?? []),
         merged.folderPath,
         merged.filePath,
         merged.fileName,
@@ -1647,6 +1658,7 @@ export class MediaDatabase {
       displaySeason: row.display_season != null ? Number(row.display_season) : null,
       displayEpisode: row.display_episode != null ? Number(row.display_episode) : null,
       multiEpisodeEnd: row.multi_episode_end != null ? Number(row.multi_episode_end) : null,
+      multiEpisodeParts: safeJson<TvEpisodeSubEntry[]>(row.multi_episode_parts_json, []),
       folderPath: String(row.folder_path),
       filePath: String(row.file_path),
       fileName: String(row.file_name),
@@ -1747,6 +1759,7 @@ export interface EpisodePresenceSlice {
   displaySeason?: number | null;
   displayEpisode?: number | null;
   multiEpisodeEnd?: number | null;
+  multiEpisodeParts?: TvEpisodeSubEntry[];
 }
 
 export function computeMissingEpisodesFromGuide(
@@ -1769,6 +1782,14 @@ export function computeMissingEpisodesFromGuide(
       const ds = ep.displaySeason ?? ep.seasonNumber;
       const de = ep.displayEpisode ?? ep.episodeNumber;
       presentKeys.add(`${ds}:${de}`);
+    }
+    for (const part of ep.multiEpisodeParts ?? []) {
+      presentKeys.add(`${part.seasonNumber}:${part.episodeNumber}`);
+      if (part.displaySeason != null || part.displayEpisode != null) {
+        const ds = part.displaySeason ?? part.seasonNumber;
+        const de = part.displayEpisode ?? part.episodeNumber;
+        presentKeys.add(`${ds}:${de}`);
+      }
     }
   }
 

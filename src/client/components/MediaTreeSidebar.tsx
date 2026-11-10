@@ -350,16 +350,18 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
     setBatchBusy(true);
     try {
       if (kind === 'scrape') {
-        const targetShowIds = [
-          ...new Set([
-            ...showIds,
-            ...episodeIds.map((epId) => episodeToShowMap.get(epId)).filter((id): id is number => id != null),
-          ]),
-        ];
-        if (targetShowIds.length > 0) {
-          const res = await api.batchScrape({ showIds: targetShowIds });
-          onToast(`Scraped ${res.scrapedShows} TV show${res.scrapedShows === 1 ? '' : 's'}`);
+        const res = await api.batchScrape({
+          ...(showIds.length > 0 ? { showIds } : {}),
+          ...(episodeIds.length > 0 ? { episodeIds } : {}),
+        });
+        const msgParts: string[] = [];
+        if (res.scrapedShows > 0 || showIds.length > 0) {
+          msgParts.push(`${res.scrapedShows} show${res.scrapedShows === 1 ? '' : 's'}`);
         }
+        if (res.scrapedEpisodes > 0 || episodeIds.length > 0) {
+          msgParts.push(`${res.scrapedEpisodes} episode${res.scrapedEpisodes === 1 ? '' : 's'}`);
+        }
+        onToast(`Scraped ${msgParts.join(' & ') || '0 items'}`);
       } else if (kind === 'subs') {
         const targetEpIds = [
           ...new Set([
@@ -1133,7 +1135,7 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                                       ep.parsedInfo.episodeNumber ?? ep.episodeNumber
                                     ).padStart(2, '0')}`;
                                     const code = `S${String(effSeason).padStart(2, '0')}E${String(effEp).padStart(2, '0')}${
-                                      ep.multiEpisodeEnd ? `-${String(ep.multiEpisodeEnd).padStart(2, '0')}` : ''
+                                      ep.multiEpisodeEnd ? `-E${String(ep.multiEpisodeEnd).padStart(2, '0')}` : ''
                                     }`;
                                     return (
                                       <div

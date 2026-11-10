@@ -36,6 +36,7 @@ import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 import { ArtworkPickerModal, ArtworkPickerTarget, ClickableArtCard } from './ArtworkPickerModal.js';
 import { CastListColumn } from './CastListColumn.js';
 import { ChipInput } from './ChipInput.js';
+import { EpisodeScrapeModal } from './EpisodeScrapeModal.js';
 import { FormField as Field } from './FormField.js';
 import { PosterImage } from './PosterImage.js';
 import { TechBadges } from './QualityBadges.js';
@@ -96,6 +97,7 @@ export const TvShowDetailPanel: React.FC<{
   const [nfoXml, setNfoXml] = useState('');
   const [nfoVal, setNfoVal] = useState<NfoValidationReport | null>(null);
   const [scrapeOpen, setScrapeOpen] = useState(false);
+  const [scrapeTargetEp, setScrapeTargetEp] = useState<TvEpisodeRecord | null>(null);
   const [subTargetEp, setSubTargetEp] = useState<TvEpisodeRecord | null>(null);
   const [artCacheKey, setArtCacheKey] = useState(0);
   const [artPickerTarget, setArtPickerTarget] = useState<ArtworkPickerTarget | null>(null);
@@ -635,8 +637,14 @@ export const TvShowDetailPanel: React.FC<{
                   ep.parsedInfo.episodeNumber ?? ep.episodeNumber
                 ).padStart(2, '0')}`;
                 const code = `S${String(effSeason).padStart(2, '0')}E${String(effEp).padStart(2, '0')}${
-                  ep.multiEpisodeEnd ? `-${String(ep.multiEpisodeEnd).padStart(2, '0')}` : ''
+                  ep.multiEpisodeEnd ? `-E${String(ep.multiEpisodeEnd).padStart(2, '0')}` : ''
                 }`;
+                const partCount = Math.max(
+                  1 + (ep.multiEpisodeParts?.length ?? 0),
+                  ep.multiEpisodeEnd && ep.multiEpisodeEnd > ep.episodeNumber
+                    ? ep.multiEpisodeEnd - ep.episodeNumber + 1
+                    : 1
+                );
                 return (
                   <div
                     key={ep.id}
@@ -656,6 +664,11 @@ export const TvShowDetailPanel: React.FC<{
                       >
                         {code}
                       </span>
+                      {partCount > 1 && (
+                        <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 text-[10px] font-semibold shrink-0">
+                          {partCount} parts
+                        </span>
+                      )}
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-bold text-slate-100 truncate">{ep.title}</span>
@@ -676,6 +689,17 @@ export const TvShowDetailPanel: React.FC<{
                       >
                         {ep.hasNfo ? 'NFO' : 'No NFO'}
                       </span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setScrapeTargetEp(ep);
+                        }}
+                        title="Scrape this episode"
+                        className="px-2 py-1 rounded bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-500/30 text-[11px] text-indigo-200 font-semibold flex items-center gap-1 cursor-pointer"
+                      >
+                        <Sparkles className="w-3 h-3 text-indigo-300" />
+                        Scrape
+                      </button>
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -1153,6 +1177,20 @@ export const TvShowDetailPanel: React.FC<{
             onUpdated();
           }}
           onClose={() => setSubTargetEp(null)}
+        />
+      )}
+
+      {scrapeTargetEp && (
+        <EpisodeScrapeModal
+          open={true}
+          show={show}
+          episode={scrapeTargetEp}
+          onClose={() => setScrapeTargetEp(null)}
+          onApplied={() => {
+            void load();
+            onUpdated();
+            notify('Episode metadata & NFO scraped cleanly');
+          }}
         />
       )}
 

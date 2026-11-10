@@ -133,6 +133,9 @@ export class RenamerEngine {
     const res =
       ep.parsedInfo.resolution ||
       (v0?.height ? (v0.height >= 2000 ? '2160p' : v0.height >= 1000 ? '1080p' : v0.height >= 700 ? '720p' : `${v0.height}p`) : null);
+    const epPad = String(ep.episodeNumber).padStart(2, '0');
+    const isMulti = ep.multiEpisodeEnd != null && ep.multiEpisodeEnd > ep.episodeNumber;
+    const epRange = isMulti ? `${epPad}-E${String(ep.multiEpisodeEnd).padStart(2, '0')}` : epPad;
     return {
       show_title: show.title,
       title: ep.title,
@@ -140,6 +143,7 @@ export class RenamerEngine {
       year: show.year,
       season: ep.seasonNumber,
       episode: ep.episodeNumber,
+      episode_range: epRange,
       tvdb_id: show.uniqueIds.tvdb,
       tmdb_id: show.uniqueIds.tmdb,
       imdb_id: show.uniqueIds.imdb,
@@ -241,7 +245,13 @@ export class RenamerEngine {
         ep.seasonNumber === 0
           ? cfg.specialsFolderName || 'Specials'
           : renderRenameTemplate(cfg.seasonFolderPattern, tokens, cfg) || `Season ${String(ep.seasonNumber).padStart(2, '0')}`;
-      const epBase = renderRenameTemplate(cfg.episodeFilePattern, tokens, cfg) || `${show.title} - S${ep.seasonNumber}E${ep.episodeNumber}`;
+      const epPattern =
+        ep.multiEpisodeEnd != null &&
+        ep.multiEpisodeEnd > ep.episodeNumber &&
+        !cfg.episodeFilePattern.includes('{episode_range}')
+          ? cfg.episodeFilePattern.replace(/\{episode(?::0\d+d)?\}/g, '{episode_range}')
+          : cfg.episodeFilePattern;
+      const epBase = renderRenameTemplate(epPattern, tokens, cfg) || `${show.title} - S${ep.seasonNumber}E${ep.episodeNumber}`;
       const ext = path.extname(ep.filePath);
 
       const targetDir = path.join(source.path, showFolderName, seasonFolderName);

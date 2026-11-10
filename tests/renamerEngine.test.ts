@@ -66,4 +66,46 @@ describe('RenamerEngine', () => {
 
     db.close();
   });
+
+  it('preserves multi-episode SxxExx-Eyy ranges when renaming episodes and NFO sidecars', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kv-rename-multi-'));
+    tmpDirs.push(tmp);
+
+    const tvDir = path.join(tmp, 'TV Shows');
+    const seasonDir = path.join(tvDir, 'Andor (2022)', 'Season 01');
+    fs.mkdirSync(seasonDir, { recursive: true });
+
+    const epFile = path.join(seasonDir, 'Andor.S01E01-E03.1080p.WEB-DL.mp4');
+    fs.writeFileSync(epFile, createMinimalValidMp4({ width: 1920, height: 1080, durationSeconds: 7200 }));
+    fs.writeFileSync(
+      path.join(seasonDir, 'Andor.S01E01-E03.1080p.WEB-DL.nfo'),
+      `<?xml version="1.0" encoding="UTF-8"?>
+<episodedetails><title>Kassa</title><season>1</season><episode>1</episode><uniqueid type="imdb" default="true">tt1</uniqueid></episodedetails>
+<episodedetails><title>That Would Be Me</title><season>1</season><episode>2</episode><uniqueid type="imdb" default="true">tt2</uniqueid></episodedetails>
+<episodedetails><title>Reckoning</title><season>1</season><episode>3</episode><uniqueid type="imdb" default="true">tt3</uniqueid></episodedetails>`
+    );
+
+    const db = new MediaDatabase(path.join(tmp, 'test.db'));
+    const src = db.addSource({ name: 'TV', path: tvDir, mediaKind: 'tvshow' });
+    const scanner = new LibraryScanner(db);
+    await scanner.scanSource(src);
+
+    const ep = db.listAllEpisodes()[0];
+    expect(ep.multiEpisodeEnd).toBe(3);
+    expect(ep.multiEpisodeParts).toHaveLength(2);
+
+    const renamer = new RenamerEngine(db);
+    const previews = renamer.previewEpisodeRename([ep.id]);
+    expect(previews[0].hasChanges).toBe(true);
+    expect(previews[0].newPath).toContain('S01E01-E03');
+    expect(previews[0].sidecars[0].newPath).toContain('S01E01-E03');
+    expect(previews[0].sidecars[0].newPath).toMatch(/\.nfo$/);
+
+    const res = renamer.executeRename(previews, true);
+    expect(res.movedCount).toBe(1);
+    expect(fs.existsSync(previews[0].newPath)).toBe(true);
+    expect(fs.existsSync(previews[0].sidecars[0].newPath)).toBe(true);
+
+    db.close();
+  });
 });

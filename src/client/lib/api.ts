@@ -5,6 +5,7 @@ import type {
   ArtworkKind,
   BatchJob,
   DashboardSummary,
+  EpisodeScrapePreview,
   KodiRpcConfig,
   KodiSyncResult,
   LibraryAuditReport,
@@ -16,6 +17,7 @@ import type {
   RenameHistoryBatch,
   RenamePatternsConfig,
   RenamePreviewItem,
+  ScrapedEpisodePart,
   ScrapedMetadataBundle,
   ScraperFieldMapping,
   ScraperProviderConfig,
@@ -28,6 +30,7 @@ import type {
   TvEpisodeRecord,
   TvSeasonRecord,
   TvShowRecord,
+  UniqueIds,
 } from '../../shared/types.js';
 
 export function getArtworkUrl(filePath: string | null | undefined, cacheBust?: string | number): string | null {
@@ -206,8 +209,59 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ bundle }),
     }),
-  batchScrape: (params: { movieIds?: number[]; showIds?: number[]; onlyUnscraped?: boolean }) =>
-    req<{ scrapedMovies: number; unmatchedMovies: number; scrapedShows: number; unmatchedShows: number }>('/api/scrapers/batch', {
+  previewEpisodeScrape: (
+    id: number,
+    opts?: {
+      provider?: ScraperProviderId;
+      externalId?: string;
+      seasonNumber?: number;
+      episodeNumber?: number;
+      multiEpisodeEnd?: number | null;
+    }
+  ) =>
+    req<{ preview: EpisodeScrapePreview }>(`/api/scrapers/episode/${id}/preview`, {
+      method: 'POST',
+      body: JSON.stringify(opts ?? {}),
+    }),
+  applyEpisodeScrape: (
+    id: number,
+    payload: {
+      parts: ScrapedEpisodePart[];
+      showUniqueIds?: UniqueIds;
+      seasonNumber?: number;
+      episodeNumber?: number;
+      multiEpisodeEnd?: number | null;
+      writeNfo?: boolean;
+    }
+  ) =>
+    req<{ episode: TvEpisodeRecord }>(`/api/scrapers/episode/${id}/apply`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  scrapeEpisode: (
+    id: number,
+    opts?: {
+      provider?: ScraperProviderId;
+      externalId?: string;
+      seasonNumber?: number;
+      episodeNumber?: number;
+      multiEpisodeEnd?: number | null;
+      writeNfo?: boolean;
+    }
+  ) =>
+    req<{ episode: TvEpisodeRecord; preview: EpisodeScrapePreview }>(`/api/scrapers/episode/${id}`, {
+      method: 'POST',
+      body: JSON.stringify(opts ?? {}),
+    }),
+  batchScrape: (params: { movieIds?: number[]; showIds?: number[]; episodeIds?: number[]; onlyUnscraped?: boolean }) =>
+    req<{
+      scrapedMovies: number;
+      unmatchedMovies: number;
+      scrapedShows: number;
+      unmatchedShows: number;
+      scrapedEpisodes: number;
+      unmatchedEpisodes: number;
+    }>('/api/scrapers/batch', {
       method: 'POST',
       body: JSON.stringify(params),
     }),

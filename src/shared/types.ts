@@ -250,6 +250,26 @@ export interface TvSeasonRecord {
   episodesCount: number;
 }
 
+export interface TvEpisodeSubEntry {
+  seasonNumber: number;
+  episodeNumber: number;
+  displaySeason?: number | null;
+  displayEpisode?: number | null;
+  title: string;
+  aired: string | null;
+  plot: string;
+  runtimeMinutes: number | null;
+  directors: string[];
+  writers: string[];
+  actors: ActorEntry[];
+  uniqueIds: UniqueIds;
+  ratings: RatingEntry[];
+  userRating: number | null;
+  playCount: number;
+  watched: boolean;
+  lastPlayed: string | null;
+}
+
 export interface TvEpisodeRecord {
   id: number;
   showId: number;
@@ -258,6 +278,7 @@ export interface TvEpisodeRecord {
   displaySeason?: number | null;
   displayEpisode?: number | null;
   multiEpisodeEnd?: number | null;
+  multiEpisodeParts?: TvEpisodeSubEntry[];
   folderPath: string;
   filePath: string;
   fileName: string;
@@ -407,10 +428,41 @@ export interface ScrapedMetadataBundle {
     runtimeMinutes: number | null;
     directors: string[];
     writers: string[];
+    actors?: ActorEntry[];
     ratings: RatingEntry[];
     uniqueIds: UniqueIds;
     thumbUrl?: string;
   }>;
+}
+
+export interface ScrapedEpisodePart {
+  seasonNumber: number;
+  episodeNumber: number;
+  title: string;
+  aired: string | null;
+  plot: string;
+  runtimeMinutes: number | null;
+  directors: string[];
+  writers: string[];
+  actors: ActorEntry[];
+  ratings: RatingEntry[];
+  uniqueIds: UniqueIds;
+  thumbUrl?: string;
+  sourcesUsed: ScraperProviderId[];
+}
+
+export interface EpisodeScrapePreview {
+  episodeId: number;
+  showId: number;
+  showTitle: string;
+  showUniqueIds: UniqueIds;
+  seasonNumber: number;
+  episodeNumber: number;
+  multiEpisodeEnd: number | null;
+  matched: boolean;
+  sourcesUsed: ScraperProviderId[];
+  dataOrigin: 'live-api' | 'builtin-catalog' | 'hybrid';
+  parts: ScrapedEpisodePart[];
 }
 
 export interface SubtitleSearchResult {

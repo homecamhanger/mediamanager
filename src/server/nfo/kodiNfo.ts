@@ -6,6 +6,7 @@ import type {
   RatingEntry,
   StreamDetails,
   TvEpisodeRecord,
+  TvEpisodeSubEntry,
   TvSeasonRecord,
   TvShowRecord,
   UniqueIds,
@@ -558,45 +559,187 @@ export function serializeSeasonNfo(season: TvSeasonRecord): string {
   return parts.join('\n') + '\n';
 }
 
+function serializeEpisodeBlock(entry: {
+  title: string;
+  showTitle: string;
+  ratings: RatingEntry[];
+  userRating: number | null;
+  seasonNumber: number;
+  episodeNumber: number;
+  displaySeason?: number | null;
+  displayEpisode?: number | null;
+  plot: string;
+  runtimeMinutes: number | null;
+  aired: string | null;
+  playCount: number;
+  watched: boolean;
+  lastPlayed: string | null;
+  uniqueIds: UniqueIds;
+  writers: string[];
+  directors: string[];
+  streamDetails: StreamDetails;
+  actors: ActorEntry[];
+}): string {
+  const parts: string[] = ['<episodedetails>'];
+  parts.push(`  <title>${escapeXml(entry.title)}</title>`);
+  if (entry.showTitle) parts.push(`  <showtitle>${escapeXml(entry.showTitle)}</showtitle>`);
+
+  const ratingsXml = buildRatingsXml(entry.ratings);
+  if (ratingsXml) parts.push(ratingsXml);
+
+  if (entry.userRating != null) parts.push(`  <userrating>${escapeXml(entry.userRating)}</userrating>`);
+  parts.push(`  <season>${entry.seasonNumber}</season>`);
+  parts.push(`  <episode>${entry.episodeNumber}</episode>`);
+  if (entry.displaySeason != null) parts.push(`  <displayseason>${entry.displaySeason}</displayseason>`);
+  if (entry.displayEpisode != null) parts.push(`  <displayepisode>${entry.displayEpisode}</displayepisode>`);
+  if (entry.plot) parts.push(`  <plot>${escapeXml(entry.plot)}</plot>`);
+  if (entry.runtimeMinutes != null) parts.push(`  <runtime>${escapeXml(entry.runtimeMinutes)}</runtime>`);
+  if (entry.aired) parts.push(`  <aired>${escapeXml(entry.aired)}</aired>`);
+  parts.push(`  <playcount>${entry.playCount ?? (entry.watched ? 1 : 0)}</playcount>`);
+  parts.push(`  <watched>${entry.watched ? 'true' : 'false'}</watched>`);
+  if (entry.lastPlayed) parts.push(`  <lastplayed>${escapeXml(entry.lastPlayed)}</lastplayed>`);
+
+  const idsXml = buildUniqueIdsXml(entry.uniqueIds);
+  if (idsXml) parts.push(idsXml);
+
+  for (const w of entry.writers) parts.push(`  <credits>${escapeXml(w)}</credits>`);
+  for (const d of entry.directors) parts.push(`  <director>${escapeXml(d)}</director>`);
+
+  const streamXml = buildStreamDetailsXml(entry.streamDetails);
+  if (streamXml) parts.push(streamXml);
+
+  const actorsXml = buildActorsXml(entry.actors);
+  if (actorsXml) parts.push(actorsXml);
+
+  parts.push('</episodedetails>');
+  return parts.join('\n');
+}
+
 export function serializeEpisodeNfo(ep: TvEpisodeRecord): string {
-  const parts: string[] = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'];
+  const blocks: string[] = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'];
+  const serializedKeys = new Set<string>();
+  const subParts: TvEpisodeSubEntry[] = ep.multiEpisodeParts ?? [];
+
+  blocks.push(
+    serializeEpisodeBlock({
+      title: ep.title,
+      showTitle: ep.showTitle,
+      ratings: ep.ratings,
+      userRating: ep.userRating,
+      seasonNumber: ep.seasonNumber,
+      episodeNumber: ep.episodeNumber,
+      displaySeason: ep.displaySeason,
+      displayEpisode: ep.displayEpisode,
+      plot: ep.plot,
+      runtimeMinutes: ep.runtimeMinutes,
+      aired: ep.aired,
+      playCount: ep.playCount,
+      watched: ep.watched,
+      lastPlayed: ep.lastPlayed,
+      uniqueIds: ep.uniqueIds,
+      writers: ep.writers,
+      directors: ep.directors,
+      streamDetails: ep.streamDetails,
+      actors: ep.actors,
+    })
+  );
+  serializedKeys.add(`${ep.seasonNumber}:${ep.episodeNumber}`);
+
   const endEp = ep.multiEpisodeEnd && ep.multiEpisodeEnd > ep.episodeNumber ? ep.multiEpisodeEnd : ep.episodeNumber;
+  for (let num = ep.episodeNumber + 1; num <= endEp; num++) {
+    const key = `${ep.seasonNumber}:${num}`;
+    if (serializedKeys.has(key)) continue;
+    const partIdx = num - ep.episodeNumber - 1;
+    const explicit =
+      subParts.find((p) => p.seasonNumber === ep.seasonNumber && p.episodeNumber === num) ??
+      (subParts[partIdx] && subParts[partIdx].episodeNumber === num ? subParts[partIdx] : undefined);
 
-  for (let num = ep.episodeNumber; num <= endEp; num++) {
-    parts.push('<episodedetails>');
-    parts.push(`  <title>${escapeXml(ep.title)}</title>`);
-    if (ep.showTitle) parts.push(`  <showtitle>${escapeXml(ep.showTitle)}</showtitle>`);
-
-    const ratingsXml = buildRatingsXml(ep.ratings);
-    if (ratingsXml) parts.push(ratingsXml);
-
-    if (ep.userRating != null) parts.push(`  <userrating>${escapeXml(ep.userRating)}</userrating>`);
-    parts.push(`  <season>${ep.seasonNumber}</season>`);
-    parts.push(`  <episode>${num}</episode>`);
-    if (ep.displaySeason != null) parts.push(`  <displayseason>${ep.displaySeason}</displayseason>`);
-    if (ep.displayEpisode != null) parts.push(`  <displayepisode>${ep.displayEpisode}</displayepisode>`);
-    if (ep.plot) parts.push(`  <plot>${escapeXml(ep.plot)}</plot>`);
-    if (ep.runtimeMinutes != null) parts.push(`  <runtime>${escapeXml(ep.runtimeMinutes)}</runtime>`);
-    if (ep.aired) parts.push(`  <aired>${escapeXml(ep.aired)}</aired>`);
-    parts.push(`  <playcount>${ep.playCount ?? (ep.watched ? 1 : 0)}</playcount>`);
-    parts.push(`  <watched>${ep.watched ? 'true' : 'false'}</watched>`);
-    if (ep.lastPlayed) parts.push(`  <lastplayed>${escapeXml(ep.lastPlayed)}</lastplayed>`);
-
-    const idsXml = buildUniqueIdsXml(ep.uniqueIds);
-    if (idsXml) parts.push(idsXml);
-
-    for (const w of ep.writers) parts.push(`  <credits>${escapeXml(w)}</credits>`);
-    for (const d of ep.directors) parts.push(`  <director>${escapeXml(d)}</director>`);
-
-    const streamXml = buildStreamDetailsXml(ep.streamDetails);
-    if (streamXml) parts.push(streamXml);
-
-    const actorsXml = buildActorsXml(ep.actors);
-    if (actorsXml) parts.push(actorsXml);
-
-    parts.push('</episodedetails>');
+    if (explicit) {
+      blocks.push(
+        serializeEpisodeBlock({
+          title: explicit.title || `Episode ${num}`,
+          showTitle: ep.showTitle,
+          ratings: explicit.ratings,
+          userRating: explicit.userRating,
+          seasonNumber: explicit.seasonNumber,
+          episodeNumber: explicit.episodeNumber,
+          displaySeason: explicit.displaySeason,
+          displayEpisode: explicit.displayEpisode,
+          plot: explicit.plot,
+          runtimeMinutes: explicit.runtimeMinutes,
+          aired: explicit.aired,
+          playCount: explicit.playCount,
+          watched: explicit.watched,
+          lastPlayed: explicit.lastPlayed,
+          uniqueIds: explicit.uniqueIds,
+          writers: explicit.writers,
+          directors: explicit.directors,
+          streamDetails: ep.streamDetails,
+          actors: explicit.actors,
+        })
+      );
+    } else {
+      const partNumber = num - ep.episodeNumber + 1;
+      const fallbackTitle =
+        ep.title && !/^Episode\s+\d+$/i.test(ep.title) ? `${ep.title} (Part ${partNumber})` : `Episode ${num}`;
+      blocks.push(
+        serializeEpisodeBlock({
+          title: fallbackTitle,
+          showTitle: ep.showTitle,
+          ratings: [],
+          userRating: null,
+          seasonNumber: ep.seasonNumber,
+          episodeNumber: num,
+          displaySeason: null,
+          displayEpisode: null,
+          plot: '',
+          runtimeMinutes: ep.runtimeMinutes,
+          aired: ep.aired,
+          playCount: ep.playCount,
+          watched: ep.watched,
+          lastPlayed: ep.lastPlayed,
+          uniqueIds: {},
+          writers: ep.writers,
+          directors: ep.directors,
+          streamDetails: ep.streamDetails,
+          actors: ep.actors,
+        })
+      );
+    }
+    serializedKeys.add(key);
   }
-  return parts.join('\n') + '\n';
+
+  // Preserve any additional custom multi-episode parts outside the contiguous range
+  for (const part of subParts) {
+    const key = `${part.seasonNumber}:${part.episodeNumber}`;
+    if (serializedKeys.has(key)) continue;
+    blocks.push(
+      serializeEpisodeBlock({
+        title: part.title || `Episode ${part.episodeNumber}`,
+        showTitle: ep.showTitle,
+        ratings: part.ratings,
+        userRating: part.userRating,
+        seasonNumber: part.seasonNumber,
+        episodeNumber: part.episodeNumber,
+        displaySeason: part.displaySeason,
+        displayEpisode: part.displayEpisode,
+        plot: part.plot,
+        runtimeMinutes: part.runtimeMinutes,
+        aired: part.aired,
+        playCount: part.playCount,
+        watched: part.watched,
+        lastPlayed: part.lastPlayed,
+        uniqueIds: part.uniqueIds,
+        writers: part.writers,
+        directors: part.directors,
+        streamDetails: ep.streamDetails,
+        actors: part.actors,
+      })
+    );
+    serializedKeys.add(key);
+  }
+
+  return blocks.join('\n') + '\n';
 }
 
 export function validateKodiNfoXml(xmlContent: string): NfoValidationReport {
@@ -643,45 +786,83 @@ export function validateKodiNfoXml(xmlContent: string): NfoValidationReport {
     }
 
     const rawTarget = root[rootElement];
-    const target = Array.isArray(rawTarget) ? (rawTarget[0] as Record<string, unknown>) : (rawTarget as Record<string, unknown>);
+    const blocks =
+      rootElement === 'episodedetails'
+        ? asArray<Record<string, unknown>>(rawTarget as Record<string, unknown>[])
+        : [Array.isArray(rawTarget) ? (rawTarget[0] as Record<string, unknown>) : (rawTarget as Record<string, unknown>)];
 
-    if (!textOf(target.title)) {
-      errors.push('Missing required <title> element');
-    }
+    const multiBlock = blocks.length > 1;
+    const seenEpKeys = new Set<string>();
+    let allUniqueIdDefaults = blocks.length > 0;
+    let allRatingsBlocks = blocks.length > 0;
+    let allStreamDetails = blocks.length > 0;
 
-    const uids = asArray<Record<string, unknown> | string>(target.uniqueid as Record<string, unknown>[]);
-    hasUniqueIdDefault = uids.some((u) => typeof u === 'object' && String(u['@_default'] ?? '').toLowerCase() === 'true');
-    if (rootElement !== 'season') {
-      if (uids.length === 0) {
-        warnings.push('Missing <uniqueid> tag (legacy <id> is deprecated in Kodi v19+)');
-      } else if (!hasUniqueIdDefault) {
-        warnings.push('No <uniqueid default="true"> attribute specified');
+    blocks.forEach((target, idx) => {
+      const sText = textOf(target.season);
+      const eText = textOf(target.episode);
+      const prefix = multiBlock
+        ? `Part ${idx + 1}${sText && eText ? ` (S${sText.padStart(2, '0')}E${eText.padStart(2, '0')})` : ''}: `
+        : '';
+
+      if (!textOf(target.title)) {
+        errors.push(`${prefix}Missing required <title> element`);
       }
-    }
 
-    const ratingsBlock = target.ratings as Record<string, unknown> | undefined;
-    hasRatingsBlock = Boolean(ratingsBlock && asArray(ratingsBlock.rating).length > 0);
-    if (rootElement !== 'season' && !hasRatingsBlock) {
-      if (target.rating) {
-        warnings.push('Using legacy <rating> instead of Kodi v18+ <ratings><rating name="..." default="true"> block');
+      if (multiBlock) {
+        if (!eText) {
+          warnings.push(`${prefix}Missing <episode> element in multi-episode NFO`);
+        } else {
+          const epKey = `${sText || '1'}:${eText}`;
+          if (seenEpKeys.has(epKey)) {
+            warnings.push(`${prefix}Duplicate season/episode number (${epKey}) inside multi-episode NFO`);
+          }
+          seenEpKeys.add(epKey);
+        }
+      }
+
+      const uids = asArray<Record<string, unknown> | string>(target.uniqueid as Record<string, unknown>[]);
+      const blockHasUidDefault = uids.some((u) => typeof u === 'object' && String(u['@_default'] ?? '').toLowerCase() === 'true');
+      if (!blockHasUidDefault) allUniqueIdDefaults = false;
+      if (rootElement !== 'season') {
+        if (uids.length === 0) {
+          warnings.push(`${prefix}Missing <uniqueid> tag (legacy <id> is deprecated in Kodi v19+)`);
+        } else if (!blockHasUidDefault) {
+          warnings.push(`${prefix}No <uniqueid default="true"> attribute specified`);
+        }
+      }
+
+      const ratingsBlock = target.ratings as Record<string, unknown> | undefined;
+      const blockHasRatings = Boolean(ratingsBlock && asArray(ratingsBlock.rating).length > 0);
+      if (!blockHasRatings) allRatingsBlocks = false;
+      if (rootElement !== 'season' && !blockHasRatings) {
+        if (target.rating) {
+          warnings.push(`${prefix}Using legacy <rating> instead of Kodi v18+ <ratings><rating name="..." default="true"> block`);
+        } else {
+          warnings.push(`${prefix}Missing <ratings> metadata block`);
+        }
+      }
+
+      if (rootElement === 'movie' || rootElement === 'episodedetails') {
+        const blockHasStreams = Boolean((target.fileinfo as Record<string, unknown> | undefined)?.streamdetails);
+        if (!blockHasStreams) {
+          allStreamDetails = false;
+          warnings.push(`${prefix}Missing <fileinfo><streamdetails> media probe info`);
+        }
       } else {
-        warnings.push('Missing <ratings> metadata block');
+        allStreamDetails = false;
       }
-    }
 
-    if (rootElement === 'movie' || rootElement === 'episodedetails') {
-      hasStreamDetails = Boolean((target.fileinfo as Record<string, unknown> | undefined)?.streamdetails);
-      if (!hasStreamDetails) {
-        warnings.push('Missing <fileinfo><streamdetails> media probe info');
+      if (rootElement === 'movie' && !textOf(target.year) && !textOf(target.premiered)) {
+        warnings.push('Missing <year> or <premiered> release date');
       }
-    }
+      if (rootElement === 'movie' && !textOf(target.plot)) {
+        warnings.push('Missing <plot> synopsis');
+      }
+    });
 
-    if (rootElement === 'movie' && !textOf(target.year) && !textOf(target.premiered)) {
-      warnings.push('Missing <year> or <premiered> release date');
-    }
-    if (rootElement === 'movie' && !textOf(target.plot)) {
-      warnings.push('Missing <plot> synopsis');
-    }
+    hasUniqueIdDefault = allUniqueIdDefaults;
+    hasRatingsBlock = allRatingsBlocks;
+    hasStreamDetails = allStreamDetails;
   } catch (err) {
     errors.push(`XML syntax error: ${(err as Error).message}`);
   }

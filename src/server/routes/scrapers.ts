@@ -75,33 +75,81 @@ export function createScrapersRouter(db: MediaDatabase): Router {
     res.json({ show: updated });
   });
 
+  router.post('/episode/:id/preview', async (req, res) => {
+    const episodeId = Number(req.params.id);
+    if (!Number.isFinite(episodeId)) return res.status(400).json({ error: 'Invalid episode id' });
+    const opts = (req.body ?? {}) as {
+      provider?: ScraperProviderId;
+      externalId?: string;
+      seasonNumber?: number;
+      episodeNumber?: number;
+      multiEpisodeEnd?: number | null;
+    };
+    const preview = await scraper.scrapeEpisodePreview(episodeId, opts);
+    if (!preview) return res.status(404).json({ error: 'Episode not found' });
+    res.json({ preview });
+  });
+
+  router.post('/episode/:id/apply', async (req, res) => {
+    const episodeId = Number(req.params.id);
+    if (!Number.isFinite(episodeId)) return res.status(400).json({ error: 'Invalid episode id' });
+    const body = req.body ?? {};
+    if (!Array.isArray(body.parts) || body.parts.length === 0) {
+      return res.status(400).json({ error: 'parts array is required' });
+    }
+    const episode = await scraper.applyEpisodeScrape(episodeId, body);
+    if (!episode) return res.status(404).json({ error: 'Episode not found' });
+    res.json({ episode });
+  });
+
+  router.post('/episode/:id', async (req, res) => {
+    const episodeId = Number(req.params.id);
+    if (!Number.isFinite(episodeId)) return res.status(400).json({ error: 'Invalid episode id' });
+    const opts = (req.body ?? {}) as {
+      provider?: ScraperProviderId;
+      externalId?: string;
+      seasonNumber?: number;
+      episodeNumber?: number;
+      multiEpisodeEnd?: number | null;
+      writeNfo?: boolean;
+    };
+    const result = await scraper.scrapeEpisode(episodeId, opts);
+    if (!result.episode || !result.preview) {
+      return res.status(404).json({ error: 'Episode not found' });
+    }
+    res.json(result);
+  });
+
   router.post('/batch', async (req, res) => {
-    const { movieIds, showIds, onlyUnscraped = false } = (req.body ?? {}) as {
+    const { movieIds, showIds, episodeIds, onlyUnscraped = false } = (req.body ?? {}) as {
       movieIds?: number[];
       showIds?: number[];
+      episodeIds?: number[];
       onlyUnscraped?: boolean;
     };
 
-    const scopedMoviesOnly = Array.isArray(movieIds) && showIds === undefined;
-    const scopedShowsOnly = Array.isArray(showIds) && movieIds === undefined;
+    const hasExplicitScope =
+      movieIds !== undefined || showIds !== undefined || episodeIds !== undefined;
 
-    const targetMovies = scopedShowsOnly
-      ? []
-      : Array.isArray(movieIds)
-        ? movieIds
+    const targetMovies = Array.isArray(movieIds)
+      ? movieIds
+      : hasExplicitScope
+        ? []
         : db
             .listMovies()
             .filter((m) => (onlyUnscraped ? !m.scraped : true))
             .map((m) => m.id);
 
-    const targetShows = scopedMoviesOnly
-      ? []
-      : Array.isArray(showIds)
-        ? showIds
+    const targetShows = Array.isArray(showIds)
+      ? showIds
+      : hasExplicitScope
+        ? []
         : db
             .listTvShows()
             .filter((s) => (onlyUnscraped ? !s.scraped : true))
             .map((s) => s.id);
+
+    const targetEpisodes = Array.isArray(episodeIds) ? episodeIds : [];
 
     let scrapedMovies = 0;
     let unmatchedMovies = 0;
@@ -119,7 +167,22 @@ export function createScrapersRouter(db: MediaDatabase): Router {
       else unmatchedShows++;
     }
 
-    res.json({ scrapedMovies, unmatchedMovies, scrapedShows, unmatchedShows });
+    let scrapedEpisodes = 0;
+    let unmatchedEpisodes = 0;
+    for (const id of targetEpisodes) {
+      const r = await scraper.scrapeEpisode(id);
+      if (r.preview?.matched) scrapedEpisodes++;
+      else unmatchedEpisodes++;
+    }
+
+    res.json({
+      scrapedMovies,
+      unmatchedMovies,
+      scrapedShows,
+      unmatchedShows,
+      scrapedEpisodes,
+      unmatchedEpisodes,
+    });
   });
 
   return router;

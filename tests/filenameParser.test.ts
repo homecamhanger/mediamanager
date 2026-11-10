@@ -47,5 +47,25 @@ describe('parseMediaFilename', () => {
     expect(multi.episodeNumber).toBe(15);
     expect(multi.multiEpisodeEnd).toBe(16);
     expect(multi.resolution).toBe('720p');
+
+    const triple = parseMediaFilename('/tv/Andor/Season 01/Andor.S01E01-E02-E03.Ferrix.1080p.WEB-DL.mp4', 'tvshow');
+    expect(triple.seasonNumber).toBe(1);
+    expect(triple.episodeNumber).toBe(1);
+    expect(triple.multiEpisodeEnd).toBe(3);
+
+    const compactHyphen = parseMediaFilename('/tv/Andor/Season 01/Andor.S01E01-02.1080p.WEB-DL.mp4', 'tvshow');
+    expect(compactHyphen.seasonNumber).toBe(1);
+    expect(compactHyphen.episodeNumber).toBe(1);
+    expect(compactHyphen.multiEpisodeEnd).toBe(2);
+
+    const xMulti = parseMediaFilename('/tv/Arcane/Season 01/Arcane.1x01-03.Pilot.1080p.mkv', 'tvshow');
+    expect(xMulti.seasonNumber).toBe(1);
+    expect(xMulti.episodeNumber).toBe(1);
+    expect(xMulti.multiEpisodeEnd).toBe(3);
+
+    const noFalseRes = parseMediaFilename('/tv/Andor/Season 01/Andor.S01E01-1080p.WEB-DL.mp4', 'tvshow');
+    expect(noFalseRes.seasonNumber).toBe(1);
+    expect(noFalseRes.episodeNumber).toBe(1);
+    expect(noFalseRes.multiEpisodeEnd).toBeNull();
   });
 });
