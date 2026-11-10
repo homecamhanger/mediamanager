@@ -33,9 +33,9 @@ import type {
 } from '../../shared/types.js';
 import { api, getArtworkUrl } from '../lib/api.js';
 import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
+import { ArtworkPickerModal, ArtworkPickerTarget, ClickableArtCard } from './ArtworkPickerModal.js';
 import { CastListColumn } from './CastListColumn.js';
 import { ChipInput } from './ChipInput.js';
-import { FileDropZone } from './FileDropZone.js';
 import { PosterImage } from './PosterImage.js';
 import { TechBadges } from './QualityBadges.js';
 import { RatingBadges } from './RatingBadges.js';
@@ -97,7 +97,7 @@ export const TvShowDetailPanel: React.FC<{
   const [scrapeOpen, setScrapeOpen] = useState(false);
   const [subTargetEp, setSubTargetEp] = useState<TvEpisodeRecord | null>(null);
   const [artCacheKey, setArtCacheKey] = useState(0);
-  const [customArtUrl, setCustomArtUrl] = useState<Record<string, string>>({});
+  const [artPickerTarget, setArtPickerTarget] = useState<ArtworkPickerTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -354,11 +354,45 @@ export const TvShowDetailPanel: React.FC<{
     notify(`Updated ${kind} artwork`);
   };
 
-  const handleUploadSeasonPoster = async (seasonId: number, seasonName: string, dataBase64: string) => {
-    await api.setSeasonArtwork(seasonId, 'poster', undefined, dataBase64);
+  const handlePickSeasonPoster = async (
+    seasonId: number,
+    seasonName: string,
+    url?: string,
+    dataBase64?: string
+  ) => {
+    await api.setSeasonArtwork(seasonId, 'poster', url, dataBase64);
     await load();
     onUpdated();
     notify(`Updated ${seasonName} poster`);
+  };
+
+  const openShowArtPicker = (
+    kind: ArtworkKind,
+    label: string,
+    aspect: 'poster' | 'fanart' | 'banner' | 'square' | 'logo'
+  ) => {
+    setArtPickerTarget({
+      mediaType: 'tvshow',
+      mediaId: show.id,
+      mediaTitle: `${show.title}${show.year ? ` (${show.year})` : ''}`,
+      kind,
+      label,
+      aspect,
+      currentPath: show.artwork[kind],
+      initialCandidates: show.artworkCandidates?.[kind],
+    });
+  };
+
+  const openSeasonArtPicker = (season: TvSeasonRecord) => {
+    setArtPickerTarget({
+      mediaType: 'season',
+      mediaId: season.id,
+      mediaTitle: `${show.title} · ${season.name}`,
+      kind: 'poster',
+      label: `${season.name} Poster`,
+      aspect: 'poster',
+      currentPath: season.posterPath ?? show.artwork.poster,
+    });
   };
 
   const handleSaveActors = async (actors: ActorEntry[]) => {
@@ -876,45 +910,13 @@ export const TvShowDetailPanel: React.FC<{
             {/* Top Row: Show Poster in Top-Left + Metadata Fields */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
               <div className="lg:col-span-3 xl:col-span-3 space-y-2.5">
-                <div className="p-3 rounded-xl bg-slate-900/75 border border-slate-800 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-200">Series Poster (2:3)</span>
-                    <span
-                      className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
-                        show.artwork.poster ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
-                      }`}
-                    >
-                      {show.artwork.poster ? 'Present' : 'Missing'}
-                    </span>
-                  </div>
-                  <PosterImage
-                    filePath={show.artwork.poster}
-                    alt={`${show.title} Poster`}
-                    aspect="poster"
-                    cacheKey={artCacheKey}
-                    className="w-full shadow-xl"
-                  />
-                  <div className="flex gap-1.5">
-                    <input
-                      value={customArtUrl.poster ?? ''}
-                      onChange={(e) => setCustomArtUrl((p) => ({ ...p, poster: e.target.value }))}
-                      placeholder="URL or blank to generate"
-                      className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[11px] text-slate-200"
-                    />
-                    <button
-                      onClick={() => handlePickArtwork('poster', customArtUrl.poster || undefined)}
-                      className="px-2 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/30 text-sky-300 text-[11px] font-semibold cursor-pointer shrink-0"
-                    >
-                      {customArtUrl.poster ? 'Fetch' : 'Generate'}
-                    </button>
-                  </div>
-                  <FileDropZone
-                    accept="image/png,image/jpeg,image/webp"
-                    label="Drop poster image or browse"
-                    compact
-                    onFileLoaded={({ content }) => handlePickArtwork('poster', undefined, content)}
-                  />
-                </div>
+                <ClickableArtCard
+                  label="Series Poster (2:3)"
+                  filePath={show.artwork.poster}
+                  aspect="poster"
+                  cacheKey={artCacheKey}
+                  onClick={() => openShowArtPicker('poster', 'Series Poster (2:3)', 'poster')}
+                />
               </div>
 
               <div className="lg:col-span-9 xl:col-span-9 space-y-3">
@@ -1015,50 +1017,16 @@ export const TvShowDetailPanel: React.FC<{
                   </span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                  {SHOW_OTHER_ARTWORK_SLOTS.map((slot) => {
-                    const current = show.artwork[slot.kind];
-                    return (
-                      <div key={slot.kind} className="p-3 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2.5">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-slate-200">{slot.label}</span>
-                          <span
-                            className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
-                              current ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
-                            }`}
-                          >
-                            {current ? 'Present' : 'Missing'}
-                          </span>
-                        </div>
-                        <PosterImage
-                          filePath={current}
-                          alt={slot.label}
-                          aspect={slot.aspect}
-                          cacheKey={artCacheKey}
-                          className="w-full"
-                        />
-                        <div className="flex gap-1.5">
-                          <input
-                            value={customArtUrl[slot.kind] ?? ''}
-                            onChange={(e) => setCustomArtUrl((p) => ({ ...p, [slot.kind]: e.target.value }))}
-                            placeholder="URL or blank to auto-generate"
-                            className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[11px] text-slate-200"
-                          />
-                          <button
-                            onClick={() => handlePickArtwork(slot.kind, customArtUrl[slot.kind] || undefined)}
-                            className="px-2 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/30 text-sky-300 text-[11px] font-semibold cursor-pointer shrink-0"
-                          >
-                            {customArtUrl[slot.kind] ? 'Fetch' : 'Generate'}
-                          </button>
-                        </div>
-                        <FileDropZone
-                          accept="image/png,image/jpeg,image/webp"
-                          label="Drop image or browse local file"
-                          compact
-                          onFileLoaded={({ content }) => handlePickArtwork(slot.kind, undefined, content)}
-                        />
-                      </div>
-                    );
-                  })}
+                  {SHOW_OTHER_ARTWORK_SLOTS.map((slot) => (
+                    <ClickableArtCard
+                      key={slot.kind}
+                      label={slot.label}
+                      filePath={show.artwork[slot.kind]}
+                      aspect={slot.aspect}
+                      cacheKey={artCacheKey}
+                      onClick={() => openShowArtPicker(slot.kind, slot.label, slot.aspect)}
+                    />
+                  ))}
                 </div>
               </div>
 
@@ -1067,16 +1035,15 @@ export const TvShowDetailPanel: React.FC<{
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2.5">Season Posters</h4>
                   <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
                     {seasons.map((s) => (
-                      <div key={s.id} className="space-y-1.5 p-2 rounded-xl bg-slate-900/60 border border-slate-800">
-                        <PosterImage filePath={s.posterPath ?? show.artwork.poster} alt={s.name} cacheKey={artCacheKey} />
-                        <div className="text-[11px] font-semibold text-center text-slate-300">{s.name}</div>
-                        <FileDropZone
-                          accept="image/png,image/jpeg,image/webp"
-                          label="Upload poster"
-                          compact
-                          onFileLoaded={({ content }) => handleUploadSeasonPoster(s.id, s.name, content)}
-                        />
-                      </div>
+                      <ClickableArtCard
+                        key={s.id}
+                        label={s.name}
+                        filePath={s.posterPath ?? show.artwork.poster}
+                        aspect="poster"
+                        cacheKey={artCacheKey}
+                        statusLabel={s.posterPath ? 'Custom' : 'Inherited'}
+                        onClick={() => openSeasonArtPicker(s)}
+                      />
                     ))}
                   </div>
                 </div>
@@ -1186,6 +1153,19 @@ export const TvShowDetailPanel: React.FC<{
           onClose={() => setSubTargetEp(null)}
         />
       )}
+
+      <ArtworkPickerModal
+        target={artPickerTarget}
+        cacheKey={artCacheKey}
+        onApply={({ url, dataBase64 }) => {
+          if (!artPickerTarget) return;
+          if (artPickerTarget.mediaType === 'season') {
+            return handlePickSeasonPoster(artPickerTarget.mediaId, artPickerTarget.label, url, dataBase64);
+          }
+          return handlePickArtwork(artPickerTarget.kind, url, dataBase64);
+        }}
+        onClose={() => setArtPickerTarget(null)}
+      />
     </div>
   );
 };

@@ -335,6 +335,7 @@ export class MediaDatabase {
         user_rating REAL,
         date_added TEXT NOT NULL,
         artwork_json TEXT NOT NULL DEFAULT '{}',
+        artwork_candidates_json TEXT NOT NULL DEFAULT '{}',
         updated_at TEXT NOT NULL
       );
 
@@ -432,6 +433,9 @@ export class MediaDatabase {
     const tvCols = this.db.prepare('PRAGMA table_info(tv_shows)').all() as Array<{ name: string }>;
     if (!tvCols.some((c) => c.name === 'episode_guide_json')) {
       this.db.exec("ALTER TABLE tv_shows ADD COLUMN episode_guide_json TEXT NOT NULL DEFAULT '[]'");
+    }
+    if (!tvCols.some((c) => c.name === 'artwork_candidates_json')) {
+      this.db.exec("ALTER TABLE tv_shows ADD COLUMN artwork_candidates_json TEXT NOT NULL DEFAULT '{}'");
     }
   }
 
@@ -1104,7 +1108,7 @@ export class MediaDatabase {
             source_id = ?, nfo_path = ?, has_nfo = ?, nfo_valid = ?, nfo_warnings_json = ?, scraped = ?, scraped_source = ?,
             title = ?, original_title = ?, sort_title = ?, year = ?, premiered = ?, status = ?, plot = ?, mpaa = ?, studio = ?,
           genres_json = ?, tags_json = ?, actors_json = ?, episode_order = ?, episode_guide_json = ?, unique_ids_json = ?, ratings_json = ?,
-          user_rating = ?, artwork_json = ?, updated_at = ?
+          user_rating = ?, artwork_json = ?, artwork_candidates_json = ?, updated_at = ?
         WHERE id = ?`
       )
       .run(
@@ -1133,6 +1137,7 @@ export class MediaDatabase {
         JSON.stringify(show.ratings),
         show.userRating,
         JSON.stringify(show.artwork),
+        JSON.stringify(show.artworkCandidates ?? {}),
         now,
         existing.id
       );
@@ -1145,8 +1150,8 @@ export class MediaDatabase {
           source_id, folder_path, nfo_path, has_nfo, nfo_valid, nfo_warnings_json, scraped, scraped_source,
           title, original_title, sort_title, year, premiered, status, plot, mpaa, studio,
           genres_json, tags_json, actors_json, episode_order, episode_guide_json, unique_ids_json, ratings_json,
-          user_rating, date_added, artwork_json, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          user_rating, date_added, artwork_json, artwork_candidates_json, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         show.sourceId,
@@ -1176,6 +1181,7 @@ export class MediaDatabase {
         show.userRating,
         show.dateAdded || now,
         JSON.stringify(show.artwork),
+        JSON.stringify(show.artworkCandidates ?? {}),
         now
       );
     return this.getTvShow(Number(res.lastInsertRowid))!;
@@ -1194,6 +1200,7 @@ export class MediaDatabase {
       uniqueIds: patch.uniqueIds ?? cur.uniqueIds,
       ratings: patch.ratings ?? cur.ratings,
       artwork: patch.artwork ?? cur.artwork,
+      artworkCandidates: patch.artworkCandidates ?? cur.artworkCandidates ?? {},
       nfoWarnings: patch.nfoWarnings ?? cur.nfoWarnings,
     };
     this.db
@@ -1202,7 +1209,7 @@ export class MediaDatabase {
           folder_path = ?, nfo_path = ?, has_nfo = ?, nfo_valid = ?, nfo_warnings_json = ?, scraped = ?, scraped_source = ?,
           title = ?, original_title = ?, sort_title = ?, year = ?, premiered = ?, status = ?, plot = ?, mpaa = ?, studio = ?,
           genres_json = ?, tags_json = ?, actors_json = ?, episode_order = ?, episode_guide_json = ?, unique_ids_json = ?, ratings_json = ?,
-          user_rating = ?, artwork_json = ?, updated_at = ?
+          user_rating = ?, artwork_json = ?, artwork_candidates_json = ?, updated_at = ?
         WHERE id = ?`
       )
       .run(
@@ -1231,6 +1238,7 @@ export class MediaDatabase {
         JSON.stringify(merged.ratings),
         merged.userRating,
         JSON.stringify(merged.artwork),
+        JSON.stringify(merged.artworkCandidates ?? {}),
         new Date().toISOString(),
         id
       );
@@ -1323,6 +1331,7 @@ export class MediaDatabase {
       userRating: row.user_rating != null ? Number(row.user_rating) : null,
       dateAdded: String(row.date_added),
       artwork: { ...emptyArtwork, ...safeJson(row.artwork_json, {}) },
+      artworkCandidates: safeJson(row.artwork_candidates_json, {}),
       seasonsCount: Number(seasonsCountRow.c ?? 0),
       episodesCount: totalEps,
       watchedEpisodesCount: Number(epStatsRow.watched_c ?? 0),

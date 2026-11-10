@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Film, ImageOff } from 'lucide-react';
 import { getArtworkUrl } from '../lib/api.js';
 
@@ -19,6 +19,10 @@ export const PosterImage: React.FC<PosterImageProps> = ({
 }) => {
   const [failed, setFailed] = useState(false);
   const url = getArtworkUrl(filePath, cacheKey);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [url]);
 
   const aspectClass =
     aspect === 'poster'

@@ -281,6 +281,29 @@ export async function saveArtworkToDisk(
     }
   }
 
+  if (sourceUrl && sourceUrl.startsWith('/api/artwork/render')) {
+    try {
+      const parsedUrl = new URL(sourceUrl, 'http://localhost');
+      const params = parsedUrl.searchParams;
+      const variant = params.get('variant') || '';
+      const accent = params.get('accent') || fallbackInput.accentColor;
+      const secondary = params.get('secondary') || fallbackInput.secondaryColor;
+      const resolvedInput: ArtworkRenderInput = {
+        ...fallbackInput,
+        subtitle: params.get('subtitle') ?? fallbackInput.subtitle,
+        episodeCode: params.get('episodeCode') ?? fallbackInput.episodeCode,
+        accentColor: variant === 'alt' ? secondary || '#8b5cf6' : accent,
+        secondaryColor: variant === 'alt' ? accent || '#38bdf8' : secondary,
+      };
+      const ext = path.extname(targetPath).toLowerCase() === '.png' ? '.png' : '.jpg';
+      const rendered = renderArtworkBuffer(resolvedInput, ext);
+      fs.writeFileSync(targetPath, rendered);
+      return targetPath;
+    } catch {
+      // fall through to default render
+    }
+  }
+
   const ext = path.extname(targetPath).toLowerCase() === '.png' ? '.png' : '.jpg';
   const rendered = renderArtworkBuffer(fallbackInput, ext);
   fs.writeFileSync(targetPath, rendered);

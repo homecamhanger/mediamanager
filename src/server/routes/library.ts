@@ -644,6 +644,24 @@ export function createLibraryRouter(db: MediaDatabase): Router {
     }
   });
 
+  router.get('/artwork/candidates', async (req, res) => {
+    const mediaType = String(req.query.mediaType ?? '') as 'movie' | 'tvshow' | 'season' | 'episode';
+    const mediaId = Number(req.query.mediaId);
+    const kind = String(req.query.kind ?? 'poster') as ArtworkKind;
+    const refresh = req.query.refresh === 'true';
+
+    if (!['movie', 'tvshow', 'season', 'episode'].includes(mediaType) || !mediaId) {
+      return res.status(400).json({ error: 'Valid mediaType and mediaId are required' });
+    }
+
+    try {
+      const candidates = await scraper.getArtworkCandidates({ mediaType, mediaId, kind, refresh });
+      res.json({ candidates });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   router.post('/episodes/batch', (req, res) => {
     const { action, episodeIds = [] } = req.body as { action: 'markWatched' | 'markUnwatched' | 'writeNfo'; episodeIds: number[] };
     let affected = 0;

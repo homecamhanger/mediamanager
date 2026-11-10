@@ -22,6 +22,7 @@ import {
 import type { ActorEntry, ArtworkKind, MovieRecord, NfoValidationReport } from '../../shared/types.js';
 import { api, formatBytes, getArtworkUrl } from '../lib/api.js';
 import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
+import { ArtworkPickerModal, ArtworkPickerTarget, ClickableArtCard } from './ArtworkPickerModal.js';
 import { CastListColumn } from './CastListColumn.js';
 import { ChipInput } from './ChipInput.js';
 import { FileDropZone } from './FileDropZone.js';
@@ -69,7 +70,7 @@ export const MovieDetailPanel: React.FC<{
   const [form, setForm] = useState<Partial<MovieRecord>>({});
   const [nfoXml, setNfoXml] = useState('');
   const [nfoVal, setNfoVal] = useState<NfoValidationReport | null>(null);
-  const [customArtUrl, setCustomArtUrl] = useState<Record<string, string>>({});
+  const [artPickerTarget, setArtPickerTarget] = useState<ArtworkPickerTarget | null>(null);
   const [uploadSubLang, setUploadSubLang] = useState('en');
   const [editionDraft, setEditionDraft] = useState('');
   const [confirmDeleteMode, setConfirmDeleteMode] = useState<'db' | 'files' | null>(null);
@@ -235,8 +236,24 @@ export const MovieDetailPanel: React.FC<{
 
   const fanartUrl = getArtworkUrl(movie.artwork.fanart, artCacheKey);
   const clearlogoUrl = getArtworkUrl(movie.artwork.clearlogo, artCacheKey);
-  const posterCandidates = movie.artworkCandidates?.poster ?? [];
   const otherArtPresentCount = OTHER_ARTWORK_SLOTS.filter((s) => Boolean(movie.artwork[s.kind])).length;
+
+  const openMovieArtPicker = (
+    kind: ArtworkKind,
+    label: string,
+    aspect: 'poster' | 'fanart' | 'banner' | 'square' | 'logo'
+  ) => {
+    setArtPickerTarget({
+      mediaType: 'movie',
+      mediaId: movie.id,
+      mediaTitle: `${movie.title}${movie.year ? ` (${movie.year})` : ''}`,
+      kind,
+      label,
+      aspect,
+      currentPath: movie.artwork[kind],
+      initialCandidates: movie.artworkCandidates?.[kind],
+    });
+  };
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -365,58 +382,13 @@ export const MovieDetailPanel: React.FC<{
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
               {/* Top-Left Poster Column */}
               <div className="lg:col-span-3 xl:col-span-3 space-y-2.5">
-                <div className="p-3 rounded-xl bg-slate-900/75 border border-slate-800 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-200">Poster (2:3)</span>
-                    <span
-                      className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
-                        movie.artwork.poster ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
-                      }`}
-                    >
-                      {movie.artwork.poster ? 'Present' : 'Missing'}
-                    </span>
-                  </div>
-                  <PosterImage
-                    filePath={movie.artwork.poster}
-                    alt={`${movie.title} Poster`}
-                    aspect="poster"
-                    cacheKey={artCacheKey}
-                    className="w-full shadow-xl"
-                  />
-                  <div className="flex gap-1.5">
-                    <input
-                      value={customArtUrl.poster ?? ''}
-                      onChange={(e) => setCustomArtUrl((p) => ({ ...p, poster: e.target.value }))}
-                      placeholder="URL or blank to generate"
-                      className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[11px] text-slate-200"
-                    />
-                    <button
-                      onClick={() => handlePickArtwork('poster', customArtUrl.poster || undefined)}
-                      className="px-2 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/30 text-sky-300 text-[11px] font-semibold cursor-pointer shrink-0"
-                    >
-                      {customArtUrl.poster ? 'Fetch' : 'Generate'}
-                    </button>
-                  </div>
-                  <FileDropZone
-                    accept="image/png,image/jpeg,image/webp"
-                    label="Drop poster image or browse"
-                    compact
-                    onFileLoaded={({ content }) => handlePickArtwork('poster', undefined, content)}
-                  />
-                  {posterCandidates.length > 0 && (
-                    <div className="flex gap-1 overflow-x-auto pt-0.5">
-                      {posterCandidates.map((c, idx) => (
-                        <button
-                          key={idx}
-                          onClick={() => handlePickArtwork('poster', c.url)}
-                          className="shrink-0 px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 cursor-pointer"
-                        >
-                          {c.provider.toUpperCase()} #{idx + 1}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                <ClickableArtCard
+                  label="Poster (2:3)"
+                  filePath={movie.artwork.poster}
+                  aspect="poster"
+                  cacheKey={artCacheKey}
+                  onClick={() => openMovieArtPicker('poster', 'Poster (2:3)', 'poster')}
+                />
               </div>
 
               {/* Right Metadata Form Column */}
@@ -545,58 +517,16 @@ export const MovieDetailPanel: React.FC<{
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                {OTHER_ARTWORK_SLOTS.map((slot) => {
-                  const current = movie.artwork[slot.kind];
-                  const candidates = movie.artworkCandidates?.[slot.kind] ?? [];
-                  return (
-                    <div key={slot.kind} className="p-3 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-slate-200">{slot.label}</span>
-                        <span
-                          className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
-                            current ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
-                          }`}
-                        >
-                          {current ? 'Present' : 'Missing'}
-                        </span>
-                      </div>
-                      <PosterImage filePath={current} alt={slot.label} aspect={slot.aspect} cacheKey={artCacheKey} className="w-full" />
-                      <div className="flex gap-1.5">
-                        <input
-                          value={customArtUrl[slot.kind] ?? ''}
-                          onChange={(e) => setCustomArtUrl((p) => ({ ...p, [slot.kind]: e.target.value }))}
-                          placeholder="URL or blank to auto-generate"
-                          className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[11px] text-slate-200"
-                        />
-                        <button
-                          onClick={() => handlePickArtwork(slot.kind, customArtUrl[slot.kind] || undefined)}
-                          className="px-2 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/30 text-sky-300 text-[11px] font-semibold cursor-pointer shrink-0"
-                        >
-                          {customArtUrl[slot.kind] ? 'Fetch' : 'Generate'}
-                        </button>
-                      </div>
-                      <FileDropZone
-                        accept="image/png,image/jpeg,image/webp"
-                        label="Drop image or browse local file"
-                        compact
-                        onFileLoaded={({ content }) => handlePickArtwork(slot.kind, undefined, content)}
-                      />
-                      {candidates.length > 0 && (
-                        <div className="flex gap-1 overflow-x-auto pt-0.5">
-                          {candidates.map((c, idx) => (
-                            <button
-                              key={idx}
-                              onClick={() => handlePickArtwork(slot.kind, c.url)}
-                              className="shrink-0 px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 cursor-pointer"
-                            >
-                              {c.provider.toUpperCase()} #{idx + 1}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                {OTHER_ARTWORK_SLOTS.map((slot) => (
+                  <ClickableArtCard
+                    key={slot.kind}
+                    label={slot.label}
+                    filePath={movie.artwork[slot.kind]}
+                    aspect={slot.aspect}
+                    cacheKey={artCacheKey}
+                    onClick={() => openMovieArtPicker(slot.kind, slot.label, slot.aspect)}
+                  />
+                ))}
               </div>
             </div>
           </div>
@@ -917,6 +847,15 @@ export const MovieDetailPanel: React.FC<{
           onUpdated();
         }}
         onClose={() => setEditSubId(null)}
+      />
+
+      <ArtworkPickerModal
+        target={artPickerTarget}
+        cacheKey={artCacheKey}
+        onApply={({ url, dataBase64 }) =>
+          artPickerTarget ? handlePickArtwork(artPickerTarget.kind, url, dataBase64) : undefined
+        }
+        onClose={() => setArtPickerTarget(null)}
       />
     </div>
   );

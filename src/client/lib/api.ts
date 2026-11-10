@@ -1,6 +1,7 @@
 import type {
   ActivityLogEntry,
   AppPreferences,
+  ArtworkCandidate,
   ArtworkKind,
   BatchJob,
   DashboardSummary,
@@ -140,6 +141,15 @@ export const api = {
     url?: string;
     dataBase64?: string;
   }) => req<{ thumbPath: string }>('/api/actors/thumb', { method: 'POST', body: JSON.stringify(params) }),
+  getArtworkCandidates: (params: {
+    mediaType: 'movie' | 'tvshow' | 'season' | 'episode';
+    mediaId: number;
+    kind: ArtworkKind;
+    refresh?: boolean;
+  }) =>
+    req<{ candidates: ArtworkCandidate[] }>(
+      `/api/artwork/candidates?mediaType=${encodeURIComponent(params.mediaType)}&mediaId=${params.mediaId}&kind=${encodeURIComponent(params.kind)}${params.refresh ? '&refresh=true' : ''}`
+    ),
   updateEpisodeOrder: (
     showId: number,
     payload: {

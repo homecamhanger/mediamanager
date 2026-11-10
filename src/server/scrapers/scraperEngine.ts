@@ -638,6 +638,13 @@ export class ScraperEngine {
       thumbUrl: ep.thumbUrl,
     }));
 
+    const artworkCandidates: Partial<Record<ArtworkKind, ArtworkCandidate[]>> = {};
+    for (const c of bundle.artwork) {
+      const list = artworkCandidates[c.kind] ?? [];
+      list.push(c);
+      artworkCandidates[c.kind] = list;
+    }
+
     const updatedShow = this.db.updateTvShow(showId, {
       scraped: true,
       scrapedSource: bundle.sourcesUsed.join(', '),
@@ -657,6 +664,7 @@ export class ScraperEngine {
       uniqueIds: { ...show.uniqueIds, ...bundle.uniqueIds },
       ratings: bundle.ratings,
       artwork,
+      artworkCandidates,
     });
 
     // Update seasons & episodes from episode guide
@@ -809,6 +817,163 @@ export class ScraperEngine {
     if (!bundle) return { show, matched: false };
     const updated = await this.applyToTvShow(showId, bundle);
     return { show: updated, matched: true };
+  }
+
+  async getArtworkCandidates(params: {
+    mediaType: 'movie' | 'tvshow' | 'season' | 'episode';
+    mediaId: number;
+    kind: ArtworkKind;
+    refresh?: boolean;
+  }): Promise<ArtworkCandidate[]> {
+    const dedupe = (items: ArtworkCandidate[]) => {
+      const seen = new Set<string>();
+      const out: ArtworkCandidate[] = [];
+      for (const item of items) {
+        if (!item.url || seen.has(item.url)) continue;
+        seen.add(item.url);
+        out.push(item);
+      }
+      return out;
+    };
+
+    const buildRenderFallbacks = (
+      title: string,
+      year: number | null,
+      genres: string[],
+      kind: ArtworkKind,
+      opts?: { subtitle?: string; episodeCode?: string }
+    ): ArtworkCandidate[] => {
+      const qs = new URLSearchParams({
+        kind,
+        title,
+        year: year ? String(year) : '',
+        genres: genres.slice(0, 3).join(','),
+      });
+      if (opts?.subtitle) qs.set('subtitle', opts.subtitle);
+      if (opts?.episodeCode) qs.set('episodeCode', opts.episodeCode);
+      return [
+        {
+          kind,
+          url: `/api/artwork/render?${qs.toString()}`,
+          provider: 'kodi-catalog',
+          label: 'Generated Artwork (Primary)',
+        },
+        {
+          kind,
+          url: `/api/artwork/render?${qs.toString()}&variant=alt`,
+          provider: 'fanarttv',
+          label: 'Generated Artwork (Alternate)',
+        },
+      ];
+    };
+
+    if (params.mediaType === 'movie') {
+      const movie = this.db.getMovie(params.mediaId);
+      if (!movie) return [];
+      let byKind = movie.artworkCandidates?.[params.kind] ?? [];
+      if (params.refresh || byKind.length === 0) {
+        const query = movie.parsedInfo.cleanTitle || movie.title;
+        const results = await this.search({ query, mediaKind: 'movie', year: movie.year ?? movie.parsedInfo.year });
+        if (results.length > 0) {
+          const bundle = await this.fetchBundle({
+            externalId: results[0].externalId,
+            provider: results[0].provider,
+            mediaKind: 'movie',
+          });
+          if (bundle) {
+            const grouped: Partial<Record<ArtworkKind, ArtworkCandidate[]>> = { ...(movie.artworkCandidates ?? {}) };
+            for (const c of bundle.artwork) {
+              const arr = grouped[c.kind] ?? [];
+              if (!arr.some((x) => x.url === c.url)) arr.push(c);
+              grouped[c.kind] = arr;
+            }
+            this.db.updateMovie(movie.id, { artworkCandidates: grouped });
+            byKind = grouped[params.kind] ?? [];
+          }
+        }
+      }
+      const fallbacks = buildRenderFallbacks(movie.title, movie.year, movie.genres, params.kind);
+      return dedupe([...byKind, ...fallbacks]);
+    }
+
+    if (params.mediaType === 'tvshow') {
+      const show = this.db.getTvShow(params.mediaId);
+      if (!show) return [];
+      let byKind = show.artworkCandidates?.[params.kind] ?? [];
+      if (params.refresh || byKind.length === 0) {
+        const results = await this.search({ query: show.title, mediaKind: 'tvshow', year: show.year });
+        if (results.length > 0) {
+          const bundle = await this.fetchBundle({
+            externalId: results[0].externalId,
+            provider: results[0].provider,
+            mediaKind: 'tvshow',
+          });
+          if (bundle) {
+            const grouped: Partial<Record<ArtworkKind, ArtworkCandidate[]>> = { ...(show.artworkCandidates ?? {}) };
+            for (const c of bundle.artwork) {
+              const arr = grouped[c.kind] ?? [];
+              if (!arr.some((x) => x.url === c.url)) arr.push(c);
+              grouped[c.kind] = arr;
+            }
+            this.db.updateTvShow(show.id, { artworkCandidates: grouped });
+            byKind = grouped[params.kind] ?? [];
+          }
+        }
+      }
+      const fallbacks = buildRenderFallbacks(show.title, show.year, show.genres, params.kind);
+      return dedupe([...byKind, ...fallbacks]);
+    }
+
+    if (params.mediaType === 'season') {
+      const season = this.db.getTvSeasonById(params.mediaId);
+      if (!season) return [];
+      const show = this.db.getTvShow(season.showId);
+      if (!show) return [];
+      const showCandidates = await this.getArtworkCandidates({
+        mediaType: 'tvshow',
+        mediaId: show.id,
+        kind: params.kind === 'banner' ? 'banner' : 'poster',
+        refresh: params.refresh,
+      });
+      const seasonFallbacks = buildRenderFallbacks(show.title, show.year, show.genres, params.kind, {
+        subtitle: season.name,
+      });
+      return dedupe([...seasonFallbacks, ...showCandidates]);
+    }
+
+    // episode
+    const ep = this.db.getTvEpisode(params.mediaId);
+    if (!ep) return [];
+    const show = this.db.getTvShow(ep.showId);
+    const list: ArtworkCandidate[] = [];
+    const guideEntry = show?.episodeGuide?.find(
+      (g) => g.seasonNumber === ep.seasonNumber && g.episodeNumber === ep.episodeNumber
+    );
+    if (guideEntry?.thumbUrl) {
+      list.push({
+        kind: 'thumb',
+        url: guideEntry.thumbUrl,
+        provider: 'tvdb',
+        label: `Episode Guide Still (${ep.title})`,
+      });
+    }
+    const epCode = `S${String(ep.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')}`;
+    list.push(
+      ...buildRenderFallbacks(ep.title, show?.year ?? null, show?.genres ?? [], 'thumb', {
+        subtitle: show?.title ?? ep.showTitle,
+        episodeCode: epCode,
+      })
+    );
+    if (show) {
+      const fanarts = await this.getArtworkCandidates({
+        mediaType: 'tvshow',
+        mediaId: show.id,
+        kind: 'fanart',
+        refresh: params.refresh,
+      });
+      list.push(...fanarts.map((c) => ({ ...c, kind: 'thumb' as ArtworkKind })));
+    }
+    return dedupe(list);
   }
 }
 

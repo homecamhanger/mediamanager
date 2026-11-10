@@ -226,6 +226,7 @@ export interface TvShowRecord {
   dateAdded: string;
 
   artwork: Record<ArtworkKind, string | null>;
+  artworkCandidates?: Partial<Record<ArtworkKind, ArtworkCandidate[]>>;
   seasonsCount: number;
   episodesCount: number;
   watchedEpisodesCount: number;

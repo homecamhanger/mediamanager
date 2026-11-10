@@ -937,11 +937,15 @@ export function buildCatalogArtworkCandidates(
     { kind: 'poster', url: `/api/artwork/render?kind=poster&${base}`, provider: 'tmdb', width: 500, height: 750, label: 'TMDb Official Poster (500x750)' },
     { kind: 'poster', url: `/api/artwork/render?kind=poster&${base}&variant=alt`, provider: 'fanarttv', width: 1000, height: 1500, label: 'Fanart.tv Alt Keyart (1000x1500)' },
     { kind: 'fanart', url: `/api/artwork/render?kind=fanart&${base}`, provider: 'tmdb', width: 1920, height: 1080, label: 'TMDb 1080p Backdrop' },
+    { kind: 'fanart', url: `/api/artwork/render?kind=fanart&${base}&variant=alt`, provider: 'fanarttv', width: 1920, height: 1080, label: 'Fanart.tv Alt Backdrop' },
     { kind: 'clearlogo', url: `/api/artwork/render?kind=clearlogo&${base}`, provider: 'fanarttv', width: 800, height: 310, label: 'Fanart.tv HD ClearLOGO (PNG)' },
+    { kind: 'clearlogo', url: `/api/artwork/render?kind=clearlogo&${base}&variant=alt`, provider: 'tmdb', width: 800, height: 310, label: 'TMDb Alt ClearLOGO (PNG)' },
     { kind: 'clearart', url: `/api/artwork/render?kind=clearart&${base}`, provider: 'fanarttv', width: 800, height: 450, label: 'Fanart.tv HD ClearART (PNG)' },
     { kind: 'banner', url: `/api/artwork/render?kind=banner&${base}`, provider: 'fanarttv', width: 1000, height: 185, label: 'Fanart.tv Wide Banner' },
+    { kind: 'banner', url: `/api/artwork/render?kind=banner&${base}&variant=alt`, provider: 'tvdb', width: 1000, height: 185, label: 'Alt Wide Banner' },
     { kind: 'disc', url: `/api/artwork/render?kind=disc&${base}`, provider: 'fanarttv', width: 600, height: 600, label: 'Fanart.tv Optical DiscART (PNG)' },
     { kind: 'landscape', url: `/api/artwork/render?kind=landscape&${base}`, provider: 'fanarttv', width: 960, height: 540, label: 'Fanart.tv 16:9 Landscape Thumb' },
+    { kind: 'landscape', url: `/api/artwork/render?kind=landscape&${base}&variant=alt`, provider: 'tmdb', width: 960, height: 540, label: 'TMDb Alt 16:9 Landscape' },
   ];
 }
 

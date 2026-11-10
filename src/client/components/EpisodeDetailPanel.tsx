@@ -17,9 +17,10 @@ import {
   Trash2,
   Users,
 } from 'lucide-react';
-import type { ActorEntry, NfoValidationReport, TvEpisodeRecord, TvSeasonRecord, TvShowRecord } from '../../shared/types.js';
+import type { ActorEntry, ArtworkKind, NfoValidationReport, TvEpisodeRecord, TvSeasonRecord, TvShowRecord } from '../../shared/types.js';
 import { api, formatBytes, getArtworkUrl } from '../lib/api.js';
 import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
+import { ArtworkPickerModal, ArtworkPickerTarget, ClickableArtCard } from './ArtworkPickerModal.js';
 import { CastListColumn } from './CastListColumn.js';
 import { ChipInput } from './ChipInput.js';
 import { FileDropZone } from './FileDropZone.js';
@@ -55,7 +56,7 @@ export const EpisodeDetailPanel: React.FC<{
   const [nfoVal, setNfoVal] = useState<NfoValidationReport | null>(null);
   const [subSearchOpen, setSubSearchOpen] = useState(false);
   const [editSubId, setEditSubId] = useState<number | null>(null);
-  const [thumbUrlDraft, setThumbUrlDraft] = useState('');
+  const [artPickerTarget, setArtPickerTarget] = useState<ArtworkPickerTarget | null>(null);
   const [artCacheKey, setArtCacheKey] = useState(0);
   const [uploadSubLang, setUploadSubLang] = useState('en');
   const [confirmDeleteMode, setConfirmDeleteMode] = useState<'db' | 'files' | null>(null);
@@ -194,18 +195,24 @@ export const EpisodeDetailPanel: React.FC<{
 
   const handleSetEpisodeThumb = async (url?: string, dataBase64?: string) => {
     await api.setEpisodeArtwork(episode.id, url, dataBase64);
-    setThumbUrlDraft('');
     await load();
     onUpdated();
     notify('Saved episode thumbnail');
   };
 
-  const handleSetSeasonPoster = async (dataBase64: string) => {
+  const handleSetSeasonPoster = async (url?: string, dataBase64?: string) => {
     if (!matchingSeason) return;
-    await api.setSeasonArtwork(matchingSeason.id, 'poster', undefined, dataBase64);
+    await api.setSeasonArtwork(matchingSeason.id, 'poster', url, dataBase64);
     await load();
     onUpdated();
     notify(`Updated ${matchingSeason.name} poster`);
+  };
+
+  const handleSetShowArtwork = async (kind: ArtworkKind, url?: string, dataBase64?: string) => {
+    await api.setShowArtwork(show.id, kind, url, dataBase64);
+    await load();
+    onUpdated();
+    notify(`Updated series ${kind} artwork`);
   };
 
   const handleSaveActors = async (actors: ActorEntry[]) => {
@@ -360,35 +367,36 @@ export const EpisodeDetailPanel: React.FC<{
             {/* Top Row: Season/Series Poster in Top-Left + Episode Metadata Fields */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
               <div className="lg:col-span-3 xl:col-span-3">
-                <div className="p-3 rounded-xl bg-slate-900/75 border border-slate-800 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-200">
-                      {matchingSeason?.posterPath ? `Season ${effSeason} Poster` : 'Series Poster'}
-                    </span>
-                    <span
-                      className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
-                        seasonOrShowPoster ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
-                      }`}
-                    >
-                      {seasonOrShowPoster ? 'Present' : 'Missing'}
-                    </span>
-                  </div>
-                  <PosterImage
-                    filePath={seasonOrShowPoster}
-                    alt={`${show.title} Season ${effSeason}`}
-                    aspect="poster"
-                    cacheKey={artCacheKey}
-                    className="w-full shadow-xl"
-                  />
-                  {matchingSeason && (
-                    <FileDropZone
-                      accept="image/png,image/jpeg,image/webp"
-                      label={`Upload Season ${effSeason} poster`}
-                      compact
-                      onFileLoaded={({ content }) => handleSetSeasonPoster(content)}
-                    />
-                  )}
-                </div>
+                <ClickableArtCard
+                  label={matchingSeason?.posterPath ? `Season ${effSeason} Poster` : 'Series Poster'}
+                  filePath={seasonOrShowPoster}
+                  aspect="poster"
+                  cacheKey={artCacheKey}
+                  onClick={() =>
+                    setArtPickerTarget(
+                      matchingSeason
+                        ? {
+                            mediaType: 'season',
+                            mediaId: matchingSeason.id,
+                            mediaTitle: `${show.title} · ${matchingSeason.name}`,
+                            kind: 'poster',
+                            label: `${matchingSeason.name} Poster`,
+                            aspect: 'poster',
+                            currentPath: seasonOrShowPoster,
+                          }
+                        : {
+                            mediaType: 'tvshow',
+                            mediaId: show.id,
+                            mediaTitle: show.title,
+                            kind: 'poster',
+                            label: 'Series Poster (2:3)',
+                            aspect: 'poster',
+                            currentPath: show.artwork.poster,
+                            initialCandidates: show.artworkCandidates?.poster,
+                          }
+                    )
+                  }
+                />
               </div>
 
               <div className="lg:col-span-9 xl:col-span-9 space-y-3">
@@ -459,44 +467,24 @@ export const EpisodeDetailPanel: React.FC<{
                 <ImageIcon className="w-3.5 h-3.5 text-sky-400" /> Episode &amp; Series Artwork
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-                <div className="p-3 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-200">Episode Still (16:9)</span>
-                    <span
-                      className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
-                        episode.thumbPath ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-800 text-slate-400'
-                      }`}
-                    >
-                      {episode.thumbPath ? 'Present' : 'Fallback'}
-                    </span>
-                  </div>
-                  <PosterImage
-                    filePath={episode.thumbPath ?? show.artwork.fanart}
-                    alt={episode.title}
-                    aspect="fanart"
-                    cacheKey={artCacheKey}
-                  />
-                  <div className="flex gap-1.5">
-                    <input
-                      value={thumbUrlDraft}
-                      onChange={(e) => setThumbUrlDraft(e.target.value)}
-                      placeholder="URL or blank to generate"
-                      className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[11px] text-slate-200"
-                    />
-                    <button
-                      onClick={() => handleSetEpisodeThumb(thumbUrlDraft || undefined)}
-                      className="px-2 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/30 text-sky-300 text-[11px] font-semibold cursor-pointer shrink-0"
-                    >
-                      {thumbUrlDraft ? 'Fetch' : 'Generate'}
-                    </button>
-                  </div>
-                  <FileDropZone
-                    accept="image/png,image/jpeg,image/webp"
-                    label="Drop episode thumb or browse"
-                    compact
-                    onFileLoaded={({ content }) => handleSetEpisodeThumb(undefined, content)}
-                  />
-                </div>
+                <ClickableArtCard
+                  label="Episode Still (16:9)"
+                  filePath={episode.thumbPath ?? show.artwork.fanart}
+                  aspect="fanart"
+                  cacheKey={artCacheKey}
+                  statusLabel={episode.thumbPath ? 'Present' : 'Fallback'}
+                  onClick={() =>
+                    setArtPickerTarget({
+                      mediaType: 'episode',
+                      mediaId: episode.id,
+                      mediaTitle: `${show.title} ${epCode} — ${episode.title}`,
+                      kind: 'thumb',
+                      label: 'Episode Still (16:9)',
+                      aspect: 'fanart',
+                      currentPath: episode.thumbPath ?? show.artwork.fanart,
+                    })
+                  }
+                />
 
                 {(
                   [
@@ -505,19 +493,25 @@ export const EpisodeDetailPanel: React.FC<{
                     { kind: 'banner', label: 'Series Banner', aspect: 'banner' },
                   ] as const
                 ).map((slot) => (
-                  <div key={slot.kind} className="p-3 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-200">{slot.label}</span>
-                      <span
-                        className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
-                          show.artwork[slot.kind] ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
-                        }`}
-                      >
-                        {show.artwork[slot.kind] ? 'Present' : 'Missing'}
-                      </span>
-                    </div>
-                    <PosterImage filePath={show.artwork[slot.kind]} alt={slot.label} aspect={slot.aspect} />
-                  </div>
+                  <ClickableArtCard
+                    key={slot.kind}
+                    label={slot.label}
+                    filePath={show.artwork[slot.kind]}
+                    aspect={slot.aspect}
+                    cacheKey={artCacheKey}
+                    onClick={() =>
+                      setArtPickerTarget({
+                        mediaType: 'tvshow',
+                        mediaId: show.id,
+                        mediaTitle: show.title,
+                        kind: slot.kind,
+                        label: slot.label,
+                        aspect: slot.aspect,
+                        currentPath: show.artwork[slot.kind],
+                        initialCandidates: show.artworkCandidates?.[slot.kind],
+                      })
+                    }
+                  />
                 ))}
               </div>
             </div>
@@ -796,6 +790,22 @@ export const EpisodeDetailPanel: React.FC<{
           onUpdated();
         }}
         onClose={() => setEditSubId(null)}
+      />
+
+      <ArtworkPickerModal
+        target={artPickerTarget}
+        cacheKey={artCacheKey}
+        onApply={({ url, dataBase64 }) => {
+          if (!artPickerTarget) return;
+          if (artPickerTarget.mediaType === 'episode') {
+            return handleSetEpisodeThumb(url, dataBase64);
+          }
+          if (artPickerTarget.mediaType === 'season') {
+            return handleSetSeasonPoster(url, dataBase64);
+          }
+          return handleSetShowArtwork(artPickerTarget.kind, url, dataBase64);
+        }}
+        onClose={() => setArtPickerTarget(null)}
       />
     </div>
   );

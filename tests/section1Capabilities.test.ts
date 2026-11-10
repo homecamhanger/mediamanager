@@ -256,4 +256,70 @@ describe('Section 1 Capabilities', () => {
       expect(finalScrape.processedCount).toBeLessThanOrEqual(finalScrape.totalCount);
     }
   });
+
+  it('returns scraped artwork candidates for movies, shows, seasons, and episodes and applies alt variants', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kv-sec1-artpick-'));
+    tmpDirs.push(tmp);
+    const db = new MediaDatabase(path.join(tmp, 'test.db'));
+    await resetAndSeedSampleLibrary(db, path.join(tmp, 'sample-library'));
+    const app = createApiApp(db);
+
+    const moviesRes = await request(app).get('/api/movies');
+    const movie = moviesRes.body.movies[0];
+    expect(movie).toBeDefined();
+
+    const movieCandRes = await request(app).get(
+      `/api/artwork/candidates?mediaType=movie&mediaId=${movie.id}&kind=poster`
+    );
+    expect(movieCandRes.status).toBe(200);
+    expect(movieCandRes.body.candidates.length).toBeGreaterThanOrEqual(2);
+    const primaryCandidate = movieCandRes.body.candidates.find((c: { url: string }) => !c.url.includes('variant=alt'));
+    const altCandidate = movieCandRes.body.candidates.find((c: { url: string }) => c.url.includes('variant=alt'));
+    expect(primaryCandidate).toBeDefined();
+    expect(altCandidate).toBeDefined();
+
+    const applyPrimary = await request(app)
+      .post(`/api/movies/${movie.id}/artwork`)
+      .send({ kind: 'poster', url: primaryCandidate.url });
+    expect(applyPrimary.status).toBe(200);
+    const primaryBytes = fs.readFileSync(applyPrimary.body.movie.artwork.poster);
+
+    const applyMovieArt = await request(app)
+      .post(`/api/movies/${movie.id}/artwork`)
+      .send({ kind: 'poster', url: altCandidate.url });
+    expect(applyMovieArt.status).toBe(200);
+    expect(fs.existsSync(applyMovieArt.body.movie.artwork.poster)).toBe(true);
+    const altBytes = fs.readFileSync(applyMovieArt.body.movie.artwork.poster);
+    expect(Buffer.compare(primaryBytes, altBytes)).not.toBe(0);
+
+    const showsRes = await request(app).get('/api/shows');
+    const show = showsRes.body.shows[0];
+    expect(show).toBeDefined();
+
+    const showDetail = await request(app).get(`/api/shows/${show.id}`);
+    const season = showDetail.body.seasons[0];
+    const episode = showDetail.body.episodes[0];
+
+    const showCandRes = await request(app).get(
+      `/api/artwork/candidates?mediaType=tvshow&mediaId=${show.id}&kind=fanart`
+    );
+    expect(showCandRes.status).toBe(200);
+    expect(showCandRes.body.candidates.length).toBeGreaterThanOrEqual(2);
+
+    // Ensure TV show persisted artworkCandidates in DB
+    const refreshedShow = await request(app).get(`/api/shows/${show.id}`);
+    expect(refreshedShow.body.show.artworkCandidates?.fanart?.length).toBeGreaterThanOrEqual(1);
+
+    const seasonCandRes = await request(app).get(
+      `/api/artwork/candidates?mediaType=season&mediaId=${season.id}&kind=poster`
+    );
+    expect(seasonCandRes.status).toBe(200);
+    expect(seasonCandRes.body.candidates.length).toBeGreaterThanOrEqual(2);
+
+    const epCandRes = await request(app).get(
+      `/api/artwork/candidates?mediaType=episode&mediaId=${episode.id}&kind=thumb`
+    );
+    expect(epCandRes.status).toBe(200);
+    expect(epCandRes.body.candidates.length).toBeGreaterThanOrEqual(2);
+  });
 });
