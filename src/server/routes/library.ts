@@ -248,6 +248,98 @@ export function createLibraryRouter(db: MediaDatabase): Router {
     res.json({ show: db.getTvShow(showId) });
   });
 
+  router.post('/shows/:id/episode-order', (req, res) => {
+    const showId = Number(req.params.id);
+    const show = db.getTvShow(showId);
+    if (!show) return res.status(404).json({ error: 'TV Show not found' });
+
+    const {
+      mode = 'display',
+      items = [],
+    } = (req.body ?? {}) as {
+      mode?: 'display' | 'canonical' | 'reset';
+      items?: Array<{ episodeId: number; targetSeason: number; targetEpisode: number }>;
+    };
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'No episode order items provided' });
+    }
+
+    let updatedCount = 0;
+    for (const item of items) {
+      const ep = db.getTvEpisode(Number(item.episodeId));
+      if (!ep || ep.showId !== showId) continue;
+
+      const patch =
+        mode === 'reset'
+          ? {
+              seasonNumber: ep.parsedInfo.seasonNumber ?? ep.seasonNumber,
+              episodeNumber: ep.parsedInfo.episodeNumber ?? ep.episodeNumber,
+              displaySeason: null,
+              displayEpisode: null,
+            }
+          : mode === 'canonical'
+            ? {
+                seasonNumber: Math.max(0, Math.round(Number(item.targetSeason))),
+                episodeNumber: Math.max(0, Math.round(Number(item.targetEpisode))),
+                displaySeason: null,
+                displayEpisode: null,
+              }
+            : {
+                displaySeason: Math.max(0, Math.round(Number(item.targetSeason))),
+                displayEpisode: Math.max(0, Math.round(Number(item.targetEpisode))),
+              };
+
+      const nextEp = db.updateTvEpisode(ep.id, patch);
+      if (!nextEp) continue;
+
+      if (mode === 'canonical' && nextEp.seasonNumber !== ep.seasonNumber) {
+        const seasons = db.listSeasonsForShow(showId);
+        if (!seasons.some((s) => s.seasonNumber === nextEp.seasonNumber)) {
+          db.upsertTvSeason({
+            showId,
+            seasonNumber: nextEp.seasonNumber,
+            name: nextEp.seasonNumber === 0 ? 'Specials' : `Season ${nextEp.seasonNumber}`,
+            overview: '',
+            folderPath: null,
+            nfoPath: null,
+            hasNfo: false,
+            posterPath: null,
+            bannerPath: null,
+          });
+        }
+      }
+
+      const base = path.basename(nextEp.filePath, path.extname(nextEp.filePath));
+      const nfoPath = nextEp.nfoPath ?? path.join(nextEp.folderPath, `${base}.nfo`);
+      const xml = serializeEpisodeNfo(nextEp);
+      fs.mkdirSync(path.dirname(nfoPath), { recursive: true });
+      fs.writeFileSync(nfoPath, xml, 'utf-8');
+      const rep = validateKodiNfoXml(xml);
+      db.updateTvEpisode(nextEp.id, {
+        nfoPath,
+        hasNfo: true,
+        nfoValid: rep.valid,
+        nfoWarnings: rep.warnings,
+      });
+      updatedCount++;
+    }
+
+    db.logActivity(
+      'nfo',
+      'Update Episode Order',
+      `Updated ${updatedCount} episode NFO file(s) for "${show.title}" (${mode} mode)`,
+      'success'
+    );
+
+    res.json({
+      updatedCount,
+      show: db.getTvShow(showId),
+      seasons: db.listSeasonsForShow(showId),
+      episodes: db.listEpisodesForShow(showId),
+    });
+  });
+
   router.patch('/episodes/:id', (req, res) => {
     const epId = Number(req.params.id);
     const { writeNfo = true, ...patch } = req.body ?? {};

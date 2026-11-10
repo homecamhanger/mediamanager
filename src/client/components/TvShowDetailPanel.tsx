@@ -1,14 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   Check,
   Code2,
   Eye,
   EyeOff,
   FileCode2,
   FolderSync,
+  GripVertical,
   Image as ImageIcon,
   Info,
   Languages,
+  RotateCcw,
   Save,
   Sparkles,
   Tv,
@@ -22,7 +27,20 @@ import { RatingBadges } from './RatingBadges.js';
 import { ScrapeModal } from './ScrapeModal.js';
 import { SubtitleSearchModal } from './SubtitleSearchModal.js';
 
-type TvTab = 'episodes' | 'metadata' | 'artwork' | 'nfo';
+type TvTab = 'episodes' | 'order' | 'metadata' | 'artwork' | 'nfo';
+
+function sortEpisodesEffective(eps: TvEpisodeRecord[]): TvEpisodeRecord[] {
+  return [...eps].sort((a, b) => {
+    const as = a.displaySeason ?? a.seasonNumber;
+    const bs = b.displaySeason ?? b.seasonNumber;
+    if (as !== bs) return as - bs;
+    const ae = a.displayEpisode ?? a.episodeNumber;
+    const be = b.displayEpisode ?? b.episodeNumber;
+    if (ae !== be) return ae - be;
+    if (a.seasonNumber !== b.seasonNumber) return a.seasonNumber - b.seasonNumber;
+    return a.episodeNumber - b.episodeNumber;
+  });
+}
 
 export const TvShowDetailPanel: React.FC<{
   showId: number;
@@ -46,6 +64,12 @@ export const TvShowDetailPanel: React.FC<{
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
+  // Season-level episode order state
+  const [orderDraft, setOrderDraft] = useState<TvEpisodeRecord[]>([]);
+  const [orderMode, setOrderMode] = useState<'display' | 'canonical'>('display');
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [orderDirty, setOrderDirty] = useState(false);
+
   const load = async () => {
     const res = await api.getShow(showId);
     setShow(res.show);
@@ -67,6 +91,27 @@ export const TvShowDetailPanel: React.FC<{
     setActiveSeason(selectedSeason ?? 'all');
   }, [selectedSeason, showId]);
 
+  useEffect(() => {
+    if (activeSeason === 'all' && tab === 'order') {
+      setTab('episodes');
+    }
+  }, [activeSeason, tab]);
+
+  const visibleEpisodes = useMemo(() => {
+    const filtered =
+      activeSeason === 'all'
+        ? episodes
+        : episodes.filter((e) => (e.displaySeason ?? e.seasonNumber) === activeSeason);
+    return sortEpisodesEffective(filtered);
+  }, [episodes, activeSeason]);
+
+  useEffect(() => {
+    if (activeSeason !== 'all') {
+      setOrderDraft(visibleEpisodes);
+      setOrderDirty(false);
+    }
+  }, [activeSeason, visibleEpisodes]);
+
   if (!show) {
     return <div className="p-6 text-xs text-slate-400">Loading TV series...</div>;
   }
@@ -76,8 +121,80 @@ export const TvShowDetailPanel: React.FC<{
     setTimeout(() => setToast(null), 2800);
   };
 
-  const visibleEpisodes =
-    activeSeason === 'all' ? episodes : episodes.filter((e) => e.seasonNumber === activeSeason);
+  const hasCustomSeasonOrder =
+    activeSeason !== 'all' &&
+    visibleEpisodes.some(
+      (e) =>
+        e.displaySeason != null ||
+        e.displayEpisode != null ||
+        (e.parsedInfo.episodeNumber != null && e.episodeNumber !== e.parsedInfo.episodeNumber) ||
+        (e.parsedInfo.seasonNumber != null && e.seasonNumber !== e.parsedInfo.seasonNumber)
+    );
+
+  const moveOrderItem = (fromIdx: number, toIdx: number) => {
+    if (toIdx < 0 || toIdx >= orderDraft.length || fromIdx === toIdx) return;
+    setOrderDraft((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, moved);
+      return next;
+    });
+    setOrderDirty(true);
+  };
+
+  const handleSortOrderByAired = () => {
+    setOrderDraft((prev) =>
+      [...prev].sort((a, b) => {
+        if (a.aired && b.aired && a.aired !== b.aired) return a.aired.localeCompare(b.aired);
+        if (a.aired && !b.aired) return -1;
+        if (!a.aired && b.aired) return 1;
+        return a.episodeNumber - b.episodeNumber;
+      })
+    );
+    setOrderDirty(true);
+  };
+
+  const handleApplyOrder = async () => {
+    if (activeSeason === 'all' || orderDraft.length === 0) return;
+    setBusy(true);
+    try {
+      const items = orderDraft.map((ep, idx) => ({
+        episodeId: ep.id,
+        targetSeason: activeSeason,
+        targetEpisode: idx + 1,
+      }));
+      const res = await api.updateEpisodeOrder(show.id, { mode: orderMode, items });
+      setShow(res.show);
+      setSeasons(res.seasons);
+      setEpisodes(res.episodes);
+      setOrderDirty(false);
+      onUpdated();
+      notify(`Saved custom ${orderMode === 'display' ? 'display' : 'episode'} order to ${res.updatedCount} NFO file(s)`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleResetOrder = async () => {
+    if (activeSeason === 'all' || visibleEpisodes.length === 0) return;
+    setBusy(true);
+    try {
+      const items = visibleEpisodes.map((ep) => ({
+        episodeId: ep.id,
+        targetSeason: ep.parsedInfo.seasonNumber ?? ep.seasonNumber,
+        targetEpisode: ep.parsedInfo.episodeNumber ?? ep.episodeNumber,
+      }));
+      const res = await api.updateEpisodeOrder(show.id, { mode: 'reset', items });
+      setShow(res.show);
+      setSeasons(res.seasons);
+      setEpisodes(res.episodes);
+      setOrderDirty(false);
+      onUpdated();
+      notify(`Reset Season ${activeSeason} NFOs to filename order`);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const toggleEpisodeWatched = async (ep: TvEpisodeRecord, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -253,6 +370,15 @@ export const TvShowDetailPanel: React.FC<{
         <div className="relative px-5 bg-[#0b0f17]/85 flex items-center gap-1 overflow-x-auto border-t border-slate-800/80">
           {[
             { id: 'episodes', label: `Episodes (${visibleEpisodes.length})`, icon: <Tv className="w-3.5 h-3.5" /> },
+            ...(activeSeason !== 'all'
+              ? [
+                  {
+                    id: 'order',
+                    label: hasCustomSeasonOrder ? `Episode Order · Custom` : 'Episode Order',
+                    icon: <ArrowUpDown className="w-3.5 h-3.5" />,
+                  },
+                ]
+              : []),
             { id: 'metadata', label: 'Series Metadata', icon: <Info className="w-3.5 h-3.5" /> },
             { id: 'artwork', label: 'Show & Season Artwork', icon: <ImageIcon className="w-3.5 h-3.5" /> },
             { id: 'nfo', label: 'tvshow.nfo XML', icon: <Code2 className="w-3.5 h-3.5" /> },
@@ -307,7 +433,7 @@ export const TvShowDetailPanel: React.FC<{
                         : 'bg-slate-900 border border-slate-800 text-slate-300'
                     }`}
                   >
-                    {s.name} ({episodes.filter((e) => e.seasonNumber === s.seasonNumber).length})
+                    {s.name} ({episodes.filter((e) => (e.displaySeason ?? e.seasonNumber) === s.seasonNumber).length})
                   </button>
                 ))}
               </div>
@@ -333,7 +459,17 @@ export const TvShowDetailPanel: React.FC<{
             {/* Dense Episode List */}
             <div className="rounded-xl border border-slate-800 divide-y divide-slate-800/70 bg-slate-900/50 overflow-hidden">
               {visibleEpisodes.map((ep) => {
-                const code = `S${String(ep.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')}${
+                const effSeason = ep.displaySeason ?? ep.seasonNumber;
+                const effEp = ep.displayEpisode ?? ep.episodeNumber;
+                const hasCustomOrder =
+                  ep.displaySeason != null ||
+                  ep.displayEpisode != null ||
+                  (ep.parsedInfo.episodeNumber != null && ep.episodeNumber !== ep.parsedInfo.episodeNumber) ||
+                  (ep.parsedInfo.seasonNumber != null && ep.seasonNumber !== ep.parsedInfo.seasonNumber);
+                const fileCode = `S${String(ep.parsedInfo.seasonNumber ?? ep.seasonNumber).padStart(2, '0')}E${String(
+                  ep.parsedInfo.episodeNumber ?? ep.episodeNumber
+                ).padStart(2, '0')}`;
+                const code = `S${String(effSeason).padStart(2, '0')}E${String(effEp).padStart(2, '0')}${
                   ep.multiEpisodeEnd ? `-${String(ep.multiEpisodeEnd).padStart(2, '0')}` : ''
                 }`;
                 return (
@@ -345,7 +481,14 @@ export const TvShowDetailPanel: React.FC<{
                     }`}
                   >
                     <div className="flex items-center gap-3 min-w-0 flex-1">
-                      <span className="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 font-mono text-xs font-bold shrink-0">
+                      <span
+                        title={hasCustomOrder ? `Custom NFO order (File: ${fileCode})` : undefined}
+                        className={`px-2 py-0.5 rounded font-mono text-xs font-bold shrink-0 ${
+                          hasCustomOrder
+                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                            : 'bg-sky-500/20 text-sky-300'
+                        }`}
+                      >
                         {code}
                       </span>
                       <div className="min-w-0 flex-1">
@@ -389,6 +532,171 @@ export const TvShowDetailPanel: React.FC<{
                       >
                         {ep.watched ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
                       </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {tab === 'order' && activeSeason !== 'all' && (
+          <div className="space-y-4 max-w-4xl">
+            <div className="p-4 rounded-xl bg-slate-900/75 border border-slate-800 space-y-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <ArrowUpDown className="w-4 h-4 text-sky-400" />
+                    Season {activeSeason} Preferred Episode Order (Kodi NFO)
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Drag rows or use the arrow buttons to set your preferred playback sequence without renaming video files.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    onClick={handleSortOrderByAired}
+                    disabled={busy}
+                    className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-200 cursor-pointer"
+                  >
+                    Sort by Aired Date
+                  </button>
+                  <button
+                    onClick={handleResetOrder}
+                    disabled={busy}
+                    className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-200 flex items-center gap-1 cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+                    Reset to File Order
+                  </button>
+                  <button
+                    onClick={handleApplyOrder}
+                    disabled={busy || orderDraft.length === 0}
+                    className="px-3.5 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    {busy ? 'Writing NFOs...' : orderDirty ? 'Save Order & Write NFOs *' : 'Save Order & Write NFOs'}
+                  </button>
+                </div>
+              </div>
+
+              {/* NFO Tag Mode Selection */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOrderMode('display');
+                    setOrderDirty(true);
+                  }}
+                  className={`p-3 rounded-xl border text-left transition cursor-pointer ${
+                    orderMode === 'display'
+                      ? 'bg-sky-500/15 border-sky-500/50 text-white'
+                      : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="text-xs font-bold flex items-center justify-between">
+                    <span>Display Order (&lt;displayseason&gt; / &lt;displayepisode&gt;)</span>
+                    <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
+                      RECOMMENDED
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Preserves original <code className="text-sky-300">&lt;season&gt;</code> &amp;{' '}
+                    <code className="text-sky-300">&lt;episode&gt;</code> file identity while telling Kodi the visual order.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOrderMode('canonical');
+                    setOrderDirty(true);
+                  }}
+                  className={`p-3 rounded-xl border text-left transition cursor-pointer ${
+                    orderMode === 'canonical'
+                      ? 'bg-sky-500/15 border-sky-500/50 text-white'
+                      : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="text-xs font-bold">Canonical Override (&lt;season&gt; / &lt;episode&gt;)</div>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Directly overwrites <code className="text-sky-300">&lt;season&gt;</code> &amp;{' '}
+                    <code className="text-sky-300">&lt;episode&gt;</code> in each episode&apos;s NFO and clears display tags.
+                  </p>
+                </button>
+              </div>
+            </div>
+
+            {/* Reorderable Rows */}
+            <div className="rounded-xl border border-slate-800 divide-y divide-slate-800/70 bg-slate-900/50 overflow-hidden">
+              {orderDraft.map((ep, idx) => {
+                const targetNum = idx + 1;
+                const fileCode = `S${String(ep.parsedInfo.seasonNumber ?? ep.seasonNumber).padStart(2, '0')}E${String(
+                  ep.parsedInfo.episodeNumber ?? ep.episodeNumber
+                ).padStart(2, '0')}`;
+                const targetCode = `S${String(activeSeason).padStart(2, '0')}E${String(targetNum).padStart(2, '0')}`;
+                return (
+                  <div
+                    key={ep.id}
+                    draggable
+                    onDragStart={() => setDragIdx(idx)}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={() => {
+                      if (dragIdx !== null && dragIdx !== idx) {
+                        moveOrderItem(dragIdx, idx);
+                      }
+                      setDragIdx(null);
+                    }}
+                    onDragEnd={() => setDragIdx(null)}
+                    className={`px-3.5 py-2.5 flex items-center justify-between gap-3 transition ${
+                      dragIdx === idx ? 'bg-sky-500/20 opacity-75' : 'hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <span className="cursor-grab text-slate-500 hover:text-slate-300 shrink-0" title="Drag to reorder">
+                        <GripVertical className="w-4 h-4" />
+                      </span>
+                      <span className="w-7 h-7 rounded-lg bg-sky-500/20 border border-sky-500/40 text-sky-300 font-mono text-xs font-extrabold flex items-center justify-center shrink-0">
+                        {targetNum}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-bold text-white truncate">{ep.title}</span>
+                          {ep.aired && <span className="text-[11px] text-slate-500">{ep.aired}</span>}
+                        </div>
+                        <div className="text-[11px] text-slate-400 font-mono truncate mt-0.5">
+                          File: {fileCode} · {ep.fileName}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="hidden sm:inline-block px-2 py-0.5 rounded bg-slate-950 border border-slate-800 font-mono text-[10px] text-amber-300">
+                        {orderMode === 'display'
+                          ? `<displayseason>${activeSeason}</displayseason> <displayepisode>${targetNum}</displayepisode>`
+                          : `<season>${activeSeason}</season> <episode>${targetNum}</episode>`}{' '}
+                        ({targetCode})
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          disabled={idx === 0}
+                          onClick={() => moveOrderItem(idx, idx - 1)}
+                          aria-label={`Move ${ep.title} up`}
+                          className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-slate-200 cursor-pointer"
+                        >
+                          <ArrowUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={idx === orderDraft.length - 1}
+                          onClick={() => moveOrderItem(idx, idx + 1)}
+                          aria-label={`Move ${ep.title} down`}
+                          className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-slate-200 cursor-pointer"
+                        >
+                          <ArrowDown className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );

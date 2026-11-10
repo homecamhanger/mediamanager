@@ -1452,7 +1452,11 @@ export class MediaDatabase {
 
   listEpisodesForShow(showId: number): TvEpisodeRecord[] {
     const rows = this.db
-      .prepare('SELECT * FROM tv_episodes WHERE show_id = ? ORDER BY season_number ASC, episode_number ASC')
+      .prepare(
+        `SELECT * FROM tv_episodes
+         WHERE show_id = ?
+         ORDER BY COALESCE(display_season, season_number) ASC, COALESCE(display_episode, episode_number) ASC, season_number ASC, episode_number ASC`
+      )
       .all(showId) as Array<Record<string, unknown>>;
     const allSubs = this.listAllSubtitles().filter((s) => s.mediaType === 'episode');
     const subsByEp = new Map<number, SubtitleFileRecord[]>();
@@ -1466,7 +1470,10 @@ export class MediaDatabase {
 
   listAllEpisodes(): TvEpisodeRecord[] {
     const rows = this.db
-      .prepare('SELECT * FROM tv_episodes ORDER BY show_id ASC, season_number ASC, episode_number ASC')
+      .prepare(
+        `SELECT * FROM tv_episodes
+         ORDER BY show_id ASC, COALESCE(display_season, season_number) ASC, COALESCE(display_episode, episode_number) ASC, season_number ASC, episode_number ASC`
+      )
       .all() as Array<Record<string, unknown>>;
     const allSubs = this.listAllSubtitles().filter((s) => s.mediaType === 'episode');
     const subsByEp = new Map<number, SubtitleFileRecord[]>();

@@ -212,6 +212,10 @@ export function createNfoRouter(db: MediaDatabase): Router {
         ...(parsed
           ? {
               title: parsed.title ?? ep.title,
+              seasonNumber: parsed.seasonNumber ?? ep.seasonNumber,
+              episodeNumber: parsed.episodeNumber ?? ep.episodeNumber,
+              displaySeason: parsed.displaySeason ?? null,
+              displayEpisode: parsed.displayEpisode ?? null,
               plot: parsed.plot ?? ep.plot,
               aired: parsed.aired ?? ep.aired,
               runtimeMinutes: parsed.runtimeMinutes ?? ep.runtimeMinutes,

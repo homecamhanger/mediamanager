@@ -100,6 +100,19 @@ export const api = {
     req<{ show: TvShowRecord }>(`/api/shows/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   updateEpisode: (id: number, patch: Partial<TvEpisodeRecord> & { writeNfo?: boolean }) =>
     req<{ episode: TvEpisodeRecord }>(`/api/episodes/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  updateEpisodeOrder: (
+    showId: number,
+    payload: {
+      mode: 'display' | 'canonical' | 'reset';
+      items: Array<{ episodeId: number; targetSeason: number; targetEpisode: number }>;
+    }
+  ) =>
+    req<{
+      updatedCount: number;
+      show: TvShowRecord;
+      seasons: TvSeasonRecord[];
+      episodes: TvEpisodeRecord[];
+    }>(`/api/shows/${showId}/episode-order`, { method: 'POST', body: JSON.stringify(payload) }),
   batchEpisodes: (action: 'markWatched' | 'markUnwatched' | 'writeNfo', episodeIds: number[]) =>
     req<{ affected: number }>('/api/episodes/batch', { method: 'POST', body: JSON.stringify({ action, episodeIds }) }),
 

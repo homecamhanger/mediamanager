@@ -68,9 +68,19 @@ export const EpisodeDetailPanel: React.FC<{
     setTimeout(() => setToast(null), 2800);
   };
 
-  const epCode = `S${String(episode.seasonNumber).padStart(2, '0')}E${String(episode.episodeNumber).padStart(2, '0')}${
+  const effSeason = episode.displaySeason ?? episode.seasonNumber;
+  const effEp = episode.displayEpisode ?? episode.episodeNumber;
+  const epCode = `S${String(effSeason).padStart(2, '0')}E${String(effEp).padStart(2, '0')}${
     episode.multiEpisodeEnd ? `-${String(episode.multiEpisodeEnd).padStart(2, '0')}` : ''
   }`;
+  const fileCode = `S${String(episode.parsedInfo.seasonNumber ?? episode.seasonNumber).padStart(2, '0')}E${String(
+    episode.parsedInfo.episodeNumber ?? episode.episodeNumber
+  ).padStart(2, '0')}`;
+  const hasCustomOrder =
+    episode.displaySeason != null ||
+    episode.displayEpisode != null ||
+    (episode.parsedInfo.episodeNumber != null && episode.episodeNumber !== episode.parsedInfo.episodeNumber) ||
+    (episode.parsedInfo.seasonNumber != null && episode.seasonNumber !== episode.parsedInfo.seasonNumber);
 
   const handleSaveMetadata = async () => {
     setSaving(true);
@@ -149,13 +159,18 @@ export const EpisodeDetailPanel: React.FC<{
           </button>
           <span>/</span>
           <button
-            onClick={() => onSelectShow(show.id, episode.seasonNumber)}
+            onClick={() => onSelectShow(show.id, effSeason)}
             className="hover:text-slate-200 cursor-pointer"
           >
-            Season {episode.seasonNumber}
+            Season {effSeason}
           </button>
           <span>/</span>
           <span className="font-mono text-slate-200">{epCode}</span>
+          {hasCustomOrder && (
+            <span className="px-1.5 py-0.2 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 font-mono text-[10px]">
+              File: {fileCode}
+            </span>
+          )}
         </div>
 
         <div className="px-5 py-3 flex flex-wrap items-center justify-between gap-3">

@@ -86,7 +86,8 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
       const node = showTree.find((n) => n.show.id === selected.showId);
       const ep = node?.episodes.find((e) => e.id === selected.episodeId);
       if (ep) {
-        const key = `${selected.showId}:${ep.seasonNumber}`;
+        const effSeason = ep.displaySeason ?? ep.seasonNumber;
+        const key = `${selected.showId}:${effSeason}`;
         setExpandedSeasons((prev) => (prev.has(key) ? prev : new Set([...prev, key])));
       }
     }
@@ -135,7 +136,7 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
         let scopedNode = node;
         if (tvFilter === 'nfo_warnings' && !showHasNfoWarn) {
           const warnEps = node.episodes.filter(epHasNfoWarn);
-          const seasonNums = new Set(warnEps.map((e) => e.seasonNumber));
+          const seasonNums = new Set(warnEps.map((e) => e.displaySeason ?? e.seasonNumber));
           scopedNode = {
             show: node.show,
             seasons: node.seasons.filter((s) => seasonNums.has(s.seasonNumber)),
@@ -143,7 +144,7 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
           };
         } else if (tvFilter === 'missing_subs') {
           const noSubEps = node.episodes.filter(epMissingSubs);
-          const seasonNums = new Set(noSubEps.map((e) => e.seasonNumber));
+          const seasonNums = new Set(noSubEps.map((e) => e.displaySeason ?? e.seasonNumber));
           scopedNode = {
             show: node.show,
             seasons: node.seasons.filter((s) => seasonNums.has(s.seasonNumber)),
@@ -154,13 +155,16 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
         if (!q) return scopedNode;
         const showTitleMatch = `${scopedNode.show.title} ${scopedNode.show.year ?? ''} ${scopedNode.show.studio}`.toLowerCase().includes(q);
         const matchingEps = scopedNode.episodes.filter((ep) => {
+          const effSeason = ep.displaySeason ?? ep.seasonNumber;
+          const effEp = ep.displayEpisode ?? ep.episodeNumber;
           const code = `s${String(ep.seasonNumber).padStart(2, '0')}e${String(ep.episodeNumber).padStart(2, '0')}`;
-          return `${ep.title} ${code} ${ep.fileName}`.toLowerCase().includes(q);
+          const effCode = `s${String(effSeason).padStart(2, '0')}e${String(effEp).padStart(2, '0')}`;
+          return `${ep.title} ${code} ${effCode} ${ep.fileName}`.toLowerCase().includes(q);
         });
         if (!showTitleMatch && matchingEps.length === 0) return null;
 
         if (showTitleMatch) return scopedNode;
-        const seasonNums = new Set(matchingEps.map((e) => e.seasonNumber));
+        const seasonNums = new Set(matchingEps.map((e) => e.displaySeason ?? e.seasonNumber));
         return {
           show: scopedNode.show,
           seasons: scopedNode.seasons.filter((s) => seasonNums.has(s.seasonNumber)),
@@ -641,8 +645,13 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                             selected.showId === show.id &&
                             selected.seasonNumber === season.seasonNumber;
                           const seasonEps = episodes
-                            .filter((ep) => ep.seasonNumber === season.seasonNumber)
-                            .sort((a, b) => a.episodeNumber - b.episodeNumber);
+                            .filter((ep) => (ep.displaySeason ?? ep.seasonNumber) === season.seasonNumber)
+                            .sort((a, b) => {
+                              const ae = a.displayEpisode ?? a.episodeNumber;
+                              const be = b.displayEpisode ?? b.episodeNumber;
+                              if (ae !== be) return ae - be;
+                              return a.episodeNumber - b.episodeNumber;
+                            });
                           const watchedCount = seasonEps.filter((e) => e.watched).length;
 
                           return (
@@ -681,9 +690,19 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                                 <div className="bg-[#080c15]/70">
                                   {seasonEps.map((ep) => {
                                     const isEpSelected = selected?.kind === 'episode' && selected.episodeId === ep.id;
-                                    const code = `S${String(ep.seasonNumber).padStart(2, '0')}E${String(
-                                      ep.episodeNumber
-                                    ).padStart(2, '0')}${ep.multiEpisodeEnd ? `-${String(ep.multiEpisodeEnd).padStart(2, '0')}` : ''}`;
+                                    const effSeason = ep.displaySeason ?? ep.seasonNumber;
+                                    const effEp = ep.displayEpisode ?? ep.episodeNumber;
+                                    const hasCustomOrder =
+                                      ep.displaySeason != null ||
+                                      ep.displayEpisode != null ||
+                                      (ep.parsedInfo.episodeNumber != null && ep.episodeNumber !== ep.parsedInfo.episodeNumber) ||
+                                      (ep.parsedInfo.seasonNumber != null && ep.seasonNumber !== ep.parsedInfo.seasonNumber);
+                                    const fileCode = `S${String(ep.parsedInfo.seasonNumber ?? ep.seasonNumber).padStart(2, '0')}E${String(
+                                      ep.parsedInfo.episodeNumber ?? ep.episodeNumber
+                                    ).padStart(2, '0')}`;
+                                    const code = `S${String(effSeason).padStart(2, '0')}E${String(effEp).padStart(2, '0')}${
+                                      ep.multiEpisodeEnd ? `-${String(ep.multiEpisodeEnd).padStart(2, '0')}` : ''
+                                    }`;
                                     return (
                                       <div
                                         key={ep.id}
@@ -696,7 +715,14 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                                             : 'hover:bg-slate-800/40 border-l-2 border-l-transparent text-slate-300'
                                         }`}
                                       >
-                                        <span className="px-1 py-0.2 rounded bg-slate-800 text-sky-300 font-mono text-[10px] font-semibold shrink-0">
+                                        <span
+                                          title={hasCustomOrder ? `Custom NFO order (File: ${fileCode})` : undefined}
+                                          className={`px-1 py-0.2 rounded font-mono text-[10px] font-semibold shrink-0 ${
+                                            hasCustomOrder
+                                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                              : 'bg-slate-800 text-sky-300'
+                                          }`}
+                                        >
                                           {code}
                                         </span>
                                         <span className="text-[11px] truncate flex-1">{ep.title}</span>

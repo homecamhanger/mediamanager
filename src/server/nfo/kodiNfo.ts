@@ -61,6 +61,14 @@ function escapeXml(str: string | number | null | undefined): string {
     .replace(/'/g, '&apos;');
 }
 
+function parseOptionalInt(val: string, allowNegative = false): number | null {
+  if (!val) return null;
+  const n = Number(val);
+  if (!Number.isInteger(n)) return null;
+  if (!allowNegative && n < 0) return null;
+  return n;
+}
+
 function parseUniqueIds(node: Record<string, unknown>): UniqueIds {
   const ids: UniqueIds = {};
   for (const u of asArray<Record<string, unknown> | string>(node.uniqueid as Record<string, unknown>[])) {
@@ -345,10 +353,10 @@ export function parseEpisodeNfoXml(xmlContent: string): ParsedEpisodeNfo[] {
       out.push({
         title: textOf(ep.title) || undefined,
         showTitle: textOf(ep.showtitle) || undefined,
-        seasonNumber: textOf(ep.season) ? Number(textOf(ep.season)) : undefined,
-        episodeNumber: textOf(ep.episode) ? Number(textOf(ep.episode)) : undefined,
-        displaySeason: textOf(ep.displayseason) ? Number(textOf(ep.displayseason)) : null,
-        displayEpisode: textOf(ep.displayepisode) ? Number(textOf(ep.displayepisode)) : null,
+        seasonNumber: parseOptionalInt(textOf(ep.season)) ?? undefined,
+        episodeNumber: parseOptionalInt(textOf(ep.episode)) ?? undefined,
+        displaySeason: parseOptionalInt(textOf(ep.displayseason)),
+        displayEpisode: parseOptionalInt(textOf(ep.displayepisode)),
         aired: textOf(ep.aired) || null,
         plot: textOf(ep.plot),
         runtimeMinutes: runtimeRaw && !Number.isNaN(Number(runtimeRaw)) ? Number(runtimeRaw) : null,
