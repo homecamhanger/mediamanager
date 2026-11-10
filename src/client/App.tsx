@@ -13,7 +13,6 @@ import { DashboardPage } from './pages/DashboardPage.js';
 import { RenamerPage } from './pages/RenamerPage.js';
 import { ScrapersPage } from './pages/ScrapersPage.js';
 import { SettingsPage } from './pages/SettingsPage.js';
-import { SubtitlesPage } from './pages/SubtitlesPage.js';
 
 export const App: React.FC = () => {
   const [leftTab, setLeftTab] = useState<LeftLibraryTab>('movies');
@@ -251,7 +250,6 @@ export const App: React.FC = () => {
                 />
               )}
               {activeTool === 'renamer' && <RenamerPage onRefresh={refreshAll} />}
-              {activeTool === 'subtitles' && <SubtitlesPage movies={movies} onRefresh={refreshAll} />}
               {activeTool === 'audit' && (
                 <AuditPage
                   onRefresh={refreshAll}

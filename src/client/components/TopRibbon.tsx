@@ -15,7 +15,6 @@ import {
   ShieldAlert,
   ShieldCheck,
   Sparkles,
-  Subtitles,
 } from 'lucide-react';
 import type { DashboardSummary } from '../../shared/types.js';
 import type { RibbonTool } from '../lib/workspaceTypes.js';
@@ -208,7 +207,6 @@ export const TopRibbon: React.FC<TopRibbonProps> = ({
           <div className="flex items-center gap-1.5 shrink-0">
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mr-0.5">Tools</span>
             {toolBtn('renamer', 'Renamer', <FolderSync className="w-3.5 h-3.5 text-emerald-400" />)}
-            {toolBtn('subtitles', 'Subtitles', <Subtitles className="w-3.5 h-3.5 text-sky-400" />, counts.subtitles, 'sky')}
             {toolBtn('audit', 'Library Audit', <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />, counts.issues, 'amber')}
           </div>
 

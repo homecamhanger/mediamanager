@@ -22,7 +22,7 @@ import type { LeftLibraryTab, SelectedMedia, ShowTreeNode } from '../lib/workspa
 import { PosterImage } from './PosterImage.js';
 
 type MovieFilter = 'all' | 'unscraped' | 'missing_nfo' | 'nfo_warnings' | 'missing_subs' | '4k' | 'unwatched';
-type TvFilter = 'all' | 'unscraped' | 'missing_nfo' | 'nfo_warnings';
+type TvFilter = 'all' | 'unscraped' | 'missing_nfo' | 'nfo_warnings' | 'missing_subs';
 
 interface MediaTreeSidebarProps {
   activeTab: LeftLibraryTab;
@@ -122,12 +122,14 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
         const showHasNfoWarn = node.show.hasNfo && (!node.show.nfoValid || node.show.nfoWarnings.length > 0);
         const epHasNfoWarn = (ep: ShowTreeNode['episodes'][number]) =>
           ep.hasNfo && (!ep.nfoValid || ep.nfoWarnings.length > 0);
+        const epMissingSubs = (ep: ShowTreeNode['episodes'][number]) => ep.subtitles.length === 0;
 
         const showMatchesFilter =
           tvFilter === 'all' ||
           (tvFilter === 'unscraped' && !node.show.scraped) ||
           (tvFilter === 'missing_nfo' && (!node.show.hasNfo || node.show.missingNfoCount > 0)) ||
-          (tvFilter === 'nfo_warnings' && (showHasNfoWarn || node.episodes.some(epHasNfoWarn)));
+          (tvFilter === 'nfo_warnings' && (showHasNfoWarn || node.episodes.some(epHasNfoWarn))) ||
+          (tvFilter === 'missing_subs' && node.episodes.some(epMissingSubs));
         if (!showMatchesFilter) return null;
 
         let scopedNode = node;
@@ -138,6 +140,14 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
             show: node.show,
             seasons: node.seasons.filter((s) => seasonNums.has(s.seasonNumber)),
             episodes: warnEps,
+          };
+        } else if (tvFilter === 'missing_subs') {
+          const noSubEps = node.episodes.filter(epMissingSubs);
+          const seasonNums = new Set(noSubEps.map((e) => e.seasonNumber));
+          scopedNode = {
+            show: node.show,
+            seasons: node.seasons.filter((s) => seasonNums.has(s.seasonNumber)),
+            episodes: noSubEps,
           };
         }
 
@@ -394,6 +404,7 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
               <option value="unscraped">Unscraped Series</option>
               <option value="missing_nfo">Missing NFOs</option>
               <option value="nfo_warnings">NFO Warnings</option>
+              <option value="missing_subs">No Subtitles</option>
             </select>
             <button
               onClick={expandAllTv}

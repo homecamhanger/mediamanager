@@ -114,7 +114,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           value={counts.subtitles}
           sub="Sidecar SRT/ASS/VTT files"
           icon={<Subtitles className="w-5 h-5 text-emerald-400" />}
-          onClick={() => onOpenTool('subtitles')}
+          onClick={() => onOpenTool('audit')}
         />
         <StatCard
           title="Health Score"

@@ -8,6 +8,7 @@ import {
   FolderOpen,
   FolderPlus,
   HardDrive,
+  KeyRound,
   ListMusic,
   Loader2,
   RefreshCw,
@@ -15,6 +16,7 @@ import {
   Save,
   Server,
   Settings,
+  Subtitles,
   Trash2,
   X,
 } from 'lucide-react';
@@ -28,6 +30,13 @@ export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
   const [sources, setSources] = useState<MediaSource[]>([]);
   const [prefs, setPrefs] = useState<AppPreferences | null>(null);
   const [kodi, setKodi] = useState<KodiRpcConfig | null>(null);
+  const [subCfg, setSubCfg] = useState({
+    openSubtitlesApiKey: '',
+    openSubtitlesUsername: '',
+    openSubtitlesPassword: '',
+    subdlApiKey: '',
+    useDemoFallback: true,
+  });
 
   // Add source form
   const [newName, setNewName] = useState('');
@@ -93,15 +102,17 @@ export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
   };
 
   const load = async () => {
-    const [sRes, pRes, kRes, jRes] = await Promise.all([
+    const [sRes, pRes, kRes, jRes, subRes] = await Promise.all([
       api.listSources(),
       api.getPreferences(),
       api.getKodiConfig(),
       api.listScanJobs(),
+      api.getSubtitleConfig(),
     ]);
     setSources(sRes.sources);
     setPrefs(pRes);
     setKodi(kRes);
+    setSubCfg(subRes);
     const active = jRes.jobs.find((j) => j.status === 'running');
     if (active) {
       setScanJob(active);
@@ -650,6 +661,65 @@ export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
             </div>
           </div>
         )}
+      </div>
+
+      {/* Subtitle Provider Configuration */}
+      <div className="p-5 rounded-2xl bg-[#111827] border border-slate-800 space-y-3 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <Subtitles className="w-4 h-4 text-sky-400" /> Subtitle Providers (OpenSubtitles & SubDL)
+            </h3>
+            <p className="text-slate-400 mt-0.5">
+              Configure API credentials for online hash-matched subtitle downloads, or keep Offline / Local Sync Fallback enabled.
+            </p>
+          </div>
+          <button
+            onClick={async () => {
+              await api.saveSubtitleConfig(subCfg);
+              notify('Subtitle provider settings saved');
+            }}
+            className="px-3.5 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white font-bold flex items-center gap-1.5 cursor-pointer"
+          >
+            <Save className="w-3.5 h-3.5" /> Save Subtitle Providers
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+          <div>
+            <label className="text-[10px] font-semibold uppercase text-slate-400 flex items-center gap-1 mb-1">
+              <KeyRound className="w-3 h-3" /> OpenSubtitles.com API Key
+            </label>
+            <input
+              type="password"
+              value={subCfg.openSubtitlesApiKey}
+              onChange={(e) => setSubCfg({ ...subCfg, openSubtitlesApiKey: e.target.value })}
+              placeholder="Optional (uses local sync engine if blank)"
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-slate-100"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] font-semibold uppercase text-slate-400 flex items-center gap-1 mb-1">
+              <KeyRound className="w-3 h-3" /> SubDL API Key
+            </label>
+            <input
+              type="password"
+              value={subCfg.subdlApiKey}
+              onChange={(e) => setSubCfg({ ...subCfg, subdlApiKey: e.target.value })}
+              placeholder="Optional"
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-slate-100"
+            />
+          </div>
+          <label className="flex items-center gap-2 text-slate-300 pb-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={subCfg.useDemoFallback}
+              onChange={(e) => setSubCfg({ ...subCfg, useDemoFallback: e.target.checked })}
+              className="rounded border-slate-700 bg-slate-900"
+            />
+            Offline / Local Sync Fallback
+          </label>
+        </div>
       </div>
 
       {/* Exports & Smart Playlist */}
