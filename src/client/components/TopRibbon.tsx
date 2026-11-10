@@ -12,7 +12,6 @@ import {
   RefreshCw,
   SearchCheck,
   Settings,
-  ShieldAlert,
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
@@ -140,19 +139,29 @@ export const TopRibbon: React.FC<TopRibbonProps> = ({
             <span className="px-2 py-0.5 rounded bg-slate-900/90 border border-slate-800/80">
               <strong className="text-slate-200">{counts.subtitles}</strong> Subs
             </span>
-            <button
-              onClick={() => onSelectTool('audit')}
-              className={`px-2 py-0.5 rounded border flex items-center gap-1 cursor-pointer transition ${
-                health >= 85
-                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                  : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
-              }`}
-              title="Open Library Audit"
-            >
-              <ShieldCheck className="w-3 h-3" />
-              Health <strong>{health}%</strong>
-            </button>
           </div>
+
+          <button
+            onClick={() => toggleTool('audit')}
+            className={`px-2 py-0.5 rounded-lg border flex items-center gap-1.5 text-[11px] cursor-pointer transition ${
+              activeTool === 'audit'
+                ? 'bg-sky-500/20 border-sky-500/50 text-sky-200 shadow-sm'
+                : health >= 85
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20'
+                  : 'bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/20'
+            }`}
+            title={activeTool === 'audit' && selectedLabel ? 'Return to selected item' : 'Open Library Audit'}
+          >
+            <ShieldCheck className="w-3 h-3" />
+            <span>
+              Health <strong>{health}%</strong>
+            </span>
+            {counts.issues > 0 && (
+              <span className="px-1.5 py-0.2 rounded bg-amber-500/25 text-amber-300 text-[10px] font-bold">
+                {counts.issues}
+              </span>
+            )}
+          </button>
         </div>
 
         {/* Global Batch & Library Actions */}
@@ -207,7 +216,6 @@ export const TopRibbon: React.FC<TopRibbonProps> = ({
           <div className="flex items-center gap-1.5 shrink-0">
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mr-0.5">Tools</span>
             {toolBtn('renamer', 'Renamer', <FolderSync className="w-3.5 h-3.5 text-emerald-400" />)}
-            {toolBtn('audit', 'Library Audit', <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />, counts.issues, 'amber')}
           </div>
 
           <div className="h-5 w-px bg-slate-800 shrink-0" />
