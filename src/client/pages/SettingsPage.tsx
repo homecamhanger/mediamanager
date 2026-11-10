@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
+  ArrowDownToLine,
+  ArrowUpFromLine,
   Check,
   CheckCircle2,
   Circle,
@@ -12,6 +14,7 @@ import {
   KeyRound,
   ListMusic,
   Loader2,
+  Plus,
   RefreshCw,
   RotateCcw,
   Save,
@@ -21,7 +24,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import type { AppPreferences, ArtworkKind, KodiRpcConfig, MediaSource, SourceScanJob } from '../../shared/types.js';
+import type { AppPreferences, ArtworkKind, KodiRpcConfig, KodiSyncResult, MediaSource, SourceScanJob } from '../../shared/types.js';
 import { FolderBrowserModal } from '../components/FolderBrowserModal.js';
 import { api } from '../lib/api.js';
 
@@ -62,6 +65,10 @@ export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
   const [msg, setMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [kodiSyncBusy, setKodiSyncBusy] = useState<'pull' | 'push' | null>(null);
+  const [kodiSyncResult, setKodiSyncResult] = useState<KodiSyncResult | null>(null);
+  const [newMapLocal, setNewMapLocal] = useState('');
+  const [newMapKodi, setNewMapKodi] = useState('');
 
   const loadSourcesOnly = async () => {
     const sRes = await api.listSources();
@@ -233,6 +240,44 @@ export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
     const res = await api.testKodiRpc();
     await load();
     notify(res.ok ? 'Connected to Kodi JSON-RPC!' : `Kodi connection check: ${res.status}`);
+  };
+
+  const handleKodiSync = async (direction: 'pull' | 'push') => {
+    if (!kodi) return;
+    setKodiSyncBusy(direction);
+    setErrorMsg(null);
+    try {
+      await api.saveKodiConfig(kodi);
+      const res = await api.syncKodi(direction);
+      setKodiSyncResult(res);
+      if (direction === 'pull' && (res.updatedMovies > 0 || res.updatedEpisodes > 0)) {
+        onRefresh();
+      }
+      if (res.errors.length > 0 && res.matchedMovies + res.matchedEpisodes === 0) {
+        setErrorMsg(`Kodi sync error: ${res.errors[0]}`);
+      } else {
+        notify(
+          direction === 'pull'
+            ? `Pulled ${res.updatedMovies} movie & ${res.updatedEpisodes} episode updates from Kodi`
+            : `Pushed ${res.updatedMovies} movie & ${res.updatedEpisodes} episode updates to Kodi`
+        );
+      }
+    } finally {
+      setKodiSyncBusy(null);
+    }
+  };
+
+  const handleAddPathMapping = () => {
+    if (!kodi || !newMapLocal.trim() || !newMapKodi.trim()) return;
+    setKodi({
+      ...kodi,
+      pathMappings: [
+        ...(kodi.pathMappings ?? []),
+        { localPrefix: newMapLocal.trim(), kodiPrefix: newMapKodi.trim() },
+      ],
+    });
+    setNewMapLocal('');
+    setNewMapKodi('');
   };
 
   const handleGeneratePlaylist = async () => {
@@ -706,12 +751,102 @@ export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
               </div>
             )}
 
+            {/* Path Mappings (Local Host <-> Kodi Network / Container Path) */}
+            <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  Path Mappings (Local Path → Kodi Path)
+                </span>
+                <span className="text-[10px] text-slate-500">Used for RPC sync &amp; sources.xml export</span>
+              </div>
+              {(kodi.pathMappings ?? []).length > 0 && (
+                <div className="space-y-1">
+                  {kodi.pathMappings.map((pm, idx) => (
+                    <div
+                      key={`${pm.localPrefix}-${idx}`}
+                      className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 font-mono text-[11px]"
+                    >
+                      <span className="truncate text-slate-300">{pm.localPrefix}</span>
+                      <span className="text-sky-400 shrink-0">→</span>
+                      <span className="truncate text-emerald-300 flex-1">{pm.kodiPrefix}</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setKodi({
+                            ...kodi,
+                            pathMappings: kodi.pathMappings.filter((_, i) => i !== idx),
+                          })
+                        }
+                        aria-label="Remove path mapping"
+                        className="p-1 rounded text-rose-400 hover:bg-rose-500/15 cursor-pointer shrink-0"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex flex-wrap gap-1.5">
+                <input
+                  value={newMapLocal}
+                  onChange={(e) => setNewMapLocal(e.target.value)}
+                  placeholder="/mnt/media/Movies"
+                  className="flex-1 min-w-[130px] bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 font-mono text-[11px] text-slate-100"
+                />
+                <input
+                  value={newMapKodi}
+                  onChange={(e) => setNewMapKodi(e.target.value)}
+                  placeholder="smb://nas/Movies"
+                  className="flex-1 min-w-[130px] bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 font-mono text-[11px] text-slate-100"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddPathMapping}
+                  disabled={!newMapLocal.trim() || !newMapKodi.trim()}
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-sky-300 font-semibold flex items-center gap-1 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Map
+                </button>
+              </div>
+            </div>
+
+            {kodiSyncResult && (
+              <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-[11px] text-slate-300 flex flex-wrap items-center justify-between gap-2">
+                <span>
+                  Last {kodiSyncResult.direction === 'pull' ? 'Pull' : 'Push'}: Matched{' '}
+                  <strong className="text-slate-100">{kodiSyncResult.matchedMovies}</strong> movies (
+                  <strong className="text-emerald-300">{kodiSyncResult.updatedMovies} updated</strong>) ·{' '}
+                  <strong className="text-slate-100">{kodiSyncResult.matchedEpisodes}</strong> episodes (
+                  <strong className="text-emerald-300">{kodiSyncResult.updatedEpisodes} updated</strong>)
+                </span>
+                {kodiSyncResult.unmatchedCount > 0 && (
+                  <span className="text-slate-400">{kodiSyncResult.unmatchedCount} unmatched</span>
+                )}
+              </div>
+            )}
+
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={handleTestKodi}
                 className="px-3 py-1.5 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/40 text-sky-300 font-semibold cursor-pointer"
               >
                 Test Connection
+              </button>
+              <button
+                onClick={() => handleKodiSync('pull')}
+                disabled={Boolean(kodiSyncBusy)}
+                className="px-3 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-emerald-300 font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <ArrowDownToLine className="w-3.5 h-3.5" />
+                {kodiSyncBusy === 'pull' ? 'Pulling...' : 'Pull Watched & Ratings'}
+              </button>
+              <button
+                onClick={() => handleKodiSync('push')}
+                disabled={Boolean(kodiSyncBusy)}
+                className="px-3 py-1.5 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/35 text-purple-300 font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <ArrowUpFromLine className="w-3.5 h-3.5" />
+                {kodiSyncBusy === 'push' ? 'Pushing...' : 'Push Watched & Ratings'}
               </button>
               <button
                 onClick={async () => {

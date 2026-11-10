@@ -513,14 +513,30 @@ export interface LibraryAuditReport {
   };
 }
 
+export interface KodiPathMapping {
+  localPrefix: string;
+  kodiPrefix: string;
+}
+
 export interface KodiRpcConfig {
   enabled: boolean;
   host: string;
   port: number;
   username: string;
   password: string;
+  pathMappings: KodiPathMapping[];
   lastConnectedAt: string | null;
   lastStatus: string | null;
+}
+
+export interface KodiSyncResult {
+  direction: 'pull' | 'push';
+  matchedMovies: number;
+  updatedMovies: number;
+  matchedEpisodes: number;
+  updatedEpisodes: number;
+  unmatchedCount: number;
+  errors: string[];
 }
 
 export interface AppPreferences {

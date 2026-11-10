@@ -16,6 +16,7 @@ import {
   Subtitles,
   Tag,
   Trash2,
+  Tv,
   Users,
   X,
 } from 'lucide-react';
@@ -235,6 +236,11 @@ export const MovieDetailPanel: React.FC<{
     onUpdated();
   };
 
+  const handleRefreshInKodi = async () => {
+    const res = await api.refreshKodiItem('movie', movie.id);
+    notify(res.ok ? `Refreshed "${movie.title}" in Kodi` : `Kodi refresh: ${res.error}`);
+  };
+
   const fanartUrl = getArtworkUrl(movie.artwork.fanart, artCacheKey);
   const clearlogoUrl = getArtworkUrl(movie.artwork.clearlogo, artCacheKey);
   const otherArtPresentCount = OTHER_ARTWORK_SLOTS.filter((s) => Boolean(movie.artwork[s.kind])).length;
@@ -340,6 +346,13 @@ export const MovieDetailPanel: React.FC<{
               className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
             >
               <FolderSync className="w-3.5 h-3.5 text-emerald-400" /> Auto-Rename
+            </button>
+            <button
+              onClick={handleRefreshInKodi}
+              title="Reload this movie's NFO & artwork in Kodi via JSON-RPC"
+              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+            >
+              <Tv className="w-3.5 h-3.5 text-sky-400" /> Kodi Refresh
             </button>
           </div>
         </div>

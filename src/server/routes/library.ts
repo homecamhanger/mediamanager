@@ -651,6 +651,81 @@ export function createLibraryRouter(db: MediaDatabase): Router {
     }
   });
 
+  router.post('/shows/batch', (req, res) => {
+    const { action, showIds = [], episodeIds = [], payload } = (req.body ?? {}) as {
+      action: 'writeNfo' | 'addTag' | 'markWatched' | 'markUnwatched';
+      showIds?: number[];
+      episodeIds?: number[];
+      payload?: { tag?: string };
+    };
+
+    let affectedShows = 0;
+    let affectedEpisodes = 0;
+
+    const targetShowIds = new Set<number>(showIds.map(Number));
+    if (action === 'addTag' && targetShowIds.size === 0 && episodeIds.length > 0) {
+      for (const epId of episodeIds) {
+        const ep = db.getTvEpisode(Number(epId));
+        if (ep) targetShowIds.add(ep.showId);
+      }
+    }
+
+    for (const showId of targetShowIds) {
+      const show = db.getTvShow(showId);
+      if (!show) continue;
+      if (action === 'addTag' && payload?.tag?.trim()) {
+        const tags = Array.from(new Set([...show.tags, payload.tag.trim()]));
+        db.updateTvShow(show.id, { tags });
+      }
+      if (action === 'writeNfo' || action === 'addTag') {
+        const latestShow = db.getTvShow(show.id)!;
+        const xml = serializeTvShowNfo(latestShow, db.listSeasonsForShow(show.id));
+        const nfoPath = latestShow.nfoPath ?? path.join(latestShow.folderPath, 'tvshow.nfo');
+        fs.writeFileSync(nfoPath, xml, 'utf-8');
+        const rep = validateKodiNfoXml(xml);
+        db.updateTvShow(show.id, { nfoPath, hasNfo: true, nfoValid: rep.valid, nfoWarnings: rep.warnings });
+        affectedShows++;
+      } else if (action === 'markWatched' || action === 'markUnwatched') {
+        affectedShows++;
+      }
+    }
+
+    const epIdSet = new Set<number>(episodeIds.map(Number));
+    if (action === 'markWatched' || action === 'markUnwatched' || action === 'writeNfo') {
+      for (const showId of targetShowIds) {
+        for (const ep of db.listEpisodesForShow(showId)) {
+          epIdSet.add(ep.id);
+        }
+      }
+    }
+
+    for (const epId of epIdSet) {
+      const ep = db.getTvEpisode(epId);
+      if (!ep) continue;
+      if (action === 'markWatched') {
+        db.updateTvEpisode(epId, {
+          watched: true,
+          playCount: Math.max(1, ep.playCount),
+          lastPlayed: new Date().toISOString().slice(0, 19).replace('T', ' '),
+        });
+      } else if (action === 'markUnwatched') {
+        db.updateTvEpisode(epId, { watched: false, playCount: 0, lastPlayed: null });
+      }
+      if (action === 'markWatched' || action === 'markUnwatched' || action === 'writeNfo') {
+        const latest = db.getTvEpisode(epId)!;
+        const base = path.basename(latest.filePath, path.extname(latest.filePath));
+        const nfoPath = latest.nfoPath ?? path.join(latest.folderPath, `${base}.nfo`);
+        const xml = serializeEpisodeNfo(latest);
+        fs.writeFileSync(nfoPath, xml, 'utf-8');
+        const rep = validateKodiNfoXml(xml);
+        db.updateTvEpisode(epId, { nfoPath, hasNfo: true, nfoValid: rep.valid, nfoWarnings: rep.warnings });
+        affectedEpisodes++;
+      }
+    }
+
+    res.json({ affected: affectedShows + affectedEpisodes, affectedShows, affectedEpisodes });
+  });
+
   router.post('/episodes/batch', (req, res) => {
     const { action, episodeIds = [] } = req.body as { action: 'markWatched' | 'markUnwatched' | 'writeNfo'; episodeIds: number[] };
     let affected = 0;

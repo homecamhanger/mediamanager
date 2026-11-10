@@ -177,6 +177,7 @@ export const DEFAULT_KODI_RPC: KodiRpcConfig = {
   port: 8080,
   username: 'kodi',
   password: '',
+  pathMappings: [],
   lastConnectedAt: null,
   lastStatus: null,
 };

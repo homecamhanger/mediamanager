@@ -76,22 +76,27 @@ export function createScrapersRouter(db: MediaDatabase): Router {
   });
 
   router.post('/batch', async (req, res) => {
-    const { movieIds = [], showIds = [], onlyUnscraped = false } = req.body as {
+    const { movieIds, showIds, onlyUnscraped = false } = (req.body ?? {}) as {
       movieIds?: number[];
       showIds?: number[];
       onlyUnscraped?: boolean;
     };
 
-    const targetMovies =
-      movieIds.length > 0
+    const scopedMoviesOnly = Array.isArray(movieIds) && showIds === undefined;
+    const scopedShowsOnly = Array.isArray(showIds) && movieIds === undefined;
+
+    const targetMovies = scopedShowsOnly
+      ? []
+      : Array.isArray(movieIds)
         ? movieIds
         : db
             .listMovies()
             .filter((m) => (onlyUnscraped ? !m.scraped : true))
             .map((m) => m.id);
 
-    const targetShows =
-      showIds.length > 0
+    const targetShows = scopedMoviesOnly
+      ? []
+      : Array.isArray(showIds)
         ? showIds
         : db
             .listTvShows()

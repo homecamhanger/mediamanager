@@ -141,7 +141,16 @@ export function createSettingsRouter(db: MediaDatabase, sharedScanJobs?: ScanJob
   });
 
   router.put('/kodi', (req, res) => {
-    const next = { ...DEFAULT_KODI_RPC, ...(req.body as Partial<KodiRpcConfig>) };
+    const body = req.body as Partial<KodiRpcConfig>;
+    const pathMappings = Array.isArray(body.pathMappings)
+      ? body.pathMappings
+          .map((m) => ({
+            localPrefix: String(m?.localPrefix ?? '').trim(),
+            kodiPrefix: String(m?.kodiPrefix ?? '').trim(),
+          }))
+          .filter((m) => m.localPrefix && m.kodiPrefix)
+      : kodi.getConfig().pathMappings;
+    const next = { ...DEFAULT_KODI_RPC, ...body, pathMappings };
     db.setSetting('kodi_rpc', next);
     res.json(next);
   });
@@ -156,6 +165,20 @@ export function createSettingsRouter(db: MediaDatabase, sharedScanJobs?: ScanJob
 
   router.post('/kodi/clean', async (_req, res) => {
     res.json(await kodi.triggerClean());
+  });
+
+  router.post('/kodi/sync', async (req, res) => {
+    const direction = (req.body as { direction?: 'pull' | 'push' })?.direction === 'push' ? 'push' : 'pull';
+    const result = direction === 'push' ? await kodi.pushToKodi() : await kodi.pullFromKodi();
+    res.json(result);
+  });
+
+  router.post('/kodi/refresh', async (req, res) => {
+    const { mediaType, mediaId } = (req.body ?? {}) as { mediaType?: 'movie' | 'episode'; mediaId?: number };
+    if ((mediaType !== 'movie' && mediaType !== 'episode') || !mediaId) {
+      return res.status(400).json({ error: 'Valid mediaType and mediaId are required' });
+    }
+    res.json(await kodi.refreshItem(mediaType, Number(mediaId)));
   });
 
   router.post('/sample/reset', async (_req, res) => {

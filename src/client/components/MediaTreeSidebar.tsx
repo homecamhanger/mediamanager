@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ArrowDownWideNarrow,
+  ArrowUpNarrowWide,
   CheckSquare,
   ChevronDown,
   ChevronRight,
@@ -12,7 +14,9 @@ import {
   Search,
   Sparkles,
   Square,
+  SquareMinus,
   Subtitles,
+  Tag,
   Tv,
   Users,
   X,
@@ -25,11 +29,20 @@ import {
   filterShowTreeByActorAndQuery,
   findActorMatch,
 } from '../lib/castFilter.js';
+import {
+  DEFAULT_SORT_DIR,
+  filterShowTreeNodes,
+  movieMatchesFilter,
+  sortMovies,
+  sortSets,
+  sortShowTree,
+  type MovieFilter,
+  type SortDir,
+  type SortKey,
+  type TvFilter,
+} from '../lib/treeSort.js';
 import type { LeftLibraryTab, SelectedMedia, ShowTreeNode } from '../lib/workspaceTypes.js';
 import { PosterImage } from './PosterImage.js';
-
-type MovieFilter = 'all' | 'unscraped' | 'missing_nfo' | 'nfo_warnings' | 'missing_subs' | '4k' | 'unwatched';
-type TvFilter = 'all' | 'unscraped' | 'missing_nfo' | 'nfo_warnings' | 'missing_subs';
 
 interface MediaTreeSidebarProps {
   activeTab: LeftLibraryTab;
@@ -61,7 +74,13 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
   const [search, setSearch] = useState('');
   const [movieFilter, setMovieFilter] = useState<MovieFilter>('all');
   const [tvFilter, setTvFilter] = useState<TvFilter>('all');
+  const [sortKey, setSortKey] = useState<SortKey>('title');
+  const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [checkedMovieIds, setCheckedMovieIds] = useState<Set<number>>(new Set());
+  const [checkedShowIds, setCheckedShowIds] = useState<Set<number>>(new Set());
+  const [checkedEpisodeIds, setCheckedEpisodeIds] = useState<Set<number>>(new Set());
+  const [tvTagOpen, setTvTagOpen] = useState(false);
+  const [tvTagInput, setTvTagInput] = useState('');
   const [batchBusy, setBatchBusy] = useState(false);
 
   const [expandedShows, setExpandedShows] = useState<Set<number>>(new Set());
@@ -122,62 +141,59 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
   );
 
   const filteredMovies = useMemo(() => {
-    return filterMoviesByActorAndQuery(movies, actorFilter, search).filter((m) => {
-      if (movieFilter === 'unscraped' && m.scraped) return false;
-      if (movieFilter === 'missing_nfo' && m.hasNfo) return false;
-      if (movieFilter === 'nfo_warnings' && !(m.hasNfo && (!m.nfoValid || m.nfoWarnings.length > 0))) return false;
-      if (movieFilter === 'missing_subs' && m.subtitles.length > 0) return false;
-      if (movieFilter === 'unwatched' && m.watched) return false;
-      if (movieFilter === '4k' && m.parsedInfo.resolution !== '2160p' && (m.streamDetails.video[0]?.height ?? 0) < 2000) {
-        return false;
-      }
-      return true;
-    });
-  }, [movies, actorFilter, search, movieFilter]);
+    const matched = filterMoviesByActorAndQuery(movies, actorFilter, search).filter((m) =>
+      movieMatchesFilter(m, movieFilter)
+    );
+    return sortMovies(matched, sortKey, sortDir);
+  }, [movies, actorFilter, search, movieFilter, sortKey, sortDir]);
 
   const filteredShowTree = useMemo(() => {
-    return filterShowTreeByActorAndQuery(showTree, actorFilter, search)
-      .map(({ node }) => {
-        const showHasNfoWarn = node.show.hasNfo && (!node.show.nfoValid || node.show.nfoWarnings.length > 0);
-        const epHasNfoWarn = (ep: ShowTreeNode['episodes'][number]) =>
-          ep.hasNfo && (!ep.nfoValid || ep.nfoWarnings.length > 0);
-        const epMissingSubs = (ep: ShowTreeNode['episodes'][number]) => ep.subtitles.length === 0;
-
-        const showMatchesFilter =
-          tvFilter === 'all' ||
-          (tvFilter === 'unscraped' && !node.show.scraped) ||
-          (tvFilter === 'missing_nfo' && (!node.show.hasNfo || node.show.missingNfoCount > 0)) ||
-          (tvFilter === 'nfo_warnings' && (showHasNfoWarn || node.episodes.some(epHasNfoWarn))) ||
-          (tvFilter === 'missing_subs' && node.episodes.some(epMissingSubs));
-        if (!showMatchesFilter) return null;
-
-        if (tvFilter === 'nfo_warnings' && !showHasNfoWarn) {
-          const warnEps = node.episodes.filter(epHasNfoWarn);
-          const seasonNums = new Set(warnEps.map((e) => e.displaySeason ?? e.seasonNumber));
-          return {
-            show: node.show,
-            seasons: node.seasons.filter((s) => seasonNums.has(s.seasonNumber)),
-            episodes: warnEps,
-          };
-        }
-        if (tvFilter === 'missing_subs') {
-          const noSubEps = node.episodes.filter(epMissingSubs);
-          const seasonNums = new Set(noSubEps.map((e) => e.displaySeason ?? e.seasonNumber));
-          return {
-            show: node.show,
-            seasons: node.seasons.filter((s) => seasonNums.has(s.seasonNumber)),
-            episodes: noSubEps,
-          };
-        }
-        return node;
-      })
-      .filter((x): x is ShowTreeNode => Boolean(x));
-  }, [showTree, actorFilter, search, tvFilter]);
+    const actorMatched = filterShowTreeByActorAndQuery(showTree, actorFilter, search).map(({ node }) => node);
+    const filtered = filterShowTreeNodes(actorMatched, tvFilter);
+    return sortShowTree(filtered, sortKey, sortDir);
+  }, [showTree, actorFilter, search, tvFilter, sortKey, sortDir]);
 
   const filteredSets = useMemo(
-    () => filterSetsByActorAndQuery(sets, actorFilter, search),
-    [sets, actorFilter, search]
+    () => sortSets(filterSetsByActorAndQuery(sets, actorFilter, search), sortKey, sortDir),
+    [sets, actorFilter, search, sortKey, sortDir]
   );
+
+  // Prune stale checked IDs after deletions/rescans
+  useEffect(() => {
+    const movieIdSet = new Set(movies.map((m) => m.id));
+    setCheckedMovieIds((prev) => {
+      const next = new Set([...prev].filter((id) => movieIdSet.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [movies]);
+
+  useEffect(() => {
+    const showIdSet = new Set(showTree.map((n) => n.show.id));
+    const epIdSet = new Set(showTree.flatMap((n) => n.episodes.map((e) => e.id)));
+    setCheckedShowIds((prev) => {
+      const next = new Set([...prev].filter((id) => showIdSet.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+    setCheckedEpisodeIds((prev) => {
+      const next = new Set([...prev].filter((id) => epIdSet.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [showTree]);
+
+  const episodeToShowMap = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const node of showTree) {
+      for (const ep of node.episodes) {
+        map.set(ep.id, node.show.id);
+      }
+    }
+    return map;
+  }, [showTree]);
+
+  const handleSortKeyChange = (nextKey: SortKey) => {
+    setSortKey(nextKey);
+    setSortDir(DEFAULT_SORT_DIR[nextKey]);
+  };
 
   const toggleMovieCheck = (id: number, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -197,6 +213,117 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
     }
   };
 
+  const toggleShowCheck = (node: ShowTreeNode, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const showEps = node.episodes.map((ep) => ep.id);
+    const allChecked =
+      checkedShowIds.has(node.show.id) || (showEps.length > 0 && showEps.every((id) => checkedEpisodeIds.has(id)));
+
+    setCheckedShowIds((prev) => {
+      const next = new Set(prev);
+      if (allChecked) next.delete(node.show.id);
+      else next.add(node.show.id);
+      return next;
+    });
+    setCheckedEpisodeIds((prev) => {
+      const next = new Set(prev);
+      if (allChecked) {
+        for (const id of showEps) next.delete(id);
+      } else {
+        for (const id of showEps) next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSeasonCheck = (showId: number, seasonEpIds: number[], e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (seasonEpIds.length === 0) return;
+    const allChecked = seasonEpIds.every((id) => checkedEpisodeIds.has(id));
+    setCheckedEpisodeIds((prev) => {
+      const next = new Set(prev);
+      if (allChecked) {
+        for (const id of seasonEpIds) next.delete(id);
+      } else {
+        for (const id of seasonEpIds) next.add(id);
+      }
+      return next;
+    });
+    if (allChecked) {
+      setCheckedShowIds((prev) => {
+        if (!prev.has(showId)) return prev;
+        const next = new Set(prev);
+        next.delete(showId);
+        return next;
+      });
+    }
+  };
+
+  const toggleEpisodeCheck = (showId: number, episodeId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const currentlyChecked = checkedEpisodeIds.has(episodeId);
+    setCheckedEpisodeIds((prev) => {
+      const next = new Set(prev);
+      if (currentlyChecked) next.delete(episodeId);
+      else next.add(episodeId);
+      return next;
+    });
+    if (currentlyChecked) {
+      setCheckedShowIds((prev) => {
+        if (!prev.has(showId)) return prev;
+        const next = new Set(prev);
+        next.delete(showId);
+        return next;
+      });
+    }
+  };
+
+  const allFilteredTvSelected =
+    filteredShowTree.length > 0 &&
+    filteredShowTree.every(
+      (n) =>
+        checkedShowIds.has(n.show.id) ||
+        (n.episodes.length > 0 && n.episodes.every((ep) => checkedEpisodeIds.has(ep.id)))
+    );
+
+  const toggleAllFilteredTv = () => {
+    if (allFilteredTvSelected) {
+      setCheckedShowIds(new Set());
+      setCheckedEpisodeIds(new Set());
+      setTvTagOpen(false);
+    } else {
+      setCheckedShowIds(new Set(filteredShowTree.map((n) => n.show.id)));
+      setCheckedEpisodeIds(new Set(filteredShowTree.flatMap((n) => n.episodes.map((ep) => ep.id))));
+    }
+  };
+
+  const clearTvSelection = () => {
+    setCheckedShowIds(new Set());
+    setCheckedEpisodeIds(new Set());
+    setTvTagOpen(false);
+  };
+
+  const standaloneEpisodeIds = useMemo(
+    () =>
+      [...checkedEpisodeIds].filter((epId) => {
+        const sid = episodeToShowMap.get(epId);
+        return sid == null || !checkedShowIds.has(sid);
+      }),
+    [checkedEpisodeIds, checkedShowIds, episodeToShowMap]
+  );
+
+  const hasTvSelection = checkedShowIds.size > 0 || checkedEpisodeIds.size > 0;
+
+  const tvSelectionSummary = useMemo(() => {
+    if (checkedShowIds.size > 0 && standaloneEpisodeIds.length > 0) {
+      return `${checkedShowIds.size}S · ${standaloneEpisodeIds.length}E`;
+    }
+    if (checkedShowIds.size > 0) {
+      return `${checkedShowIds.size} show${checkedShowIds.size === 1 ? '' : 's'}`;
+    }
+    return `${standaloneEpisodeIds.length} ep${standaloneEpisodeIds.length === 1 ? '' : 's'}`;
+  }, [checkedShowIds.size, standaloneEpisodeIds.length]);
+
   const runMovieBatch = async (kind: 'scrape' | 'nfo' | 'subs' | 'watched') => {
     const ids = [...checkedMovieIds];
     if (ids.length === 0) return;
@@ -208,6 +335,59 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
       else if (kind === 'watched') await api.batchMovies('markWatched', ids);
       await onRefresh();
       onToast(`Batch ${kind} completed for ${ids.length} movie${ids.length === 1 ? '' : 's'}`);
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
+  const runTvBatch = async (
+    kind: 'scrape' | 'writeNfo' | 'subs' | 'markWatched' | 'markUnwatched' | 'addTag',
+    tagValue?: string
+  ) => {
+    const showIds = [...checkedShowIds];
+    const episodeIds = standaloneEpisodeIds;
+    if (showIds.length === 0 && episodeIds.length === 0) return;
+    setBatchBusy(true);
+    try {
+      if (kind === 'scrape') {
+        const targetShowIds = [
+          ...new Set([
+            ...showIds,
+            ...episodeIds.map((epId) => episodeToShowMap.get(epId)).filter((id): id is number => id != null),
+          ]),
+        ];
+        if (targetShowIds.length > 0) {
+          const res = await api.batchScrape({ showIds: targetShowIds });
+          onToast(`Scraped ${res.scrapedShows} TV show${res.scrapedShows === 1 ? '' : 's'}`);
+        }
+      } else if (kind === 'subs') {
+        const targetEpIds = [
+          ...new Set([
+            ...checkedEpisodeIds,
+            ...showTree.filter((n) => checkedShowIds.has(n.show.id)).flatMap((n) => n.episodes.map((e) => e.id)),
+          ]),
+        ];
+        const res = await api.batchMissingSubtitles({ episodeIds: targetEpIds });
+        onToast(`Checked ${targetEpIds.length} episode(s): downloaded ${res.downloaded} subtitle(s)`);
+      } else {
+        const res = await api.batchShows(kind, { showIds, episodeIds, tag: tagValue });
+        const verb =
+          kind === 'writeNfo'
+            ? 'Wrote NFOs'
+            : kind === 'markWatched'
+              ? 'Marked watched'
+              : kind === 'markUnwatched'
+                ? 'Marked unwatched'
+                : `Tagged "${tagValue}"`;
+        onToast(
+          `${verb} (${res.affectedShows} show${res.affectedShows === 1 ? '' : 's'}, ${res.affectedEpisodes} episode${res.affectedEpisodes === 1 ? '' : 's'})`
+        );
+        if (kind === 'addTag') {
+          setTvTagInput('');
+          setTvTagOpen(false);
+        }
+      }
+      await onRefresh();
     } finally {
       setBatchBusy(false);
     }
@@ -350,31 +530,62 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
         </div>
       )}
 
-      {/* Filter & Search Bar */}
+      {/* Filter, Sort & Search Bar */}
       <div className="p-2 border-b border-slate-800/80 space-y-1.5 bg-[#0f1625]">
-        <div className="relative">
-          <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={
-              activeTab === 'movies'
-                ? 'Filter movies, year, actor...'
-                : activeTab === 'tvshows'
-                  ? 'Filter shows, eps, actor...'
-                  : 'Filter movie sets, actor...'
-            }
-            className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-7 py-1.5 text-xs text-slate-100 placeholder:text-slate-500"
-          />
-          {search && (
-            <button
-              onClick={() => setSearch('')}
-              className="absolute right-2 top-1.5 text-slate-500 hover:text-slate-200 cursor-pointer"
-              title="Clear filter"
+        <div className="flex items-center gap-1.5">
+          <div className="relative flex-1 min-w-0">
+            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={
+                activeTab === 'movies'
+                  ? 'Filter movies, year, actor...'
+                  : activeTab === 'tvshows'
+                    ? 'Filter shows, eps, actor...'
+                    : 'Filter movie sets, actor...'
+              }
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-7 py-1.5 text-xs text-slate-100 placeholder:text-slate-500"
+            />
+            {search && (
+              <button
+                onClick={() => setSearch('')}
+                className="absolute right-2 top-1.5 text-slate-500 hover:text-slate-200 cursor-pointer"
+                title="Clear filter"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center shrink-0">
+            <select
+              aria-label="Sort library by"
+              value={sortKey}
+              onChange={(e) => handleSortKeyChange(e.target.value as SortKey)}
+              className="bg-slate-950 border border-slate-800 rounded-l-lg px-1.5 py-1.5 text-[11px] text-slate-200"
             >
-              <X className="w-3.5 h-3.5" />
+              <option value="title">Title</option>
+              <option value="year">Year</option>
+              <option value="rating">Rating</option>
+              <option value="runtime">Runtime</option>
+              <option value="added">Added</option>
+              <option value="completeness">Health</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+              title={`Sort ${sortDir === 'asc' ? 'ascending' : 'descending'} (click to flip)`}
+              aria-label="Toggle sort direction"
+              className="px-1.5 py-1.5 bg-slate-900 border border-l-0 border-slate-800 hover:border-slate-700 rounded-r-lg text-sky-300 cursor-pointer"
+            >
+              {sortDir === 'asc' ? (
+                <ArrowUpNarrowWide className="w-3.5 h-3.5" />
+              ) : (
+                <ArrowDownWideNarrow className="w-3.5 h-3.5" />
+              )}
             </button>
-          )}
+          </div>
         </div>
 
         {/* Movies sub-controls */}
@@ -390,6 +601,7 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
               <option value="missing_nfo">Missing NFO</option>
               <option value="nfo_warnings">NFO Warnings</option>
               <option value="missing_subs">No Subtitles</option>
+              <option value="missing_art">Missing Artwork</option>
               <option value="4k">4K UHD Only</option>
               <option value="unwatched">Unwatched Only</option>
             </select>
@@ -447,32 +659,135 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
 
         {/* TV Shows sub-controls */}
         {activeTab === 'tvshows' && (
-          <div className="flex items-center justify-between gap-1.5">
+          <div className="flex items-center justify-between gap-1">
             <select
               value={tvFilter}
               onChange={(e) => setTvFilter(e.target.value as TvFilter)}
-              className="flex-1 bg-slate-950 border border-slate-800 rounded-md px-2 py-1 text-[11px] text-slate-200"
+              className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-md px-2 py-1 text-[11px] text-slate-200"
             >
               <option value="all">All Series ({showTree.length})</option>
               <option value="unscraped">Unscraped Series</option>
               <option value="missing_nfo">Missing NFOs</option>
               <option value="nfo_warnings">NFO Warnings</option>
               <option value="missing_subs">No Subtitles</option>
+              <option value="missing_art">Missing Artwork</option>
+              <option value="missing_eps">Missing Episodes</option>
+              <option value="unwatched">Unwatched Episodes</option>
             </select>
             <button
+              onClick={toggleAllFilteredTv}
+              title="Select/Deselect all visible shows & episodes"
+              className="px-1.5 py-1 rounded-md bg-slate-900 border border-slate-800 hover:border-slate-700 text-[10px] font-semibold text-slate-300 flex items-center gap-1 cursor-pointer shrink-0"
+            >
+              {allFilteredTvSelected ? (
+                <CheckSquare className="w-3 h-3 text-sky-400" />
+              ) : (
+                <Square className="w-3 h-3" />
+              )}
+              <span>All</span>
+            </button>
+            <button
               onClick={expandAllTv}
-              className="px-2 py-1 rounded-md bg-slate-900 border border-slate-800 hover:border-slate-700 text-[10px] font-semibold text-slate-300 cursor-pointer"
+              className="px-1.5 py-1 rounded-md bg-slate-900 border border-slate-800 hover:border-slate-700 text-[10px] font-semibold text-slate-300 cursor-pointer shrink-0"
               title="Expand all shows and seasons"
             >
-              Expand
+              +
             </button>
             <button
               onClick={collapseAllTv}
-              className="px-2 py-1 rounded-md bg-slate-900 border border-slate-800 hover:border-slate-700 text-[10px] font-semibold text-slate-300 cursor-pointer"
+              className="px-1.5 py-1 rounded-md bg-slate-900 border border-slate-800 hover:border-slate-700 text-[10px] font-semibold text-slate-300 cursor-pointer shrink-0"
               title="Collapse all"
             >
-              Collapse
+              -
             </button>
+          </div>
+        )}
+
+        {/* Batch bar for checked TV Shows / Seasons / Episodes */}
+        {activeTab === 'tvshows' && hasTvSelection && (
+          <div className="p-1.5 rounded-lg bg-sky-500/10 border border-sky-500/30 space-y-1.5">
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-[10px] font-bold text-sky-200 pl-0.5 truncate">{tvSelectionSummary}</span>
+              <div className="flex flex-wrap items-center justify-end gap-1">
+                <button
+                  disabled={batchBusy}
+                  onClick={() => runTvBatch('scrape')}
+                  className="px-1.5 py-0.5 rounded bg-sky-500 hover:bg-sky-400 text-white text-[10px] font-bold cursor-pointer disabled:opacity-50"
+                >
+                  Scrape
+                </button>
+                <button
+                  disabled={batchBusy}
+                  onClick={() => runTvBatch('writeNfo')}
+                  className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-semibold cursor-pointer disabled:opacity-50"
+                >
+                  NFO
+                </button>
+                <button
+                  disabled={batchBusy}
+                  onClick={() => runTvBatch('subs')}
+                  className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-semibold cursor-pointer disabled:opacity-50"
+                >
+                  Subs
+                </button>
+                <button
+                  disabled={batchBusy}
+                  onClick={() => runTvBatch('markWatched')}
+                  className="px-1.5 py-0.5 rounded bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 text-purple-200 text-[10px] font-semibold cursor-pointer disabled:opacity-50"
+                >
+                  Watched
+                </button>
+                <button
+                  disabled={batchBusy}
+                  onClick={() => runTvBatch('markUnwatched')}
+                  title="Mark selected shows/episodes unwatched"
+                  className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-semibold cursor-pointer disabled:opacity-50"
+                >
+                  Unwatch
+                </button>
+                <button
+                  disabled={batchBusy}
+                  onClick={() => setTvTagOpen((v) => !v)}
+                  title="Add tag to selected shows/episodes"
+                  className="px-1.5 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-emerald-300 text-[10px] font-semibold inline-flex items-center gap-0.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Tag className="w-2.5 h-2.5" /> Tag
+                </button>
+                <button
+                  type="button"
+                  onClick={clearTvSelection}
+                  title="Clear selection"
+                  aria-label="Clear TV selection"
+                  className="p-0.5 rounded hover:bg-slate-800 text-slate-400 hover:text-white cursor-pointer"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+            {tvTagOpen && (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (tvTagInput.trim()) void runTvBatch('addTag', tvTagInput.trim());
+                }}
+                className="flex items-center gap-1"
+              >
+                <input
+                  value={tvTagInput}
+                  onChange={(e) => setTvTagInput(e.target.value)}
+                  placeholder="Enter tag (e.g. 4K, Family)..."
+                  autoFocus
+                  className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-0.5 text-[11px] text-slate-100"
+                />
+                <button
+                  type="submit"
+                  disabled={batchBusy || !tvTagInput.trim()}
+                  className="px-2 py-0.5 rounded bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-white text-[10px] font-bold cursor-pointer"
+                >
+                  Apply
+                </button>
+              </form>
+            )}
           </div>
         )}
 
@@ -616,13 +931,19 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
           (filteredShowTree.length === 0 ? (
             <EmptyListState text="No TV shows match your filter." />
           ) : (
-            filteredShowTree.map(({ show, seasons, episodes }) => {
+            filteredShowTree.map((node) => {
+              const { show, seasons, episodes } = node;
               const showActorMatch = actorNeedle ? findActorMatch(show.actors, actorNeedle) : null;
               const hasEpisodeActorMatches = Boolean(actorNeedle && !showActorMatch && episodes.length > 0);
               const isShowExpanded = expandedShows.has(show.id) || Boolean(q) || hasEpisodeActorMatches;
               const isShowSelected =
                 selected?.kind === 'show' && selected.showId === show.id && selected.seasonNumber == null;
               const sortedSeasons = [...seasons].sort((a, b) => a.seasonNumber - b.seasonNumber);
+
+              const showCheckedCount = episodes.filter((ep) => checkedEpisodeIds.has(ep.id)).length;
+              const isShowFullyChecked =
+                checkedShowIds.has(show.id) || (episodes.length > 0 && showCheckedCount === episodes.length);
+              const isShowPartialChecked = !isShowFullyChecked && showCheckedCount > 0;
 
               return (
                 <div key={show.id} className="select-none">
@@ -638,6 +959,21 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                         : 'hover:bg-slate-800/45 border-l-2 border-l-transparent'
                     }`}
                   >
+                    <button
+                      onClick={(e) => toggleShowCheck(node, e)}
+                      className="text-slate-500 hover:text-sky-300 shrink-0 cursor-pointer"
+                      title="Select show & episodes for batch action"
+                      aria-label={`Select ${show.title}`}
+                    >
+                      {isShowFullyChecked ? (
+                        <CheckSquare className="w-3.5 h-3.5 text-sky-400" />
+                      ) : isShowPartialChecked ? (
+                        <SquareMinus className="w-3.5 h-3.5 text-sky-400/80" />
+                      ) : (
+                        <Square className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+
                     <button
                       onClick={(e) => toggleShowExpand(show.id, e)}
                       className="p-0.5 rounded hover:bg-slate-700/70 text-slate-400 shrink-0 cursor-pointer"
@@ -671,6 +1007,14 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                           </span>
                           {!show.scraped && (
                             <span className="px-1 rounded bg-amber-500/20 text-[9px] font-bold text-amber-300">UNSCRAPED</span>
+                          )}
+                          {(show.missingEpisodesCount ?? 0) > 0 && (
+                            <span
+                              title={`${show.missingEpisodesCount} missing episode(s) vs episode guide`}
+                              className="px-1 rounded bg-rose-500/15 text-[9px] font-semibold text-rose-300"
+                            >
+                              -{show.missingEpisodesCount}E
+                            </span>
                           )}
                         </div>
                         <div className="flex items-center gap-1">
@@ -719,6 +1063,12 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                               if (ae !== be) return ae - be;
                               return a.episodeNumber - b.episodeNumber;
                             });
+                          const seasonEpIds = seasonEps.map((e) => e.id);
+                          const seasonCheckedCount = seasonEpIds.filter((id) => checkedEpisodeIds.has(id)).length;
+                          const isSeasonFullyChecked =
+                            seasonEpIds.length > 0 && seasonCheckedCount === seasonEpIds.length;
+                          const isSeasonPartialChecked =
+                            !isSeasonFullyChecked && seasonCheckedCount > 0;
                           const watchedCount = seasonEps.filter((e) => e.watched).length;
 
                           return (
@@ -728,12 +1078,26 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                                   setExpandedSeasons((prev) => new Set([...prev, sKey]));
                                   onSelectMedia({ kind: 'show', showId: show.id, seasonNumber: season.seasonNumber });
                                 }}
-                                className={`pl-5 pr-2.5 py-1 flex items-center gap-1.5 cursor-pointer transition ${
+                                className={`pl-4 pr-2.5 py-1 flex items-center gap-1.5 cursor-pointer transition ${
                                   isSeasonSelected
                                     ? 'bg-sky-500/15 border-l-2 border-l-sky-400 text-sky-200'
                                     : 'hover:bg-slate-800/40 border-l-2 border-l-transparent text-slate-300'
                                 }`}
                               >
+                                <button
+                                  onClick={(e) => toggleSeasonCheck(show.id, seasonEpIds, e)}
+                                  className="text-slate-500 hover:text-sky-300 shrink-0 cursor-pointer"
+                                  title="Select all episodes in season"
+                                  aria-label={`Select ${season.name}`}
+                                >
+                                  {isSeasonFullyChecked ? (
+                                    <CheckSquare className="w-3 h-3 text-sky-400" />
+                                  ) : isSeasonPartialChecked ? (
+                                    <SquareMinus className="w-3 h-3 text-sky-400/80" />
+                                  ) : (
+                                    <Square className="w-3 h-3" />
+                                  )}
+                                </button>
                                 <button
                                   onClick={(e) => toggleSeasonExpand(show.id, season.seasonNumber, e)}
                                   className="p-0.5 rounded hover:bg-slate-700/70 text-slate-400 shrink-0 cursor-pointer"
@@ -757,6 +1121,7 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                                 <div className="bg-[#080c15]/70">
                                   {seasonEps.map((ep) => {
                                     const isEpSelected = selected?.kind === 'episode' && selected.episodeId === ep.id;
+                                    const isEpChecked = checkedEpisodeIds.has(ep.id);
                                     const effSeason = ep.displaySeason ?? ep.seasonNumber;
                                     const effEp = ep.displayEpisode ?? ep.episodeNumber;
                                     const hasCustomOrder =
@@ -776,12 +1141,24 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                                         onClick={() =>
                                           onSelectMedia({ kind: 'episode', showId: show.id, episodeId: ep.id })
                                         }
-                                        className={`pl-10 pr-2.5 py-1 flex items-center gap-1.5 cursor-pointer transition ${
+                                        className={`pl-8 pr-2.5 py-1 flex items-center gap-1.5 cursor-pointer transition ${
                                           isEpSelected
                                             ? 'bg-sky-500/20 border-l-2 border-l-sky-400 text-white'
                                             : 'hover:bg-slate-800/40 border-l-2 border-l-transparent text-slate-300'
                                         }`}
                                       >
+                                        <button
+                                          onClick={(e) => toggleEpisodeCheck(show.id, ep.id, e)}
+                                          className="text-slate-500 hover:text-sky-300 shrink-0 cursor-pointer"
+                                          title="Select episode for batch action"
+                                          aria-label={`Select ${code} ${ep.title}`}
+                                        >
+                                          {isEpChecked ? (
+                                            <CheckSquare className="w-3 h-3 text-sky-400" />
+                                          ) : (
+                                            <Square className="w-3 h-3" />
+                                          )}
+                                        </button>
                                         <span
                                           title={hasCustomOrder ? `Custom NFO order (File: ${fileCode})` : undefined}
                                           className={`px-1 py-0.2 rounded font-mono text-[10px] font-semibold shrink-0 ${

@@ -105,9 +105,16 @@ export function createSubtitlesRouter(db: MediaDatabase): Router {
       episodeIds,
     } = (req.body ?? {}) as { languages?: string[]; movieIds?: number[]; episodeIds?: number[] };
 
+    const scopedMoviesOnly = Array.isArray(movieIds) && episodeIds === undefined;
+    const scopedEpisodesOnly = Array.isArray(episodeIds) && movieIds === undefined;
+
     let downloaded = 0;
 
-    const movies = movieIds ? db.listMovies().filter((m) => movieIds.includes(m.id)) : db.listMovies();
+    const movies = scopedEpisodesOnly
+      ? []
+      : movieIds
+        ? db.listMovies().filter((m) => movieIds.includes(m.id))
+        : db.listMovies();
     for (const m of movies) {
       for (const lang of languages) {
         if (m.subtitles.some((s) => s.language === lang && !s.forced)) continue;
@@ -120,7 +127,11 @@ export function createSubtitlesRouter(db: MediaDatabase): Router {
       }
     }
 
-    const episodes = episodeIds ? db.listAllEpisodes().filter((e) => episodeIds.includes(e.id)) : db.listAllEpisodes();
+    const episodes = scopedMoviesOnly
+      ? []
+      : episodeIds
+        ? db.listAllEpisodes().filter((e) => episodeIds.includes(e.id))
+        : db.listAllEpisodes();
     for (const ep of episodes) {
       for (const lang of languages) {
         if (ep.subtitles.some((s) => s.language === lang && !s.forced)) continue;

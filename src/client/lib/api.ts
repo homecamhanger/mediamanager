@@ -6,6 +6,7 @@ import type {
   BatchJob,
   DashboardSummary,
   KodiRpcConfig,
+  KodiSyncResult,
   LibraryAuditReport,
   MediaSource,
   MissingEpisodeRecord,
@@ -162,6 +163,19 @@ export const api = {
       seasons: TvSeasonRecord[];
       episodes: TvEpisodeRecord[];
     }>(`/api/shows/${showId}/episode-order`, { method: 'POST', body: JSON.stringify(payload) }),
+  batchShows: (
+    action: 'writeNfo' | 'addTag' | 'markWatched' | 'markUnwatched',
+    payload: { showIds?: number[]; episodeIds?: number[]; tag?: string }
+  ) =>
+    req<{ affected: number; affectedShows: number; affectedEpisodes: number }>('/api/shows/batch', {
+      method: 'POST',
+      body: JSON.stringify({
+        action,
+        showIds: payload.showIds ?? [],
+        episodeIds: payload.episodeIds ?? [],
+        payload: payload.tag ? { tag: payload.tag } : undefined,
+      }),
+    }),
   batchEpisodes: (action: 'markWatched' | 'markUnwatched' | 'writeNfo', episodeIds: number[]) =>
     req<{ affected: number }>('/api/episodes/batch', { method: 'POST', body: JSON.stringify({ action, episodeIds }) }),
 
@@ -289,6 +303,13 @@ export const api = {
   testKodiRpc: () => req<{ ok: boolean; status: string }>('/api/settings/kodi/test', { method: 'POST' }),
   triggerKodiScan: () => req<{ ok: boolean; error?: string }>('/api/settings/kodi/scan', { method: 'POST' }),
   triggerKodiClean: () => req<{ ok: boolean; error?: string }>('/api/settings/kodi/clean', { method: 'POST' }),
+  syncKodi: (direction: 'pull' | 'push') =>
+    req<KodiSyncResult>('/api/settings/kodi/sync', { method: 'POST', body: JSON.stringify({ direction }) }),
+  refreshKodiItem: (mediaType: 'movie' | 'episode', mediaId: number) =>
+    req<{ ok: boolean; error?: string; kodiItemId?: number }>('/api/settings/kodi/refresh', {
+      method: 'POST',
+      body: JSON.stringify({ mediaType, mediaId }),
+    }),
   resetSampleLibrary: () => req<{ ok: boolean }>('/api/settings/sample/reset', { method: 'POST' }),
   generateSmartPlaylist: (opts: Record<string, unknown>) =>
     req<{ xml: string }>('/api/export/smartplaylist', { method: 'POST', body: JSON.stringify(opts) }),

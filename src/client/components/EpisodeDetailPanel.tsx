@@ -15,6 +15,7 @@ import {
   Star,
   Subtitles,
   Trash2,
+  Tv,
   Users,
 } from 'lucide-react';
 import type { ActorEntry, ArtworkKind, NfoValidationReport, TvEpisodeRecord, TvSeasonRecord, TvShowRecord } from '../../shared/types.js';
@@ -194,6 +195,11 @@ export const EpisodeDetailPanel: React.FC<{
     notify('Episode & sidecars renamed cleanly');
   };
 
+  const handleRefreshInKodi = async () => {
+    const res = await api.refreshKodiItem('episode', episode.id);
+    notify(res.ok ? `Refreshed "${episode.title}" in Kodi` : `Kodi refresh: ${res.error}`);
+  };
+
   const handleSetEpisodeThumb = async (url?: string, dataBase64?: string) => {
     await api.setEpisodeArtwork(episode.id, url, dataBase64);
     await load();
@@ -330,6 +336,13 @@ export const EpisodeDetailPanel: React.FC<{
                 className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
               >
                 <FolderSync className="w-3.5 h-3.5 text-emerald-400" /> Auto-Rename
+              </button>
+              <button
+                onClick={handleRefreshInKodi}
+                title="Reload this episode's NFO & artwork in Kodi via JSON-RPC"
+                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+              >
+                <Tv className="w-3.5 h-3.5 text-sky-400" /> Kodi Refresh
               </button>
             </div>
           </div>
