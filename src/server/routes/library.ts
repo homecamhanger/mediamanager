@@ -248,6 +248,30 @@ export function createLibraryRouter(db: MediaDatabase): Router {
     res.json({ show: db.getTvShow(showId) });
   });
 
+  router.post('/shows/:id/artwork', async (req, res) => {
+    const showId = Number(req.params.id);
+    const { kind, url } = req.body as { kind: ArtworkKind; url?: string };
+    const show = db.getTvShow(showId);
+    if (!show) return res.status(404).json({ error: 'TV Show not found' });
+
+    const ext = kind === 'clearlogo' || kind === 'clearart' || kind === 'disc' ? '.png' : '.jpg';
+    const targetPath = path.join(show.folderPath, `${kind}${ext}`);
+    const defaultRating = show.ratings.find((r) => r.isDefault)?.value ?? show.ratings[0]?.value ?? null;
+
+    await saveArtworkToDisk(targetPath, url, {
+      kind,
+      title: show.title,
+      year: show.year,
+      tagline: show.status,
+      genres: show.genres,
+      rating: defaultRating,
+    });
+
+    const updated = db.updateTvShow(showId, { artwork: { ...show.artwork, [kind]: targetPath } });
+    db.logActivity('scrape', 'Update Artwork', `Saved ${kind} artwork for "${show.title}"`, 'success');
+    res.json({ show: updated });
+  });
+
   router.post('/shows/:id/episode-order', (req, res) => {
     const showId = Number(req.params.id);
     const show = db.getTvShow(showId);

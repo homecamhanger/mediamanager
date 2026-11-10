@@ -98,6 +98,8 @@ export const api = {
   getShow: (id: number) => req<{ show: TvShowRecord; seasons: TvSeasonRecord[]; episodes: TvEpisodeRecord[] }>(`/api/shows/${id}`),
   updateShow: (id: number, patch: Partial<TvShowRecord> & { writeNfo?: boolean }) =>
     req<{ show: TvShowRecord }>(`/api/shows/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  setShowArtwork: (id: number, kind: ArtworkKind, url?: string) =>
+    req<{ show: TvShowRecord }>(`/api/shows/${id}/artwork`, { method: 'POST', body: JSON.stringify({ kind, url }) }),
   updateEpisode: (id: number, patch: Partial<TvEpisodeRecord> & { writeNfo?: boolean }) =>
     req<{ episode: TvEpisodeRecord }>(`/api/episodes/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   updateEpisodeOrder: (

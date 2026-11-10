@@ -338,11 +338,7 @@ export const App: React.FC = () => {
             <TvShowDetailPanel
               showId={selected.showId}
               selectedSeason={selected.seasonNumber ?? null}
-              initialTab={
-                selected.focusTab === 'nfo' || selected.focusTab === 'artwork'
-                  ? selected.focusTab
-                  : undefined
-              }
+              initialTab={selected.focusTab}
               activeActor={actorFilter}
               onSelectActor={handleFilterByActor}
               onSelectSeason={(seasonNumber) =>
@@ -357,11 +353,7 @@ export const App: React.FC = () => {
             <EpisodeDetailPanel
               showId={selected.showId}
               episodeId={selected.episodeId}
-              initialTab={
-                selected.focusTab === 'nfo' || selected.focusTab === 'subtitles'
-                  ? selected.focusTab
-                  : undefined
-              }
+              initialTab={selected.focusTab}
               activeActor={actorFilter}
               onSelectActor={handleFilterByActor}
               onSelectShow={(showId, seasonNumber) =>

@@ -128,6 +128,15 @@ describe('KodiVault Full API Integration', () => {
     expect(treeRes.body.tree[0].seasons.length).toBeGreaterThan(0);
     expect(treeRes.body.tree[0].episodes.length).toBeGreaterThan(0);
 
+    // 8. Generate/update TV show artwork directly via POST /api/shows/:id/artwork
+    const firstShowId = treeRes.body.tree[0].show.id;
+    const showArtRes = await request(app)
+      .post(`/api/shows/${firstShowId}/artwork`)
+      .send({ kind: 'clearart' });
+    expect(showArtRes.status).toBe(200);
+    expect(showArtRes.body.show.artwork.clearart).toBeTruthy();
+    expect(fs.existsSync(showArtRes.body.show.artwork.clearart)).toBe(true);
+
     db.close();
   }, 20000);
 });

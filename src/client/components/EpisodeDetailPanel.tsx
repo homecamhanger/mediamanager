@@ -7,35 +7,46 @@ import {
   EyeOff,
   FileCode2,
   FolderSync,
+  Image as ImageIcon,
   Info,
   Languages,
   Save,
   Star,
   Subtitles,
   Trash2,
+  Users,
 } from 'lucide-react';
-import type { NfoValidationReport, TvEpisodeRecord, TvShowRecord } from '../../shared/types.js';
-import { api, formatBytes } from '../lib/api.js';
+import type { NfoValidationReport, TvEpisodeRecord, TvSeasonRecord, TvShowRecord } from '../../shared/types.js';
+import { api, formatBytes, getArtworkUrl } from '../lib/api.js';
+import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 import { CastListColumn } from './CastListColumn.js';
 import { PosterImage } from './PosterImage.js';
 import { TechBadges } from './QualityBadges.js';
 import { SubtitleEditorModal, SubtitleSearchModal } from './SubtitleSearchModal.js';
 
-type EpisodeTab = 'metadata' | 'subtitles' | 'nfo' | 'mediainfo';
+type EpisodeTab = 'metadata' | 'cast' | 'nfo' | 'mediainfo';
+
+function resolveEpisodeTab(tab?: EpisodeTab | InspectorFocusTab): EpisodeTab {
+  if (tab === 'subtitles' || tab === 'mediainfo') return 'mediainfo';
+  if (tab === 'nfo') return 'nfo';
+  if (tab === 'cast') return 'cast';
+  return 'metadata';
+}
 
 export const EpisodeDetailPanel: React.FC<{
   showId: number;
   episodeId: number;
-  initialTab?: EpisodeTab;
+  initialTab?: EpisodeTab | InspectorFocusTab;
   activeActor?: string | null;
   onSelectActor?: (actorName: string) => void;
   onSelectShow: (showId: number, seasonNumber?: number | null) => void;
   onUpdated: () => void;
 }> = ({ showId, episodeId, initialTab, activeActor, onSelectActor, onSelectShow, onUpdated }) => {
   const [show, setShow] = useState<TvShowRecord | null>(null);
+  const [seasons, setSeasons] = useState<TvSeasonRecord[]>([]);
   const [episode, setEpisode] = useState<TvEpisodeRecord | null>(null);
   const [form, setForm] = useState<Partial<TvEpisodeRecord>>({});
-  const [tab, setTab] = useState<EpisodeTab>(initialTab ?? 'metadata');
+  const [tab, setTab] = useState<EpisodeTab>(resolveEpisodeTab(initialTab));
   const [nfoXml, setNfoXml] = useState('');
   const [nfoVal, setNfoVal] = useState<NfoValidationReport | null>(null);
   const [subSearchOpen, setSubSearchOpen] = useState(false);
@@ -46,6 +57,7 @@ export const EpisodeDetailPanel: React.FC<{
   const load = async () => {
     const res = await api.getShow(showId);
     setShow(res.show);
+    setSeasons(res.seasons);
     const ep = res.episodes.find((e) => e.id === episodeId) ?? null;
     setEpisode(ep);
     if (ep) {
@@ -57,10 +69,25 @@ export const EpisodeDetailPanel: React.FC<{
   };
 
   useEffect(() => {
-    setTab(initialTab ?? 'metadata');
+    setTab(resolveEpisodeTab(initialTab));
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showId, episodeId, initialTab]);
+
+  useEffect(() => {
+    if (initialTab === 'subtitles') {
+      const id = setTimeout(() => {
+        document.getElementById('episode-subtitles-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 80);
+      return () => clearTimeout(id);
+    }
+    if (initialTab === 'artwork') {
+      const id = setTimeout(() => {
+        document.getElementById('episode-artwork-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 80);
+      return () => clearTimeout(id);
+    }
+  }, [initialTab, episodeId]);
 
   if (!show || !episode) {
     return <div className="p-6 text-xs text-slate-400">Loading episode details...</div>;
@@ -84,6 +111,12 @@ export const EpisodeDetailPanel: React.FC<{
     episode.displayEpisode != null ||
     (episode.parsedInfo.episodeNumber != null && episode.episodeNumber !== episode.parsedInfo.episodeNumber) ||
     (episode.parsedInfo.seasonNumber != null && episode.seasonNumber !== episode.parsedInfo.seasonNumber);
+
+  const matchingSeason = seasons.find((s) => s.seasonNumber === effSeason) ?? seasons.find((s) => s.seasonNumber === episode.seasonNumber);
+  const seasonOrShowPoster = matchingSeason?.posterPath ?? show.artwork.poster;
+  const fanartUrl = getArtworkUrl(show.artwork.fanart);
+  const clearlogoUrl = getArtworkUrl(show.artwork.clearlogo);
+  const epActors = episode.actors.length > 0 ? episode.actors : show.actors;
 
   const handleSaveMetadata = async () => {
     setSaving(true);
@@ -152,88 +185,106 @@ export const EpisodeDetailPanel: React.FC<{
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Breadcrumb + Episode Hero */}
-      <div className="border-b border-slate-800 bg-[#0e1524] shrink-0">
-        <div className="px-5 pt-2.5 pb-1 flex items-center gap-2 text-[11px] text-slate-400">
-          <button
-            onClick={() => onSelectShow(show.id, null)}
-            className="text-sky-300 hover:text-sky-200 font-semibold flex items-center gap-1 cursor-pointer"
-          >
-            <ArrowLeft className="w-3 h-3" /> {show.title}
-          </button>
-          <span>/</span>
-          <button
-            onClick={() => onSelectShow(show.id, effSeason)}
-            className="hover:text-slate-200 cursor-pointer"
-          >
-            Season {effSeason}
-          </button>
-          <span>/</span>
-          <span className="font-mono text-slate-200">{epCode}</span>
-          {hasCustomOrder && (
-            <span className="px-1.5 py-0.2 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 font-mono text-[10px]">
-              File: {fileCode}
-            </span>
-          )}
-        </div>
-
-        <div className="px-5 py-3 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3.5 min-w-0 flex-1">
-            <div className="w-28 shrink-0">
-              <PosterImage filePath={episode.thumbPath ?? show.artwork.fanart} alt={episode.title} aspect="fanart" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="px-2 py-0.5 rounded bg-sky-500/20 border border-sky-500/40 text-sky-300 font-mono text-xs font-bold">
-                  {epCode}
-                </span>
-                <h2 className="text-lg font-bold text-white truncate">{episode.title}</h2>
-              </div>
-              <div className="mt-1.5 flex flex-wrap items-center gap-3 text-xs text-slate-400">
-                {episode.aired && <span>Aired: {episode.aired}</span>}
-                {episode.runtimeMinutes && <span>{episode.runtimeMinutes} min</span>}
-                <TechBadges parsed={episode.parsedInfo} streamDetails={episode.streamDetails} />
-              </div>
-            </div>
+      <div className="relative border-b border-slate-800 bg-[#0e1524] shrink-0">
+        {fanartUrl && (
+          <div className="absolute inset-0 bg-cover bg-center opacity-20" style={{ backgroundImage: `url("${fanartUrl}")` }} />
+        )}
+        <div className="relative bg-gradient-to-r from-[#0b0f17]/95 via-[#0f1522]/85 to-[#0f1522]/80">
+          <div className="px-5 pt-2.5 pb-1 flex items-center gap-2 text-[11px] text-slate-400">
+            <button
+              onClick={() => onSelectShow(show.id, null)}
+              className="text-sky-300 hover:text-sky-200 font-semibold flex items-center gap-1 cursor-pointer"
+            >
+              <ArrowLeft className="w-3 h-3" /> {show.title}
+            </button>
+            <span>/</span>
+            <button
+              onClick={() => onSelectShow(show.id, effSeason)}
+              className="hover:text-slate-200 cursor-pointer"
+            >
+              Season {effSeason}
+            </button>
+            <span>/</span>
+            <span className="font-mono text-slate-200">{epCode}</span>
+            {hasCustomOrder && (
+              <span className="px-1.5 py-0.2 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 font-mono text-[10px]">
+                File: {fileCode}
+              </span>
+            )}
           </div>
 
-          <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              onClick={handleToggleWatched}
-              className={`px-2.5 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
-                episode.watched
-                  ? 'bg-purple-500/20 border-purple-500/40 text-purple-300 hover:bg-purple-500/30'
-                  : 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
-              }`}
-            >
-              {episode.watched ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-              {episode.watched ? 'Watched' : 'Unwatched'}
-            </button>
-            <button
-              onClick={() => setSubSearchOpen(true)}
-              className="px-2.5 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-            >
-              <Languages className="w-3.5 h-3.5" /> Subtitles
-            </button>
-            <button
-              onClick={handleQuickRename}
-              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-            >
-              <FolderSync className="w-3.5 h-3.5 text-emerald-400" /> Auto-Rename
-            </button>
+          <div className="px-5 py-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3.5 min-w-0 flex-1">
+              {tab !== 'metadata' && (
+                <div className="w-24 shrink-0">
+                  <PosterImage filePath={episode.thumbPath ?? show.artwork.fanart} alt={episode.title} aspect="fanart" />
+                </div>
+              )}
+              {clearlogoUrl && (
+                <img
+                  src={clearlogoUrl}
+                  alt={`${show.title} logo`}
+                  className="hidden sm:block h-8 max-w-[130px] object-contain shrink-0 drop-shadow"
+                />
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2 py-0.5 rounded bg-sky-500/20 border border-sky-500/40 text-sky-300 font-mono text-xs font-bold">
+                    {epCode}
+                  </span>
+                  <h2 className="text-lg font-bold text-white truncate">{episode.title}</h2>
+                </div>
+                <div className="mt-1.5 flex flex-wrap items-center gap-3 text-xs text-slate-400">
+                  {episode.aired && <span>Aired: {episode.aired}</span>}
+                  {episode.runtimeMinutes && <span>{episode.runtimeMinutes} min</span>}
+                  <TechBadges parsed={episode.parsedInfo} streamDetails={episode.streamDetails} />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                onClick={handleToggleWatched}
+                className={`px-2.5 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
+                  episode.watched
+                    ? 'bg-purple-500/20 border-purple-500/40 text-purple-300 hover:bg-purple-500/30'
+                    : 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
+                }`}
+              >
+                {episode.watched ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                {episode.watched ? 'Watched' : 'Unwatched'}
+              </button>
+              <button
+                onClick={() => setSubSearchOpen(true)}
+                className="px-2.5 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+              >
+                <Languages className="w-3.5 h-3.5" /> Subtitles
+              </button>
+              <button
+                onClick={handleQuickRename}
+                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+              >
+                <FolderSync className="w-3.5 h-3.5 text-emerald-400" /> Auto-Rename
+              </button>
+            </div>
           </div>
         </div>
 
         {/* Sub-Tabs */}
-        <div className="px-5 bg-[#0b0f17]/85 flex items-center gap-1 overflow-x-auto border-t border-slate-800/80">
+        <div className="relative px-5 bg-[#0b0f17]/85 flex items-center gap-1 overflow-x-auto border-t border-slate-800/80">
           {[
-            { id: 'metadata', label: 'Episode Metadata', icon: <Info className="w-3.5 h-3.5" /> },
-            { id: 'subtitles', label: `Subtitles (${episode.subtitles.length})`, icon: <Subtitles className="w-3.5 h-3.5" /> },
-            { id: 'nfo', label: 'Episode NFO XML', icon: <Code2 className="w-3.5 h-3.5" /> },
-            { id: 'mediainfo', label: 'MediaInfo & Paths', icon: <FileCode2 className="w-3.5 h-3.5" /> },
+            { id: 'metadata' as const, label: 'Metadata & Art', icon: <Info className="w-3.5 h-3.5" /> },
+            { id: 'cast' as const, label: `Cast (${epActors.length})`, icon: <Users className="w-3.5 h-3.5" /> },
+            { id: 'nfo' as const, label: 'Episode NFO XML', icon: <Code2 className="w-3.5 h-3.5" /> },
+            {
+              id: 'mediainfo' as const,
+              label: `MediaInfo & Paths (${episode.subtitles.length} sub${episode.subtitles.length === 1 ? '' : 's'})`,
+              icon: <FileCode2 className="w-3.5 h-3.5" />,
+            },
           ].map((t) => (
             <button
               key={t.id}
-              onClick={() => setTab(t.id as EpisodeTab)}
+              onClick={() => setTab(t.id)}
               className={`px-3 py-2 text-xs font-semibold flex items-center gap-1.5 border-b-2 transition cursor-pointer whitespace-nowrap ${
                 tab === t.id ? 'border-sky-400 text-sky-300' : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
@@ -253,133 +304,146 @@ export const EpisodeDetailPanel: React.FC<{
       {/* Body */}
       <div className="flex-1 overflow-y-auto p-5">
         {tab === 'metadata' && (
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
-            <div className="xl:col-span-8 space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                <Field label="Episode Title" value={form.title ?? ''} onChange={(v) => setForm({ ...form, title: v })} />
-                <Field label="Aired Date (YYYY-MM-DD)" value={form.aired ?? ''} onChange={(v) => setForm({ ...form, aired: v })} />
-                <Field
-                  label="Runtime (minutes)"
-                  type="number"
-                  value={form.runtimeMinutes != null ? String(form.runtimeMinutes) : ''}
-                  onChange={(v) => setForm({ ...form, runtimeMinutes: v ? Number(v) : null })}
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Episode Plot</label>
-                <textarea
-                  rows={4}
-                  value={form.plot ?? ''}
-                  onChange={(e) => setForm({ ...form, plot: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 leading-relaxed"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <Field
-                  label="Directors (comma separated)"
-                  value={(form.directors ?? []).join(', ')}
-                  onChange={(v) => setForm({ ...form, directors: v.split(',').map((s) => s.trim()).filter(Boolean) })}
-                />
-                <Field
-                  label="Writers / Credits (comma separated)"
-                  value={(form.writers ?? []).join(', ')}
-                  onChange={(v) => setForm({ ...form, writers: v.split(',').map((s) => s.trim()).filter(Boolean) })}
-                />
-              </div>
-
-              <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-                <div className="flex items-center gap-1.5">
-                  <Star className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="text-xs text-slate-400">User Rating:</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={10}
-                    value={form.userRating ?? ''}
-                    onChange={(e) => setForm({ ...form, userRating: e.target.value ? Number(e.target.value) : null })}
-                    className="w-14 bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-slate-100"
+          <div className="space-y-6">
+            {/* Top Row: Season/Series Poster in Top-Left + Episode Metadata Fields */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+              <div className="lg:col-span-3 xl:col-span-3">
+                <div className="p-3 rounded-xl bg-slate-900/75 border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-200">
+                      {matchingSeason?.posterPath ? `Season ${effSeason} Poster` : 'Series Poster'}
+                    </span>
+                    <span
+                      className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+                        seasonOrShowPoster ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
+                      }`}
+                    >
+                      {seasonOrShowPoster ? 'Present' : 'Missing'}
+                    </span>
+                  </div>
+                  <PosterImage
+                    filePath={seasonOrShowPoster}
+                    alt={`${show.title} Season ${effSeason}`}
+                    aspect="poster"
+                    className="w-full shadow-xl"
                   />
                 </div>
-                <button
-                  onClick={handleSaveMetadata}
-                  disabled={saving}
-                  className="px-4 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  {saving ? 'Saving...' : 'Save & Write Episode NFO'}
-                </button>
+              </div>
+
+              <div className="lg:col-span-9 xl:col-span-9 space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <Field label="Episode Title" value={form.title ?? ''} onChange={(v) => setForm({ ...form, title: v })} />
+                  <Field label="Aired Date (YYYY-MM-DD)" value={form.aired ?? ''} onChange={(v) => setForm({ ...form, aired: v })} />
+                  <Field
+                    label="Runtime (minutes)"
+                    type="number"
+                    value={form.runtimeMinutes != null ? String(form.runtimeMinutes) : ''}
+                    onChange={(v) => setForm({ ...form, runtimeMinutes: v ? Number(v) : null })}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Episode Plot</label>
+                  <textarea
+                    rows={5}
+                    value={form.plot ?? ''}
+                    onChange={(e) => setForm({ ...form, plot: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 leading-relaxed"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <Field
+                    label="Directors (comma separated)"
+                    value={(form.directors ?? []).join(', ')}
+                    onChange={(v) => setForm({ ...form, directors: v.split(',').map((s) => s.trim()).filter(Boolean) })}
+                  />
+                  <Field
+                    label="Writers / Credits (comma separated)"
+                    value={(form.writers ?? []).join(', ')}
+                    onChange={(v) => setForm({ ...form, writers: v.split(',').map((s) => s.trim()).filter(Boolean) })}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+                  <div className="flex items-center gap-1.5">
+                    <Star className="w-3.5 h-3.5 text-amber-400" />
+                    <span className="text-xs text-slate-400">User Rating:</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={form.userRating ?? ''}
+                      onChange={(e) => setForm({ ...form, userRating: e.target.value ? Number(e.target.value) : null })}
+                      className="w-14 bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-slate-100"
+                    />
+                  </div>
+                  <button
+                    onClick={handleSaveMetadata}
+                    disabled={saving}
+                    className="px-4 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    {saving ? 'Saving...' : 'Save & Write Episode NFO'}
+                  </button>
+                </div>
               </div>
             </div>
 
-            <CastListColumn
-              actors={episode.actors.length > 0 ? episode.actors : show.actors}
-              label={episode.actors.length > 0 ? 'Episode Cast & Guest Stars' : 'Series Cast'}
-              emptyText="No cast credits found on this episode or series yet."
-              activeActor={activeActor}
-              onSelectActor={onSelectActor}
-            />
-          </div>
-        )}
+            {/* Bottom Section: Episode Thumb & Series Art Below Metadata Fields */}
+            <div id="episode-artwork-section" className="pt-4 border-t border-slate-800/90 space-y-3">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                <ImageIcon className="w-3.5 h-3.5 text-sky-400" /> Episode &amp; Series Artwork
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                <div className="p-3 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-200">Episode Still (16:9)</span>
+                    <span
+                      className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+                        episode.thumbPath ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-800 text-slate-400'
+                      }`}
+                    >
+                      {episode.thumbPath ? 'Present' : 'Fallback'}
+                    </span>
+                  </div>
+                  <PosterImage filePath={episode.thumbPath ?? show.artwork.fanart} alt={episode.title} aspect="fanart" />
+                </div>
 
-        {tab === 'subtitles' && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="text-sm font-bold text-slate-100">Episode Sidecar Subtitles</h4>
-                <p className="text-xs text-slate-400">
-                  OpenSubtitles 64-bit hash: <code className="text-sky-300">{episode.movieHash}</code>
-                </p>
-              </div>
-              <button
-                onClick={() => setSubSearchOpen(true)}
-                className="px-3 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-              >
-                <Languages className="w-3.5 h-3.5" /> Search & Download
-              </button>
-            </div>
-
-            {episode.subtitles.length === 0 ? (
-              <div className="p-6 rounded-xl border border-dashed border-slate-700 text-center text-xs text-slate-400">
-                No subtitles attached to this episode yet.
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {episode.subtitles.map((s) => (
-                  <div key={s.id} className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 text-xs font-bold uppercase">{s.language}</span>
-                        <span className="text-xs text-slate-400">
-                          {s.cueCount ?? 0} cues • {formatBytes(s.sizeBytes)}
-                        </span>
-                      </div>
-                      <div className="text-xs font-mono text-slate-200 mt-1">{s.fileName}</div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => setEditSubId(s.id)}
-                        className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 font-semibold cursor-pointer"
+                {(
+                  [
+                    { kind: 'fanart', label: 'Series Fanart (16:9)', aspect: 'fanart' },
+                    { kind: 'clearlogo', label: 'Series ClearLOGO', aspect: 'logo' },
+                    { kind: 'banner', label: 'Series Banner', aspect: 'banner' },
+                  ] as const
+                ).map((slot) => (
+                  <div key={slot.kind} className="p-3 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-200">{slot.label}</span>
+                      <span
+                        className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+                          show.artwork[slot.kind] ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
+                        }`}
                       >
-                        Preview & Sync
-                      </button>
-                      <button
-                        onClick={async () => {
-                          await api.deleteSubtitle(s.id);
-                          await load();
-                          onUpdated();
-                        }}
-                        className="p-1.5 rounded-lg text-rose-400 hover:bg-rose-500/15 cursor-pointer"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                        {show.artwork[slot.kind] ? 'Present' : 'Missing'}
+                      </span>
                     </div>
+                    <PosterImage filePath={show.artwork[slot.kind]} alt={slot.label} aspect={slot.aspect} />
                   </div>
                 ))}
               </div>
-            )}
+            </div>
           </div>
+        )}
+
+        {tab === 'cast' && (
+          <CastListColumn
+            actors={epActors}
+            label={episode.actors.length > 0 ? 'Episode Cast & Guest Stars' : 'Series Cast'}
+            emptyText="No cast credits found on this episode or series yet."
+            activeActor={activeActor}
+            onSelectActor={onSelectActor}
+          />
         )}
 
         {tab === 'nfo' && (
@@ -441,9 +505,9 @@ export const EpisodeDetailPanel: React.FC<{
         )}
 
         {tab === 'mediainfo' && (
-          <div className="space-y-3 text-xs">
+          <div className="space-y-4 text-xs">
             <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
-              <div className="font-semibold text-slate-200">File & Hash Details</div>
+              <div className="font-semibold text-slate-200">File &amp; Hash Details</div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-slate-400">
                 <div>Video File: <code className="text-slate-200 break-all">{episode.filePath}</code></div>
                 <div>File Size: <span className="text-slate-200">{formatBytes(episode.fileSizeBytes)}</span></div>
@@ -473,6 +537,69 @@ export const EpisodeDetailPanel: React.FC<{
                   </div>
                 ))}
               </div>
+            </div>
+
+            {/* Sidecar Subtitles Section (File Data) */}
+            <div id="episode-subtitles-section" className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
+                    <Subtitles className="w-3.5 h-3.5 text-sky-400" /> Sidecar Subtitle Files ({episode.subtitles.length})
+                  </h4>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    External .srt/.ass/.vtt tracks matched beside the episode video file
+                  </p>
+                </div>
+                <button
+                  onClick={() => setSubSearchOpen(true)}
+                  className="px-3 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Languages className="w-3.5 h-3.5" /> Search &amp; Download
+                </button>
+              </div>
+
+              {episode.subtitles.length === 0 ? (
+                <div className="p-5 rounded-xl border border-dashed border-slate-700 text-center text-xs text-slate-400">
+                  No subtitles attached to this episode yet.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {episode.subtitles.map((s) => (
+                    <div key={s.id} className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 flex items-center justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 text-xs font-bold uppercase">{s.language}</span>
+                          {s.forced && <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold">FORCED</span>}
+                          {s.sdh && <span className="px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 text-[10px] font-bold">SDH</span>}
+                          <span className="text-xs text-slate-400">
+                            {s.cueCount ?? 0} cues • {formatBytes(s.sizeBytes)}
+                          </span>
+                        </div>
+                        <div className="text-xs font-mono text-slate-200 mt-1 truncate">{s.fileName}</div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => setEditSubId(s.id)}
+                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 font-semibold cursor-pointer"
+                        >
+                          Preview &amp; Sync
+                        </button>
+                        <button
+                          onClick={async () => {
+                            await api.deleteSubtitle(s.id);
+                            await load();
+                            onUpdated();
+                          }}
+                          className="p-1.5 rounded-lg text-rose-400 hover:bg-rose-500/15 cursor-pointer"
+                          title="Delete subtitle file"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}

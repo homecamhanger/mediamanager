@@ -14,10 +14,12 @@ import {
   Star,
   Subtitles,
   Trash2,
+  Users,
   X,
 } from 'lucide-react';
 import type { ArtworkKind, MovieRecord, NfoValidationReport } from '../../shared/types.js';
 import { api, formatBytes, getArtworkUrl } from '../lib/api.js';
+import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 import { CastListColumn } from './CastListColumn.js';
 import { PosterImage } from './PosterImage.js';
 import { TechBadges } from './QualityBadges.js';
@@ -25,10 +27,9 @@ import { RatingBadges } from './RatingBadges.js';
 import { ScrapeModal } from './ScrapeModal.js';
 import { SubtitleEditorModal, SubtitleSearchModal } from './SubtitleSearchModal.js';
 
-type DetailTab = 'metadata' | 'artwork' | 'subtitles' | 'nfo' | 'mediainfo';
+type DetailTab = 'metadata' | 'cast' | 'nfo' | 'mediainfo';
 
-const ARTWORK_SLOTS: Array<{ kind: ArtworkKind; label: string; aspect: 'poster' | 'fanart' | 'banner' | 'square' | 'logo' }> = [
-  { kind: 'poster', label: 'Poster (2:3)', aspect: 'poster' },
+const OTHER_ARTWORK_SLOTS: Array<{ kind: ArtworkKind; label: string; aspect: 'poster' | 'fanart' | 'banner' | 'square' | 'logo' }> = [
   { kind: 'fanart', label: 'Fanart Backdrop (16:9)', aspect: 'fanart' },
   { kind: 'clearlogo', label: 'HD ClearLOGO (PNG)', aspect: 'logo' },
   { kind: 'clearart', label: 'HD ClearART (PNG)', aspect: 'fanart' },
@@ -37,16 +38,23 @@ const ARTWORK_SLOTS: Array<{ kind: ArtworkKind; label: string; aspect: 'poster' 
   { kind: 'landscape', label: 'Landscape Thumb (16:9)', aspect: 'fanart' },
 ];
 
+function resolveMovieTab(tab?: DetailTab | InspectorFocusTab): DetailTab {
+  if (tab === 'subtitles' || tab === 'mediainfo') return 'mediainfo';
+  if (tab === 'nfo') return 'nfo';
+  if (tab === 'cast') return 'cast';
+  return 'metadata';
+}
+
 export const MovieDetailPanel: React.FC<{
   movieId: number;
-  initialTab?: DetailTab;
+  initialTab?: DetailTab | InspectorFocusTab;
   activeActor?: string | null;
   onSelectActor?: (actorName: string) => void;
   onUpdated: () => void;
   onClose?: () => void;
 }> = ({ movieId, initialTab, activeActor, onSelectActor, onUpdated, onClose }) => {
   const [movie, setMovie] = useState<MovieRecord | null>(null);
-  const [tab, setTab] = useState<DetailTab>(initialTab ?? 'metadata');
+  const [tab, setTab] = useState<DetailTab>(resolveMovieTab(initialTab));
   const [saving, setSaving] = useState(false);
   const [scrapeOpen, setScrapeOpen] = useState(false);
   const [subSearchOpen, setSubSearchOpen] = useState(false);
@@ -70,10 +78,25 @@ export const MovieDetailPanel: React.FC<{
   };
 
   useEffect(() => {
-    setTab(initialTab ?? 'metadata');
+    setTab(resolveMovieTab(initialTab));
     void loadMovie();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [movieId, initialTab]);
+
+  useEffect(() => {
+    if (initialTab === 'artwork') {
+      const id = setTimeout(() => {
+        document.getElementById('movie-artwork-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 80);
+      return () => clearTimeout(id);
+    }
+    if (initialTab === 'subtitles') {
+      const id = setTimeout(() => {
+        document.getElementById('movie-subtitles-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 80);
+      return () => clearTimeout(id);
+    }
+  }, [initialTab, movieId]);
 
   if (!movie) {
     return <div className="p-6 text-xs text-slate-400">Loading movie details...</div>;
@@ -169,6 +192,9 @@ export const MovieDetailPanel: React.FC<{
   };
 
   const fanartUrl = getArtworkUrl(movie.artwork.fanart, artCacheKey);
+  const clearlogoUrl = getArtworkUrl(movie.artwork.clearlogo, artCacheKey);
+  const posterCandidates = movie.artworkCandidates?.poster ?? [];
+  const otherArtPresentCount = OTHER_ARTWORK_SLOTS.filter((s) => Boolean(movie.artwork[s.kind])).length;
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -176,12 +202,12 @@ export const MovieDetailPanel: React.FC<{
       <div className="relative border-b border-slate-800 shrink-0">
         {fanartUrl && (
           <div
-            className="absolute inset-0 bg-cover bg-center opacity-20"
+            className="absolute inset-0 bg-cover bg-center opacity-25"
             style={{ backgroundImage: `url("${fanartUrl}")` }}
           />
         )}
         <div
-          className={`relative bg-gradient-to-r from-[#0b0f17]/95 via-[#0f1522]/90 to-[#0f1522]/85 px-5 py-3 ${
+          className={`relative bg-gradient-to-r from-[#0b0f17]/95 via-[#0f1522]/85 to-[#0f1522]/80 px-5 py-3 ${
             onClose ? 'pr-16' : ''
           } flex flex-wrap items-center justify-between gap-3`}
         >
@@ -197,9 +223,18 @@ export const MovieDetailPanel: React.FC<{
           )}
 
           <div className="flex items-center gap-3.5 min-w-0 flex-1">
-            <div className="w-14 shrink-0 shadow-lg">
-              <PosterImage filePath={movie.artwork.poster} alt={movie.title} cacheKey={artCacheKey} />
-            </div>
+            {tab !== 'metadata' && (
+              <div className="w-12 shrink-0 shadow-lg">
+                <PosterImage filePath={movie.artwork.poster} alt={movie.title} cacheKey={artCacheKey} />
+              </div>
+            )}
+            {clearlogoUrl && (
+              <img
+                src={clearlogoUrl}
+                alt={`${movie.title} logo`}
+                className="hidden sm:block h-9 max-w-[140px] object-contain shrink-0 drop-shadow"
+              />
+            )}
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-lg font-bold text-white truncate">{movie.title}</h2>
@@ -252,15 +287,18 @@ export const MovieDetailPanel: React.FC<{
         {/* Sub-Tabs */}
         <div className="relative px-5 bg-[#0b0f17]/85 flex items-center gap-1 overflow-x-auto border-t border-slate-800/80">
           {[
-            { id: 'metadata', label: 'Metadata & Cast', icon: <Info className="w-3.5 h-3.5" /> },
-            { id: 'artwork', label: 'Kodi Artwork', icon: <ImageIcon className="w-3.5 h-3.5" /> },
-            { id: 'subtitles', label: `Subtitles (${movie.subtitles.length})`, icon: <Subtitles className="w-3.5 h-3.5" /> },
-            { id: 'nfo', label: 'NFO XML', icon: <Code2 className="w-3.5 h-3.5" /> },
-            { id: 'mediainfo', label: 'MediaInfo & Paths', icon: <FileCode2 className="w-3.5 h-3.5" /> },
+            { id: 'metadata' as const, label: 'Metadata & Art', icon: <Info className="w-3.5 h-3.5" /> },
+            { id: 'cast' as const, label: `Cast (${movie.actors.length})`, icon: <Users className="w-3.5 h-3.5" /> },
+            { id: 'nfo' as const, label: 'NFO XML', icon: <Code2 className="w-3.5 h-3.5" /> },
+            {
+              id: 'mediainfo' as const,
+              label: `MediaInfo & Paths (${movie.subtitles.length} sub${movie.subtitles.length === 1 ? '' : 's'})`,
+              icon: <FileCode2 className="w-3.5 h-3.5" />,
+            },
           ].map((t) => (
             <button
               key={t.id}
-              onClick={() => setTab(t.id as DetailTab)}
+              onClick={() => setTab(t.id)}
               className={`px-3 py-2 text-xs font-semibold flex items-center gap-1.5 border-b-2 transition cursor-pointer whitespace-nowrap ${
                 tab === t.id ? 'border-sky-400 text-sky-300' : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
@@ -280,147 +318,49 @@ export const MovieDetailPanel: React.FC<{
       {/* Dense Body */}
       <div className="flex-1 overflow-y-auto p-5">
         {tab === 'metadata' && (
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
-            <div className="xl:col-span-8 space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                <Field label="Title" value={form.title ?? ''} onChange={(v) => setForm({ ...form, title: v })} />
-                <Field label="Original Title" value={form.originalTitle ?? ''} onChange={(v) => setForm({ ...form, originalTitle: v })} />
-                <Field label="Sort Title" value={form.sortTitle ?? ''} onChange={(v) => setForm({ ...form, sortTitle: v })} />
-                <div className="grid grid-cols-2 gap-2">
-                  <Field
-                    label="Year"
-                    type="number"
-                    value={form.year != null ? String(form.year) : ''}
-                    onChange={(v) => setForm({ ...form, year: v ? Number(v) : null })}
-                  />
-                  <Field
-                    label="Runtime (m)"
-                    type="number"
-                    value={form.runtimeMinutes != null ? String(form.runtimeMinutes) : ''}
-                    onChange={(v) => setForm({ ...form, runtimeMinutes: v ? Number(v) : null })}
-                  />
-                </div>
-                <Field label="Premiered" value={form.premiered ?? ''} onChange={(v) => setForm({ ...form, premiered: v })} />
-                <Field label="MPAA" value={form.mpaa ?? ''} onChange={(v) => setForm({ ...form, mpaa: v })} />
-                <Field label="Movie Set" value={form.setName ?? ''} onChange={(v) => setForm({ ...form, setName: v || null })} />
-                <Field label="Country" value={form.country ?? ''} onChange={(v) => setForm({ ...form, country: v })} />
-                <Field label="Tagline" value={form.tagline ?? ''} onChange={(v) => setForm({ ...form, tagline: v })} />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Plot Synopsis</label>
-                <textarea
-                  rows={3}
-                  value={form.plot ?? ''}
-                  onChange={(e) => setForm({ ...form, plot: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 leading-relaxed"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <Field
-                  label="Genres (comma separated)"
-                  value={(form.genres ?? []).join(', ')}
-                  onChange={(v) => setForm({ ...form, genres: v.split(',').map((s) => s.trim()).filter(Boolean) })}
-                />
-                <Field
-                  label="Tags (comma separated)"
-                  value={(form.tags ?? []).join(', ')}
-                  onChange={(v) => setForm({ ...form, tags: v.split(',').map((s) => s.trim()).filter(Boolean) })}
-                />
-                <Field
-                  label="Directors"
-                  value={(form.directors ?? []).join(', ')}
-                  onChange={(v) => setForm({ ...form, directors: v.split(',').map((s) => s.trim()).filter(Boolean) })}
-                />
-                <Field
-                  label="Studios"
-                  value={(form.studios ?? []).join(', ')}
-                  onChange={(v) => setForm({ ...form, studios: v.split(',').map((s) => s.trim()).filter(Boolean) })}
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                <Field
-                  label="IMDb ID"
-                  value={form.uniqueIds?.imdb ?? ''}
-                  onChange={(v) => setForm({ ...form, uniqueIds: { ...(form.uniqueIds ?? {}), imdb: v || undefined } })}
-                />
-                <Field
-                  label="TMDb ID"
-                  value={form.uniqueIds?.tmdb ?? ''}
-                  onChange={(v) => setForm({ ...form, uniqueIds: { ...(form.uniqueIds ?? {}), tmdb: v || undefined } })}
-                />
-                <Field label="Trailer URL" value={form.trailerUrl ?? ''} onChange={(v) => setForm({ ...form, trailerUrl: v })} />
-              </div>
-
-              <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-                <div className="flex items-center gap-1.5">
-                  <Star className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="text-xs text-slate-400">User Rating:</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={10}
-                    value={form.userRating ?? ''}
-                    onChange={(e) => setForm({ ...form, userRating: e.target.value ? Number(e.target.value) : null })}
-                    className="w-14 bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-slate-100"
-                  />
-                </div>
-
-                <button
-                  onClick={handleSaveMetadata}
-                  disabled={saving}
-                  className="px-3.5 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  {saving ? 'Saving...' : 'Save & Write NFO'}
-                </button>
-              </div>
-            </div>
-
-            <CastListColumn actors={movie.actors} activeActor={activeActor} onSelectActor={onSelectActor} />
-          </div>
-        )}
-
-        {tab === 'artwork' && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">
-            {ARTWORK_SLOTS.map((slot) => {
-              const current = movie.artwork[slot.kind];
-              const candidates = movie.artworkCandidates?.[slot.kind] ?? [];
-              return (
-                <div key={slot.kind} className="p-3 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2.5">
+          <div className="space-y-6">
+            {/* Top Row: Poster in Top-Left + Metadata Fields */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+              {/* Top-Left Poster Column */}
+              <div className="lg:col-span-3 xl:col-span-3 space-y-2.5">
+                <div className="p-3 rounded-xl bg-slate-900/75 border border-slate-800 space-y-2.5">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-200">{slot.label}</span>
+                    <span className="text-xs font-bold text-slate-200">Poster (2:3)</span>
                     <span
                       className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
-                        current ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
+                        movie.artwork.poster ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
                       }`}
                     >
-                      {current ? 'Present' : 'Missing'}
+                      {movie.artwork.poster ? 'Present' : 'Missing'}
                     </span>
                   </div>
-                  <PosterImage filePath={current} alt={slot.label} aspect={slot.aspect} cacheKey={artCacheKey} className="w-full" />
+                  <PosterImage
+                    filePath={movie.artwork.poster}
+                    alt={`${movie.title} Poster`}
+                    aspect="poster"
+                    cacheKey={artCacheKey}
+                    className="w-full shadow-xl"
+                  />
                   <div className="flex gap-1.5">
                     <input
-                      value={customArtUrl[slot.kind] ?? ''}
-                      onChange={(e) => setCustomArtUrl((p) => ({ ...p, [slot.kind]: e.target.value }))}
-                      placeholder="URL or blank to auto-generate"
+                      value={customArtUrl.poster ?? ''}
+                      onChange={(e) => setCustomArtUrl((p) => ({ ...p, poster: e.target.value }))}
+                      placeholder="URL or blank to generate"
                       className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[11px] text-slate-200"
                     />
                     <button
-                      onClick={() => handlePickArtwork(slot.kind, customArtUrl[slot.kind] || undefined)}
+                      onClick={() => handlePickArtwork('poster', customArtUrl.poster || undefined)}
                       className="px-2 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/30 text-sky-300 text-[11px] font-semibold cursor-pointer shrink-0"
                     >
-                      {customArtUrl[slot.kind] ? 'Fetch' : 'Generate'}
+                      {customArtUrl.poster ? 'Fetch' : 'Generate'}
                     </button>
                   </div>
-                  {candidates.length > 0 && (
+                  {posterCandidates.length > 0 && (
                     <div className="flex gap-1 overflow-x-auto pt-0.5">
-                      {candidates.map((c, idx) => (
+                      {posterCandidates.map((c, idx) => (
                         <button
                           key={idx}
-                          onClick={() => handlePickArtwork(slot.kind, c.url)}
+                          onClick={() => handlePickArtwork('poster', c.url)}
                           className="shrink-0 px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 cursor-pointer"
                         >
                           {c.provider.toUpperCase()} #{idx + 1}
@@ -429,70 +369,173 @@ export const MovieDetailPanel: React.FC<{
                     </div>
                   )}
                 </div>
-              );
-            })}
+              </div>
+
+              {/* Right Metadata Form Column */}
+              <div className="lg:col-span-9 xl:col-span-9 space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                  <Field label="Title" value={form.title ?? ''} onChange={(v) => setForm({ ...form, title: v })} />
+                  <Field label="Original Title" value={form.originalTitle ?? ''} onChange={(v) => setForm({ ...form, originalTitle: v })} />
+                  <Field label="Sort Title" value={form.sortTitle ?? ''} onChange={(v) => setForm({ ...form, sortTitle: v })} />
+                  <div className="grid grid-cols-2 gap-2">
+                    <Field
+                      label="Year"
+                      type="number"
+                      value={form.year != null ? String(form.year) : ''}
+                      onChange={(v) => setForm({ ...form, year: v ? Number(v) : null })}
+                    />
+                    <Field
+                      label="Runtime (m)"
+                      type="number"
+                      value={form.runtimeMinutes != null ? String(form.runtimeMinutes) : ''}
+                      onChange={(v) => setForm({ ...form, runtimeMinutes: v ? Number(v) : null })}
+                    />
+                  </div>
+                  <Field label="Premiered" value={form.premiered ?? ''} onChange={(v) => setForm({ ...form, premiered: v })} />
+                  <Field label="MPAA" value={form.mpaa ?? ''} onChange={(v) => setForm({ ...form, mpaa: v })} />
+                  <Field label="Movie Set" value={form.setName ?? ''} onChange={(v) => setForm({ ...form, setName: v || null })} />
+                  <Field label="Country" value={form.country ?? ''} onChange={(v) => setForm({ ...form, country: v })} />
+                  <Field label="Tagline" value={form.tagline ?? ''} onChange={(v) => setForm({ ...form, tagline: v })} />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Plot Synopsis</label>
+                  <textarea
+                    rows={4}
+                    value={form.plot ?? ''}
+                    onChange={(e) => setForm({ ...form, plot: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 leading-relaxed"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <Field
+                    label="Genres (comma separated)"
+                    value={(form.genres ?? []).join(', ')}
+                    onChange={(v) => setForm({ ...form, genres: v.split(',').map((s) => s.trim()).filter(Boolean) })}
+                  />
+                  <Field
+                    label="Tags (comma separated)"
+                    value={(form.tags ?? []).join(', ')}
+                    onChange={(v) => setForm({ ...form, tags: v.split(',').map((s) => s.trim()).filter(Boolean) })}
+                  />
+                  <Field
+                    label="Directors"
+                    value={(form.directors ?? []).join(', ')}
+                    onChange={(v) => setForm({ ...form, directors: v.split(',').map((s) => s.trim()).filter(Boolean) })}
+                  />
+                  <Field
+                    label="Studios"
+                    value={(form.studios ?? []).join(', ')}
+                    onChange={(v) => setForm({ ...form, studios: v.split(',').map((s) => s.trim()).filter(Boolean) })}
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <Field
+                    label="IMDb ID"
+                    value={form.uniqueIds?.imdb ?? ''}
+                    onChange={(v) => setForm({ ...form, uniqueIds: { ...(form.uniqueIds ?? {}), imdb: v || undefined } })}
+                  />
+                  <Field
+                    label="TMDb ID"
+                    value={form.uniqueIds?.tmdb ?? ''}
+                    onChange={(v) => setForm({ ...form, uniqueIds: { ...(form.uniqueIds ?? {}), tmdb: v || undefined } })}
+                  />
+                  <Field label="Trailer URL" value={form.trailerUrl ?? ''} onChange={(v) => setForm({ ...form, trailerUrl: v })} />
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+                  <div className="flex items-center gap-1.5">
+                    <Star className="w-3.5 h-3.5 text-amber-400" />
+                    <span className="text-xs text-slate-400">User Rating:</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={form.userRating ?? ''}
+                      onChange={(e) => setForm({ ...form, userRating: e.target.value ? Number(e.target.value) : null })}
+                      className="w-14 bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-slate-100"
+                    />
+                  </div>
+
+                  <button
+                    onClick={handleSaveMetadata}
+                    disabled={saving}
+                    className="px-3.5 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    {saving ? 'Saving...' : 'Save & Write NFO'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom Section: All Other Kodi Artwork Below Metadata Fields */}
+            <div id="movie-artwork-section" className="pt-4 border-t border-slate-800/90 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                  <ImageIcon className="w-3.5 h-3.5 text-sky-400" /> Kodi Artwork
+                </h3>
+                <span className="text-[11px] text-slate-400">
+                  {otherArtPresentCount} / {OTHER_ARTWORK_SLOTS.length} present
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                {OTHER_ARTWORK_SLOTS.map((slot) => {
+                  const current = movie.artwork[slot.kind];
+                  const candidates = movie.artworkCandidates?.[slot.kind] ?? [];
+                  return (
+                    <div key={slot.kind} className="p-3 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-200">{slot.label}</span>
+                        <span
+                          className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+                            current ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
+                          }`}
+                        >
+                          {current ? 'Present' : 'Missing'}
+                        </span>
+                      </div>
+                      <PosterImage filePath={current} alt={slot.label} aspect={slot.aspect} cacheKey={artCacheKey} className="w-full" />
+                      <div className="flex gap-1.5">
+                        <input
+                          value={customArtUrl[slot.kind] ?? ''}
+                          onChange={(e) => setCustomArtUrl((p) => ({ ...p, [slot.kind]: e.target.value }))}
+                          placeholder="URL or blank to auto-generate"
+                          className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[11px] text-slate-200"
+                        />
+                        <button
+                          onClick={() => handlePickArtwork(slot.kind, customArtUrl[slot.kind] || undefined)}
+                          className="px-2 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/30 text-sky-300 text-[11px] font-semibold cursor-pointer shrink-0"
+                        >
+                          {customArtUrl[slot.kind] ? 'Fetch' : 'Generate'}
+                        </button>
+                      </div>
+                      {candidates.length > 0 && (
+                        <div className="flex gap-1 overflow-x-auto pt-0.5">
+                          {candidates.map((c, idx) => (
+                            <button
+                              key={idx}
+                              onClick={() => handlePickArtwork(slot.kind, c.url)}
+                              className="shrink-0 px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 cursor-pointer"
+                            >
+                              {c.provider.toUpperCase()} #{idx + 1}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         )}
 
-        {tab === 'subtitles' && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="text-sm font-bold text-slate-100">Attached Sidecar Subtitles</h4>
-                <p className="text-xs text-slate-400">
-                  OpenSubtitles 64-bit hash: <code className="text-sky-300">{movie.movieHash}</code>
-                </p>
-              </div>
-              <button
-                onClick={() => setSubSearchOpen(true)}
-                className="px-3 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-              >
-                <Languages className="w-3.5 h-3.5" /> Search & Download Subtitles
-              </button>
-            </div>
-
-            {movie.subtitles.length === 0 ? (
-              <div className="p-6 rounded-xl border border-dashed border-slate-700 text-center text-xs text-slate-400">
-                No subtitle files found beside this movie yet.
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {movie.subtitles.map((s) => (
-                  <div key={s.id} className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 text-xs font-bold uppercase">{s.language}</span>
-                        {s.forced && <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold">FORCED</span>}
-                        {s.sdh && <span className="px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 text-[10px] font-bold">SDH</span>}
-                        <span className="text-xs text-slate-400">
-                          {s.cueCount ?? 0} cues • {formatBytes(s.sizeBytes)}
-                        </span>
-                      </div>
-                      <div className="text-xs font-mono text-slate-200 mt-1">{s.fileName}</div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => setEditSubId(s.id)}
-                        className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 font-semibold cursor-pointer"
-                      >
-                        Preview & Sync
-                      </button>
-                      <button
-                        onClick={async () => {
-                          await api.deleteSubtitle(s.id);
-                          await loadMovie();
-                          onUpdated();
-                        }}
-                        className="p-1.5 rounded-lg text-rose-400 hover:bg-rose-500/15 cursor-pointer"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+        {tab === 'cast' && (
+          <CastListColumn actors={movie.actors} activeActor={activeActor} onSelectActor={onSelectActor} />
         )}
 
         {tab === 'nfo' && (
@@ -554,7 +597,7 @@ export const MovieDetailPanel: React.FC<{
         )}
 
         {tab === 'mediainfo' && (
-          <div className="space-y-3 text-xs">
+          <div className="space-y-4 text-xs">
             <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
               <div className="font-semibold text-slate-200">File Location & Identifiers</div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-slate-400">
@@ -587,6 +630,69 @@ export const MovieDetailPanel: React.FC<{
                   </div>
                 ))}
               </div>
+            </div>
+
+            {/* Sidecar Subtitles Section (File Data) */}
+            <div id="movie-subtitles-section" className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
+                    <Subtitles className="w-3.5 h-3.5 text-sky-400" /> Sidecar Subtitle Files ({movie.subtitles.length})
+                  </h4>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    External .srt/.ass/.vtt tracks matched beside the video file
+                  </p>
+                </div>
+                <button
+                  onClick={() => setSubSearchOpen(true)}
+                  className="px-3 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Languages className="w-3.5 h-3.5" /> Search & Download Subtitles
+                </button>
+              </div>
+
+              {movie.subtitles.length === 0 ? (
+                <div className="p-5 rounded-xl border border-dashed border-slate-700 text-center text-xs text-slate-400">
+                  No subtitle files found beside this movie yet.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {movie.subtitles.map((s) => (
+                    <div key={s.id} className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 flex items-center justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 text-xs font-bold uppercase">{s.language}</span>
+                          {s.forced && <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold">FORCED</span>}
+                          {s.sdh && <span className="px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 text-[10px] font-bold">SDH</span>}
+                          <span className="text-xs text-slate-400">
+                            {s.cueCount ?? 0} cues • {formatBytes(s.sizeBytes)}
+                          </span>
+                        </div>
+                        <div className="text-xs font-mono text-slate-200 mt-1 truncate">{s.fileName}</div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => setEditSubId(s.id)}
+                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 font-semibold cursor-pointer"
+                        >
+                          Preview & Sync
+                        </button>
+                        <button
+                          onClick={async () => {
+                            await api.deleteSubtitle(s.id);
+                            await loadMovie();
+                            onUpdated();
+                          }}
+                          className="p-1.5 rounded-lg text-rose-400 hover:bg-rose-500/15 cursor-pointer"
+                          title="Delete subtitle file"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}

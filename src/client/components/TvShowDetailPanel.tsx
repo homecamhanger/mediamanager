@@ -17,10 +17,12 @@ import {
   Save,
   Sparkles,
   Tv,
+  Users,
   X,
 } from 'lucide-react';
-import type { NfoValidationReport, TvEpisodeRecord, TvSeasonRecord, TvShowRecord } from '../../shared/types.js';
+import type { ArtworkKind, NfoValidationReport, TvEpisodeRecord, TvSeasonRecord, TvShowRecord } from '../../shared/types.js';
 import { api, getArtworkUrl } from '../lib/api.js';
+import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 import { CastListColumn } from './CastListColumn.js';
 import { PosterImage } from './PosterImage.js';
 import { TechBadges } from './QualityBadges.js';
@@ -28,7 +30,23 @@ import { RatingBadges } from './RatingBadges.js';
 import { ScrapeModal } from './ScrapeModal.js';
 import { SubtitleSearchModal } from './SubtitleSearchModal.js';
 
-type TvTab = 'episodes' | 'order' | 'metadata' | 'artwork' | 'nfo';
+type TvTab = 'episodes' | 'order' | 'metadata' | 'cast' | 'nfo';
+
+const SHOW_OTHER_ARTWORK_SLOTS: Array<{ kind: ArtworkKind; label: string; aspect: 'poster' | 'fanart' | 'banner' | 'square' | 'logo' }> = [
+  { kind: 'fanart', label: 'Fanart Backdrop (16:9)', aspect: 'fanart' },
+  { kind: 'banner', label: 'Wide Banner', aspect: 'banner' },
+  { kind: 'clearlogo', label: 'HD ClearLOGO (PNG)', aspect: 'logo' },
+  { kind: 'clearart', label: 'HD ClearART (PNG)', aspect: 'fanart' },
+  { kind: 'landscape', label: 'Landscape Thumb (16:9)', aspect: 'fanart' },
+];
+
+function resolveTvTab(tab?: TvTab | InspectorFocusTab): TvTab {
+  if (tab === 'artwork' || tab === 'metadata') return 'metadata';
+  if (tab === 'cast') return 'cast';
+  if (tab === 'nfo') return 'nfo';
+  if (tab === 'order') return 'order';
+  return 'episodes';
+}
 
 function sortEpisodesEffective(eps: TvEpisodeRecord[]): TvEpisodeRecord[] {
   return [...eps].sort((a, b) => {
@@ -46,7 +64,7 @@ function sortEpisodesEffective(eps: TvEpisodeRecord[]): TvEpisodeRecord[] {
 export const TvShowDetailPanel: React.FC<{
   showId: number;
   selectedSeason?: number | null;
-  initialTab?: TvTab;
+  initialTab?: TvTab | InspectorFocusTab;
   activeActor?: string | null;
   onSelectActor?: (actorName: string) => void;
   onSelectSeason?: (seasonNumber: number | null) => void;
@@ -58,12 +76,14 @@ export const TvShowDetailPanel: React.FC<{
   const [seasons, setSeasons] = useState<TvSeasonRecord[]>([]);
   const [episodes, setEpisodes] = useState<TvEpisodeRecord[]>([]);
   const [activeSeason, setActiveSeason] = useState<number | 'all'>(selectedSeason ?? 'all');
-  const [tab, setTab] = useState<TvTab>(initialTab ?? 'episodes');
+  const [tab, setTab] = useState<TvTab>(resolveTvTab(initialTab));
   const [form, setForm] = useState<Partial<TvShowRecord>>({});
   const [nfoXml, setNfoXml] = useState('');
   const [nfoVal, setNfoVal] = useState<NfoValidationReport | null>(null);
   const [scrapeOpen, setScrapeOpen] = useState(false);
   const [subTargetEp, setSubTargetEp] = useState<TvEpisodeRecord | null>(null);
+  const [artCacheKey, setArtCacheKey] = useState(0);
+  const [customArtUrl, setCustomArtUrl] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -79,16 +99,26 @@ export const TvShowDetailPanel: React.FC<{
     setForm(res.show);
     setSeasons(res.seasons);
     setEpisodes(res.episodes);
+    setArtCacheKey((k) => k + 1);
     const nfo = await api.readNfo('tvshow', showId);
     setNfoXml(nfo.xml);
     setNfoVal(nfo.validation);
   };
 
   useEffect(() => {
-    setTab(initialTab ?? 'episodes');
+    setTab(resolveTvTab(initialTab));
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showId, initialTab]);
+
+  useEffect(() => {
+    if (initialTab === 'artwork') {
+      const id = setTimeout(() => {
+        document.getElementById('show-artwork-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 80);
+      return () => clearTimeout(id);
+    }
+  }, [initialTab, showId]);
 
   useEffect(() => {
     setActiveSeason(selectedSeason ?? 'all');
@@ -296,17 +326,27 @@ export const TvShowDetailPanel: React.FC<{
     }
   };
 
-  const fanartUrl = getArtworkUrl(show.artwork.fanart);
+  const handlePickArtwork = async (kind: ArtworkKind, url?: string) => {
+    await api.setShowArtwork(show.id, kind, url);
+    await load();
+    onUpdated();
+    notify(`Updated ${kind} artwork`);
+  };
+
+  const fanartUrl = getArtworkUrl(show.artwork.fanart, artCacheKey);
+  const clearlogoUrl = getArtworkUrl(show.artwork.clearlogo, artCacheKey);
+  const activeSeasonRecord = activeSeason !== 'all' ? seasons.find((s) => s.seasonNumber === activeSeason) ?? null : null;
+  const otherArtPresentCount = SHOW_OTHER_ARTWORK_SLOTS.filter((s) => Boolean(show.artwork[s.kind])).length;
 
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Compact Show Hero */}
       <div className="relative border-b border-slate-800 shrink-0">
         {fanartUrl && (
-          <div className="absolute inset-0 bg-cover bg-center opacity-20" style={{ backgroundImage: `url("${fanartUrl}")` }} />
+          <div className="absolute inset-0 bg-cover bg-center opacity-25" style={{ backgroundImage: `url("${fanartUrl}")` }} />
         )}
         <div
-          className={`relative bg-gradient-to-r from-[#0b0f17]/95 via-[#0f1522]/90 to-[#0f1522]/85 px-5 py-3 ${
+          className={`relative bg-gradient-to-r from-[#0b0f17]/95 via-[#0f1522]/85 to-[#0f1522]/80 px-5 py-3 ${
             onClose ? 'pr-16' : ''
           } flex flex-wrap items-center justify-between gap-3`}
         >
@@ -322,9 +362,22 @@ export const TvShowDetailPanel: React.FC<{
           )}
 
           <div className="flex items-center gap-3.5 min-w-0 flex-1">
-            <div className="w-14 shrink-0 shadow-lg">
-              <PosterImage filePath={show.artwork.poster} alt={show.title} />
-            </div>
+            {tab !== 'metadata' && (
+              <div className="w-12 shrink-0 shadow-lg">
+                <PosterImage
+                  filePath={activeSeasonRecord?.posterPath ?? show.artwork.poster}
+                  alt={show.title}
+                  cacheKey={artCacheKey}
+                />
+              </div>
+            )}
+            {clearlogoUrl && (
+              <img
+                src={clearlogoUrl}
+                alt={`${show.title} logo`}
+                className="hidden sm:block h-9 max-w-[140px] object-contain shrink-0 drop-shadow"
+              />
+            )}
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-lg font-bold text-white truncate">{show.title}</h2>
@@ -372,23 +425,23 @@ export const TvShowDetailPanel: React.FC<{
         {/* Sub-Tabs */}
         <div className="relative px-5 bg-[#0b0f17]/85 flex items-center gap-1 overflow-x-auto border-t border-slate-800/80">
           {[
-            { id: 'episodes', label: `Episodes (${visibleEpisodes.length})`, icon: <Tv className="w-3.5 h-3.5" /> },
+            { id: 'episodes' as const, label: `Episodes (${visibleEpisodes.length})`, icon: <Tv className="w-3.5 h-3.5" /> },
             ...(activeSeason !== 'all'
               ? [
                   {
-                    id: 'order',
+                    id: 'order' as const,
                     label: hasCustomSeasonOrder ? `Episode Order · Custom` : 'Episode Order',
                     icon: <ArrowUpDown className="w-3.5 h-3.5" />,
                   },
                 ]
               : []),
-            { id: 'metadata', label: 'Series Metadata', icon: <Info className="w-3.5 h-3.5" /> },
-            { id: 'artwork', label: 'Show & Season Artwork', icon: <ImageIcon className="w-3.5 h-3.5" /> },
-            { id: 'nfo', label: 'tvshow.nfo XML', icon: <Code2 className="w-3.5 h-3.5" /> },
+            { id: 'metadata' as const, label: 'Metadata & Art', icon: <Info className="w-3.5 h-3.5" /> },
+            { id: 'cast' as const, label: `Cast (${show.actors.length})`, icon: <Users className="w-3.5 h-3.5" /> },
+            { id: 'nfo' as const, label: 'tvshow.nfo XML', icon: <Code2 className="w-3.5 h-3.5" /> },
           ].map((t) => (
             <button
               key={t.id}
-              onClick={() => setTab(t.id as TvTab)}
+              onClick={() => setTab(t.id)}
               className={`px-3 py-2 text-xs font-semibold flex items-center gap-1.5 border-b-2 transition cursor-pointer whitespace-nowrap ${
                 tab === t.id ? 'border-sky-400 text-sky-300' : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
@@ -709,120 +762,199 @@ export const TvShowDetailPanel: React.FC<{
         )}
 
         {tab === 'metadata' && (
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
-            <div className="xl:col-span-8 space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                <Field label="Show Title" value={form.title ?? ''} onChange={(v) => setForm({ ...form, title: v })} />
-                <Field label="Original Title" value={form.originalTitle ?? ''} onChange={(v) => setForm({ ...form, originalTitle: v })} />
-                <Field label="Sort Title" value={form.sortTitle ?? ''} onChange={(v) => setForm({ ...form, sortTitle: v })} />
-                <Field
-                  label="Year"
-                  type="number"
-                  value={form.year != null ? String(form.year) : ''}
-                  onChange={(v) => setForm({ ...form, year: v ? Number(v) : null })}
-                />
-                <Field label="Premiered" value={form.premiered ?? ''} onChange={(v) => setForm({ ...form, premiered: v })} />
-                <Field label="Status" value={form.status ?? ''} onChange={(v) => setForm({ ...form, status: v })} />
-                <Field label="MPAA" value={form.mpaa ?? ''} onChange={(v) => setForm({ ...form, mpaa: v })} />
-                <Field label="Studio / Network" value={form.studio ?? ''} onChange={(v) => setForm({ ...form, studio: v })} />
-                <Field
-                  label="User Rating (1–10)"
-                  type="number"
-                  value={form.userRating != null ? String(form.userRating) : ''}
-                  onChange={(v) => setForm({ ...form, userRating: v ? Number(v) : null })}
-                />
+          <div className="space-y-6">
+            {/* Top Row: Show Poster in Top-Left + Metadata Fields */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+              <div className="lg:col-span-3 xl:col-span-3 space-y-2.5">
+                <div className="p-3 rounded-xl bg-slate-900/75 border border-slate-800 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-200">Series Poster (2:3)</span>
+                    <span
+                      className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+                        show.artwork.poster ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
+                      }`}
+                    >
+                      {show.artwork.poster ? 'Present' : 'Missing'}
+                    </span>
+                  </div>
+                  <PosterImage
+                    filePath={show.artwork.poster}
+                    alt={`${show.title} Poster`}
+                    aspect="poster"
+                    cacheKey={artCacheKey}
+                    className="w-full shadow-xl"
+                  />
+                  <div className="flex gap-1.5">
+                    <input
+                      value={customArtUrl.poster ?? ''}
+                      onChange={(e) => setCustomArtUrl((p) => ({ ...p, poster: e.target.value }))}
+                      placeholder="URL or blank to generate"
+                      className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[11px] text-slate-200"
+                    />
+                    <button
+                      onClick={() => handlePickArtwork('poster', customArtUrl.poster || undefined)}
+                      className="px-2 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/30 text-sky-300 text-[11px] font-semibold cursor-pointer shrink-0"
+                    >
+                      {customArtUrl.poster ? 'Fetch' : 'Generate'}
+                    </button>
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Series Overview</label>
-                <textarea
-                  rows={4}
-                  value={form.plot ?? ''}
-                  onChange={(e) => setForm({ ...form, plot: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 leading-relaxed"
-                />
-              </div>
+              <div className="lg:col-span-9 xl:col-span-9 space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                  <Field label="Show Title" value={form.title ?? ''} onChange={(v) => setForm({ ...form, title: v })} />
+                  <Field label="Original Title" value={form.originalTitle ?? ''} onChange={(v) => setForm({ ...form, originalTitle: v })} />
+                  <Field label="Sort Title" value={form.sortTitle ?? ''} onChange={(v) => setForm({ ...form, sortTitle: v })} />
+                  <Field
+                    label="Year"
+                    type="number"
+                    value={form.year != null ? String(form.year) : ''}
+                    onChange={(v) => setForm({ ...form, year: v ? Number(v) : null })}
+                  />
+                  <Field label="Premiered" value={form.premiered ?? ''} onChange={(v) => setForm({ ...form, premiered: v })} />
+                  <Field label="Status" value={form.status ?? ''} onChange={(v) => setForm({ ...form, status: v })} />
+                  <Field label="MPAA" value={form.mpaa ?? ''} onChange={(v) => setForm({ ...form, mpaa: v })} />
+                  <Field label="Studio / Network" value={form.studio ?? ''} onChange={(v) => setForm({ ...form, studio: v })} />
+                  <Field
+                    label="User Rating (1–10)"
+                    type="number"
+                    value={form.userRating != null ? String(form.userRating) : ''}
+                    onChange={(v) => setForm({ ...form, userRating: v ? Number(v) : null })}
+                  />
+                </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <Field
-                  label="Genres (comma separated)"
-                  value={(form.genres ?? []).join(', ')}
-                  onChange={(v) => setForm({ ...form, genres: v.split(',').map((s) => s.trim()).filter(Boolean) })}
-                />
-                <Field
-                  label="Tags (comma separated)"
-                  value={(form.tags ?? []).join(', ')}
-                  onChange={(v) => setForm({ ...form, tags: v.split(',').map((s) => s.trim()).filter(Boolean) })}
-                />
-              </div>
+                <div>
+                  <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Series Overview</label>
+                  <textarea
+                    rows={4}
+                    value={form.plot ?? ''}
+                    onChange={(e) => setForm({ ...form, plot: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 leading-relaxed"
+                  />
+                </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                <Field
-                  label="TVDB ID"
-                  value={form.uniqueIds?.tvdb ?? ''}
-                  onChange={(v) => setForm({ ...form, uniqueIds: { ...(form.uniqueIds ?? {}), tvdb: v || undefined } })}
-                />
-                <Field
-                  label="TMDb ID"
-                  value={form.uniqueIds?.tmdb ?? ''}
-                  onChange={(v) => setForm({ ...form, uniqueIds: { ...(form.uniqueIds ?? {}), tmdb: v || undefined } })}
-                />
-                <Field
-                  label="IMDb ID"
-                  value={form.uniqueIds?.imdb ?? ''}
-                  onChange={(v) => setForm({ ...form, uniqueIds: { ...(form.uniqueIds ?? {}), imdb: v || undefined } })}
-                />
-                <Field
-                  label="TVmaze ID"
-                  value={form.uniqueIds?.tvmaze ?? ''}
-                  onChange={(v) => setForm({ ...form, uniqueIds: { ...(form.uniqueIds ?? {}), tvmaze: v || undefined } })}
-                />
-              </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <Field
+                    label="Genres (comma separated)"
+                    value={(form.genres ?? []).join(', ')}
+                    onChange={(v) => setForm({ ...form, genres: v.split(',').map((s) => s.trim()).filter(Boolean) })}
+                  />
+                  <Field
+                    label="Tags (comma separated)"
+                    value={(form.tags ?? []).join(', ')}
+                    onChange={(v) => setForm({ ...form, tags: v.split(',').map((s) => s.trim()).filter(Boolean) })}
+                  />
+                </div>
 
-              <div className="flex justify-end pt-2 border-t border-slate-800">
-                <button
-                  onClick={handleSaveMetadata}
-                  disabled={busy}
-                  className="px-4 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  {busy ? 'Saving...' : 'Save & Write tvshow.nfo'}
-                </button>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <Field
+                    label="TVDB ID"
+                    value={form.uniqueIds?.tvdb ?? ''}
+                    onChange={(v) => setForm({ ...form, uniqueIds: { ...(form.uniqueIds ?? {}), tvdb: v || undefined } })}
+                  />
+                  <Field
+                    label="TMDb ID"
+                    value={form.uniqueIds?.tmdb ?? ''}
+                    onChange={(v) => setForm({ ...form, uniqueIds: { ...(form.uniqueIds ?? {}), tmdb: v || undefined } })}
+                  />
+                  <Field
+                    label="IMDb ID"
+                    value={form.uniqueIds?.imdb ?? ''}
+                    onChange={(v) => setForm({ ...form, uniqueIds: { ...(form.uniqueIds ?? {}), imdb: v || undefined } })}
+                  />
+                  <Field
+                    label="TVmaze ID"
+                    value={form.uniqueIds?.tvmaze ?? ''}
+                    onChange={(v) => setForm({ ...form, uniqueIds: { ...(form.uniqueIds ?? {}), tvmaze: v || undefined } })}
+                  />
+                </div>
+
+                <div className="flex justify-end pt-2 border-t border-slate-800">
+                  <button
+                    onClick={handleSaveMetadata}
+                    disabled={busy}
+                    className="px-4 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    {busy ? 'Saving...' : 'Save & Write tvshow.nfo'}
+                  </button>
+                </div>
               </div>
             </div>
 
-            <CastListColumn actors={show.actors} label="Series Cast" activeActor={activeActor} onSelectActor={onSelectActor} />
+            {/* Bottom Section: Other Show & Season Artwork Below Metadata Fields */}
+            <div id="show-artwork-section" className="pt-4 border-t border-slate-800/90 space-y-5">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                    <ImageIcon className="w-3.5 h-3.5 text-sky-400" /> Show Artwork
+                  </h3>
+                  <span className="text-[11px] text-slate-400">
+                    {otherArtPresentCount} / {SHOW_OTHER_ARTWORK_SLOTS.length} present
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                  {SHOW_OTHER_ARTWORK_SLOTS.map((slot) => {
+                    const current = show.artwork[slot.kind];
+                    return (
+                      <div key={slot.kind} className="p-3 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-200">{slot.label}</span>
+                          <span
+                            className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+                              current ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
+                            }`}
+                          >
+                            {current ? 'Present' : 'Missing'}
+                          </span>
+                        </div>
+                        <PosterImage
+                          filePath={current}
+                          alt={slot.label}
+                          aspect={slot.aspect}
+                          cacheKey={artCacheKey}
+                          className="w-full"
+                        />
+                        <div className="flex gap-1.5">
+                          <input
+                            value={customArtUrl[slot.kind] ?? ''}
+                            onChange={(e) => setCustomArtUrl((p) => ({ ...p, [slot.kind]: e.target.value }))}
+                            placeholder="URL or blank to auto-generate"
+                            className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[11px] text-slate-200"
+                          />
+                          <button
+                            onClick={() => handlePickArtwork(slot.kind, customArtUrl[slot.kind] || undefined)}
+                            className="px-2 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/30 text-sky-300 text-[11px] font-semibold cursor-pointer shrink-0"
+                          >
+                            {customArtUrl[slot.kind] ? 'Fetch' : 'Generate'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {seasons.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2.5">Season Posters</h4>
+                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
+                    {seasons.map((s) => (
+                      <div key={s.id} className="space-y-1">
+                        <PosterImage filePath={s.posterPath ?? show.artwork.poster} alt={s.name} cacheKey={artCacheKey} />
+                        <div className="text-[11px] font-semibold text-center text-slate-300">{s.name}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
-        {tab === 'artwork' && (
-          <div className="space-y-5">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
-              {(['poster', 'fanart', 'banner', 'clearlogo', 'clearart', 'landscape'] as const).map((kind) => (
-                <div key={kind} className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
-                  <div className="text-xs font-bold text-slate-200 uppercase">{kind}</div>
-                  <PosterImage
-                    filePath={show.artwork[kind]}
-                    alt={kind}
-                    aspect={kind === 'poster' ? 'poster' : kind === 'banner' ? 'banner' : kind === 'clearlogo' ? 'logo' : 'fanart'}
-                  />
-                </div>
-              ))}
-            </div>
-            {seasons.length > 0 && (
-              <div>
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Season Posters</h4>
-                <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
-                  {seasons.map((s) => (
-                    <div key={s.id} className="space-y-1">
-                      <PosterImage filePath={s.posterPath} alt={s.name} />
-                      <div className="text-[11px] font-semibold text-center text-slate-300">{s.name}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+        {tab === 'cast' && (
+          <CastListColumn actors={show.actors} label="Series Cast" activeActor={activeActor} onSelectActor={onSelectActor} />
         )}
 
         {tab === 'nfo' && (
