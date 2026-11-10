@@ -17,6 +17,7 @@ import type {
   ScraperProviderConfig,
   ScraperProviderId,
   ScraperSearchResult,
+  SourceScanJob,
   SubtitleCue,
   SubtitleFileRecord,
   SubtitleSearchResult,
@@ -201,13 +202,21 @@ export const api = {
 
   // Sources, Settings & Kodi
   listSources: () => req<{ sources: MediaSource[] }>('/api/settings/sources'),
-  addSource: (input: { name: string; path: string; mediaKind: 'movie' | 'tvshow'; nfoNaming?: 'movie.nfo' | 'filename.nfo'; artworkNaming?: 'folder' | 'filename' }) =>
-    req<{ source: MediaSource }>('/api/settings/sources', { method: 'POST', body: JSON.stringify(input) }),
+  addSource: (input: {
+    name: string;
+    path: string;
+    mediaKind: 'movie' | 'tvshow';
+    nfoNaming?: 'movie.nfo' | 'filename.nfo';
+    artworkNaming?: 'folder' | 'filename';
+    asyncScan?: boolean;
+  }) => req<{ source: MediaSource; job?: SourceScanJob }>('/api/settings/sources', { method: 'POST', body: JSON.stringify(input) }),
+  listScanJobs: () => req<{ jobs: SourceScanJob[] }>('/api/settings/sources/jobs'),
+  getScanJob: (jobId: string) => req<{ job: SourceScanJob }>(`/api/settings/sources/jobs/${encodeURIComponent(jobId)}`),
   deleteSource: (id: number) => req<{ ok: boolean }>(`/api/settings/sources/${id}`, { method: 'DELETE' }),
-  scanSources: (sourceId?: number) =>
-    req<{ moviesScanned: number; showsScanned: number; episodesScanned: number }>('/api/settings/sources/scan', {
+  scanSources: (sourceId?: number, asyncScan = false) =>
+    req<{ moviesScanned?: number; showsScanned?: number; episodesScanned?: number; job?: SourceScanJob }>('/api/settings/sources/scan', {
       method: 'POST',
-      body: JSON.stringify(sourceId ? { sourceId } : {}),
+      body: JSON.stringify(sourceId ? { sourceId, asyncScan } : {}),
     }),
   browseFolder: (dirPath?: string) =>
     req<{ currentPath: string; parentPath: string | null; directories: Array<{ name: string; path: string }> }>(

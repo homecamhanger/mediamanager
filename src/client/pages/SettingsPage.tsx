@@ -1,19 +1,24 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  AlertCircle,
   Check,
+  CheckCircle2,
+  Circle,
   Download,
   FolderOpen,
   FolderPlus,
   HardDrive,
   ListMusic,
+  Loader2,
   RefreshCw,
   RotateCcw,
   Save,
   Server,
   Settings,
   Trash2,
+  X,
 } from 'lucide-react';
-import type { AppPreferences, ArtworkKind, KodiRpcConfig, MediaSource } from '../../shared/types.js';
+import type { AppPreferences, ArtworkKind, KodiRpcConfig, MediaSource, SourceScanJob } from '../../shared/types.js';
 import { FolderBrowserModal } from '../components/FolderBrowserModal.js';
 import { api } from '../lib/api.js';
 
@@ -30,6 +35,10 @@ export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
   const [newKind, setNewKind] = useState<'movie' | 'tvshow'>('movie');
   const [browseOpen, setBrowseOpen] = useState(false);
 
+  // Live source scan job tracking
+  const [scanJob, setScanJob] = useState<SourceScanJob | null>(null);
+  const pollTimerRef = useRef<number | null>(null);
+
   // Smart playlist & sources XML
   const [playlistName, setPlaylistName] = useState('Top Rated 4K Movies');
   const [playlistGenre, setPlaylistGenre] = useState('');
@@ -38,43 +47,129 @@ export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
   const [generatedXml, setGeneratedXml] = useState('');
 
   const [msg, setMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const stopPolling = () => {
+    if (pollTimerRef.current !== null) {
+      window.clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  };
+
+  const startPollingJob = (jobId: string) => {
+    stopPolling();
+    const poll = async () => {
+      try {
+        const res = await api.getScanJob(jobId);
+        setScanJob(res.job);
+        if (res.job.status !== 'running') {
+          stopPolling();
+          await loadSourcesOnly();
+          onRefresh();
+          if (res.job.status === 'completed') {
+            const summary =
+              res.job.mediaKind === 'movie'
+                ? `${res.job.moviesScanned} movie${res.job.moviesScanned === 1 ? '' : 's'}`
+                : `${res.job.showsScanned} show${res.job.showsScanned === 1 ? '' : 's'} & ${res.job.episodesScanned} episode${res.job.episodesScanned === 1 ? '' : 's'}`;
+            notify(`Source "${res.job.sourceName}" indexed (${summary})`);
+          } else if (res.job.error) {
+            setErrorMsg(`Scan failed for "${res.job.sourceName}": ${res.job.error}`);
+          }
+        }
+      } catch {
+        stopPolling();
+      }
+    };
+    void poll();
+    pollTimerRef.current = window.setInterval(() => {
+      void poll();
+    }, 250);
+  };
+
+  const loadSourcesOnly = async () => {
+    const sRes = await api.listSources();
+    setSources(sRes.sources);
+  };
+
   const load = async () => {
-    const [sRes, pRes, kRes] = await Promise.all([api.listSources(), api.getPreferences(), api.getKodiConfig()]);
+    const [sRes, pRes, kRes, jRes] = await Promise.all([
+      api.listSources(),
+      api.getPreferences(),
+      api.getKodiConfig(),
+      api.listScanJobs(),
+    ]);
     setSources(sRes.sources);
     setPrefs(pRes);
     setKodi(kRes);
+    const active = jRes.jobs.find((j) => j.status === 'running');
+    if (active) {
+      setScanJob(active);
+      startPollingJob(active.jobId);
+    }
   };
 
   useEffect(() => {
     void load();
+    return () => stopPolling();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const notify = (text: string) => {
+    setErrorMsg(null);
     setMsg(text);
-    setTimeout(() => setMsg(null), 3500);
+    setTimeout(() => setMsg(null), 4000);
   };
 
   const handleAddSource = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newName.trim() || !newPath.trim()) return;
+    if (!newName.trim() || !newPath.trim()) {
+      setErrorMsg('Please provide both a source label and folder path.');
+      return;
+    }
     setBusy(true);
+    setErrorMsg(null);
     try {
-      await api.addSource({
+      const res = await api.addSource({
         name: newName.trim(),
         path: newPath.trim(),
         mediaKind: newKind,
         nfoNaming: prefs?.defaultNfoNaming ?? 'movie.nfo',
         artworkNaming: prefs?.defaultArtworkNaming ?? 'folder',
+        asyncScan: true,
       });
       setNewName('');
       setNewPath('');
-      await load();
-      onRefresh();
-      notify('Media source added & scanned');
+      // Immediately reflect newly added source in the list
+      setSources((prev) => (prev.some((s) => s.id === res.source.id) ? prev : [...prev, res.source]));
+      if (res.job) {
+        setScanJob(res.job);
+        startPollingJob(res.job.jobId);
+      } else {
+        await loadSourcesOnly();
+        onRefresh();
+        notify('Media source added');
+      }
+    } catch (err) {
+      setErrorMsg((err as Error).message);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleScanSingleSource = async (s: MediaSource) => {
+    setErrorMsg(null);
+    try {
+      const res = await api.scanSources(s.id, true);
+      if (res.job) {
+        setScanJob(res.job);
+        startPollingJob(res.job.jobId);
+      } else {
+        onRefresh();
+        notify(`Rescanned "${s.name}"`);
+      }
+    } catch (err) {
+      setErrorMsg((err as Error).message);
     }
   };
 
@@ -146,6 +241,17 @@ export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
         </div>
       )}
 
+      {errorMsg && (
+        <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-xs text-rose-300 flex items-center justify-between gap-2">
+          <span className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" /> {errorMsg}
+          </span>
+          <button onClick={() => setErrorMsg(null)} className="text-rose-300 hover:text-white cursor-pointer">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Media Sources */}
       <div className="p-5 rounded-2xl bg-[#111827] border border-slate-800 space-y-4">
         <div className="flex items-center gap-2 text-base font-bold text-white">
@@ -153,40 +259,177 @@ export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
         </div>
 
         <div className="space-y-2">
-          {sources.map((s) => (
-            <div key={s.id} className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="px-2 py-0.5 rounded bg-sky-500/15 text-sky-300 font-bold uppercase text-[10px]">{s.mediaKind}</span>
-                  <span className="font-bold text-slate-100">{s.name}</span>
+          {sources.map((s) => {
+            const isScanningThis = scanJob?.sourceId === s.id && scanJob.status === 'running';
+            return (
+              <div key={s.id} className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="px-2 py-0.5 rounded bg-sky-500/15 text-sky-300 font-bold uppercase text-[10px]">{s.mediaKind}</span>
+                    <span className="font-bold text-slate-100">{s.name}</span>
+                    {isScanningThis && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[10px] font-semibold">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Scanning ({scanJob.overallPercent}%)
+                      </span>
+                    )}
+                  </div>
+                  <div className="font-mono text-slate-400 mt-0.5">{s.path}</div>
                 </div>
-                <div className="font-mono text-slate-400 mt-0.5">{s.path}</div>
+                <div className="flex items-center gap-2">
+                  <button
+                    disabled={isScanningThis}
+                    onClick={() => handleScanSingleSource(s)}
+                    className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 flex items-center gap-1 cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isScanningThis ? 'animate-spin' : ''}`} />
+                    {isScanningThis ? 'Scanning...' : 'Scan'}
+                  </button>
+                  <button
+                    disabled={isScanningThis}
+                    onClick={async () => {
+                      await api.deleteSource(s.id);
+                      if (scanJob?.sourceId === s.id) setScanJob(null);
+                      await loadSourcesOnly();
+                      onRefresh();
+                    }}
+                    className="p-1.5 rounded-lg text-rose-400 hover:bg-rose-500/15 disabled:opacity-40 cursor-pointer"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={async () => {
-                    await api.scanSources(s.id);
-                    onRefresh();
-                    notify(`Rescanned "${s.name}"`);
-                  }}
-                  className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-1 cursor-pointer"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" /> Scan
-                </button>
-                <button
-                  onClick={async () => {
-                    await api.deleteSource(s.id);
-                    await load();
-                    onRefresh();
-                  }}
-                  className="p-1.5 rounded-lg text-rose-400 hover:bg-rose-500/15 cursor-pointer"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
+
+        {/* Source Setup & Scan Progress Steps */}
+        {scanJob && (
+          <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {scanJob.status === 'running' ? (
+                    <Loader2 className="w-4 h-4 text-sky-400 animate-spin shrink-0" />
+                  ) : scanJob.status === 'completed' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  )}
+                  <span className="text-xs font-bold text-slate-100">
+                    {scanJob.status === 'running'
+                      ? `Indexing Source: ${scanJob.sourceName}`
+                      : scanJob.status === 'completed'
+                        ? `Completed Source Scan: ${scanJob.sourceName}`
+                        : `Failed Source Scan: ${scanJob.sourceName}`}
+                  </span>
+                  <span className="text-[11px] font-mono text-sky-300 font-semibold">{scanJob.overallPercent}%</span>
+                </div>
+                <div className="text-[11px] text-slate-400 font-mono truncate mt-0.5">
+                  {scanJob.currentItem ? `Current: ${scanJob.currentItem}` : scanJob.sourcePath}
+                </div>
+              </div>
+              {scanJob.status !== 'running' && (
+                <button
+                  onClick={() => setScanJob(null)}
+                  aria-label="Dismiss scan summary"
+                  className="p-1 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {/* Overall Progress Bar */}
+            <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+              <div
+                className={`h-full transition-all duration-200 ${
+                  scanJob.status === 'failed'
+                    ? 'bg-rose-500'
+                    : scanJob.status === 'completed'
+                      ? 'bg-emerald-500'
+                      : 'bg-sky-500'
+                }`}
+                style={{ width: `${scanJob.overallPercent}%` }}
+              />
+            </div>
+
+            {/* Step Checklist */}
+            <div className="space-y-2">
+              {scanJob.steps.map((step, idx) => {
+                const hasCounts =
+                  typeof step.totalCount === 'number' && typeof step.completedCount === 'number' && step.totalCount > 0;
+                const stepPct = hasCounts ? Math.round((step.completedCount! / step.totalCount!) * 100) : null;
+                return (
+                  <div
+                    key={step.id}
+                    className={`p-2.5 rounded-lg border text-xs transition ${
+                      step.status === 'in_progress'
+                        ? 'bg-sky-500/10 border-sky-500/40'
+                        : step.status === 'completed'
+                          ? 'bg-emerald-500/5 border-emerald-500/25'
+                          : step.status === 'error'
+                            ? 'bg-rose-500/10 border-rose-500/40'
+                            : 'bg-slate-900/50 border-slate-800/80 opacity-70'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {step.status === 'completed' ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        ) : step.status === 'in_progress' ? (
+                          <Loader2 className="w-4 h-4 text-sky-400 animate-spin shrink-0" />
+                        ) : step.status === 'error' ? (
+                          <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                        ) : (
+                          <Circle className="w-4 h-4 text-slate-600 shrink-0" />
+                        )}
+                        <span className="font-semibold text-slate-100">
+                          {idx + 1}. {step.label}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {hasCounts && (
+                          <span className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-[10px] font-mono text-slate-300">
+                            {step.completedCount}/{step.totalCount}
+                            {stepPct !== null ? ` (${stepPct}%)` : ''}
+                          </span>
+                        )}
+                        <span
+                          className={`text-[10px] font-bold uppercase ${
+                            step.status === 'completed'
+                              ? 'text-emerald-400'
+                              : step.status === 'in_progress'
+                                ? 'text-sky-300'
+                                : step.status === 'error'
+                                  ? 'text-rose-400'
+                                  : 'text-slate-500'
+                          }`}
+                        >
+                          {step.status === 'in_progress' ? 'In Progress' : step.status}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="mt-1 pl-6 flex items-center justify-between gap-3 text-[11px] text-slate-400">
+                      <span>{step.description}</span>
+                      {step.detail && <span className="font-mono text-slate-300 truncate max-w-[260px]">{step.detail}</span>}
+                    </div>
+                    {step.status === 'in_progress' && stepPct !== null && (
+                      <div className="mt-2 pl-6">
+                        <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                          <div
+                            className="h-full bg-sky-400 transition-all duration-150"
+                            style={{ width: `${stepPct}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <form onSubmit={handleAddSource} className="grid grid-cols-1 md:grid-cols-12 gap-2.5 pt-2 border-t border-slate-800 text-xs">
           <input

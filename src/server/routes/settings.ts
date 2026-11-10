@@ -6,25 +6,70 @@ import type { AppPreferences, KodiRpcConfig } from '../../shared/types.js';
 import { DEFAULT_KODI_RPC, DEFAULT_PREFERENCES, MediaDatabase } from '../db/database.js';
 import { KodiClient } from '../kodi/kodiClient.js';
 import { LibraryScanner } from '../scanner/libraryScanner.js';
+import { ScanJobManager } from '../scanner/scanJobManager.js';
 import { resetAndSeedSampleLibrary } from '../scanner/sampleGenerator.js';
 
 export function createSettingsRouter(db: MediaDatabase): Router {
   const router = Router();
   const scanner = new LibraryScanner(db);
   const kodi = new KodiClient(db);
+  const scanJobs = new ScanJobManager();
+
+  const startAsyncScan = (source: ReturnType<MediaDatabase['addSource']>) => {
+    const job = scanJobs.createJob(source, true);
+    setImmediate(() => {
+      void (async () => {
+        try {
+          const res = await scanner.scanSource(source, (update) => {
+            scanJobs.updateJob(job.jobId, update);
+          });
+          scanJobs.updateJob(job.jobId, {
+            status: 'completed',
+            overallPercent: 100,
+            moviesScanned: res.moviesScanned,
+            showsScanned: res.showsScanned,
+            episodesScanned: res.episodesScanned,
+            finishedAt: new Date().toISOString(),
+          });
+        } catch (err) {
+          scanJobs.failJob(job.jobId, (err as Error).message);
+        }
+      })();
+    });
+    return job;
+  };
 
   router.get('/sources', (_req, res) => {
     res.json({ sources: db.listSources() });
   });
 
+  router.get('/sources/jobs', (_req, res) => {
+    res.json({ jobs: scanJobs.listJobs() });
+  });
+
+  router.get('/sources/jobs/:jobId', (req, res) => {
+    const job = scanJobs.getJob(req.params.jobId);
+    if (!job) return res.status(404).json({ error: 'Scan job not found' });
+    res.json({ job });
+  });
+
   router.post('/sources', async (req, res) => {
-    const { name, path: folderPath, mediaKind, nfoNaming, artworkNaming, scanNow = true } = req.body as {
+    const {
+      name,
+      path: folderPath,
+      mediaKind,
+      nfoNaming,
+      artworkNaming,
+      scanNow = true,
+      asyncScan = false,
+    } = req.body as {
       name: string;
       path: string;
       mediaKind: 'movie' | 'tvshow';
       nfoNaming?: 'movie.nfo' | 'filename.nfo';
       artworkNaming?: 'folder' | 'filename';
       scanNow?: boolean;
+      asyncScan?: boolean;
     };
     if (!folderPath || !name) return res.status(400).json({ error: 'Name and path are required' });
     const resolved = path.resolve(folderPath);
@@ -33,6 +78,10 @@ export function createSettingsRouter(db: MediaDatabase): Router {
     }
     try {
       const src = db.addSource({ name, path: resolved, mediaKind, nfoNaming, artworkNaming });
+      if (scanNow && asyncScan) {
+        const job = startAsyncScan(src);
+        return res.json({ source: src, job });
+      }
       let scanResult = null;
       if (scanNow) {
         scanResult = await scanner.scanSource(src);
@@ -50,9 +99,14 @@ export function createSettingsRouter(db: MediaDatabase): Router {
 
   router.post('/sources/scan', async (req, res) => {
     const sourceId = req.body?.sourceId ? Number(req.body.sourceId) : null;
+    const asyncScan = Boolean(req.body?.asyncScan);
     if (sourceId) {
       const src = db.getSource(sourceId);
       if (!src) return res.status(404).json({ error: 'Source not found' });
+      if (asyncScan) {
+        const job = startAsyncScan(src);
+        return res.json({ job });
+      }
       const result = await scanner.scanSource(src);
       return res.json(result);
     }

@@ -544,3 +544,43 @@ export interface DashboardSummary {
   recentActivity: ActivityLogEntry[];
   healthScore: number;
 }
+
+export type ScanStepId =
+  | 'register_source'
+  | 'discover_files'
+  | 'probe_and_hash'
+  | 'parse_sidecars'
+  | 'finalize';
+
+export type ScanStepStatus = 'pending' | 'in_progress' | 'completed' | 'error';
+
+export interface ScanStepProgress {
+  id: ScanStepId;
+  label: string;
+  description: string;
+  status: ScanStepStatus;
+  completedCount?: number;
+  totalCount?: number;
+  detail?: string;
+}
+
+export interface SourceScanJob {
+  jobId: string;
+  sourceId: number;
+  sourceName: string;
+  sourcePath: string;
+  mediaKind: MediaKind;
+  status: 'running' | 'completed' | 'failed';
+  overallPercent: number;
+  currentItem?: string;
+  itemsProcessed: number;
+  itemsTotal: number;
+  moviesScanned: number;
+  showsScanned: number;
+  episodesScanned: number;
+  steps: ScanStepProgress[];
+  error?: string;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
