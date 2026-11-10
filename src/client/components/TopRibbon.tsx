@@ -255,7 +255,8 @@ export const TopRibbon: React.FC<TopRibbonProps> = ({
       </div>
 
       {/* Unified Live Background Job Strip */}
-      {(batchJobs.some((j) => j.status === 'running') || scanJobs.some((j) => j.status === 'running')) && (
+      {(batchJobs.some((j) => j.status === 'running') ||
+        scanJobs.some((j) => j.status === 'running' || j.status === 'queued')) && (
         <div className="px-3 py-1.5 border-t border-slate-800/80 bg-[#0d1525] flex flex-col gap-1.5">
           {batchJobs
             .filter((j) => j.status === 'running')
@@ -292,19 +293,29 @@ export const TopRibbon: React.FC<TopRibbonProps> = ({
             ))}
 
           {scanJobs
-            .filter((j) => j.status === 'running')
+            .filter((j) => j.status === 'running' || j.status === 'queued')
             .map((sj) => (
               <div key={sj.jobId} className="flex flex-wrap items-center gap-2.5 text-[11px]">
-                <span className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold uppercase text-[10px]">
-                  SCAN
+                <span
+                  className={`px-1.5 py-0.5 rounded border font-bold uppercase text-[10px] ${
+                    sj.status === 'queued'
+                      ? 'bg-slate-700/40 border-slate-600/50 text-slate-300'
+                      : 'bg-amber-500/20 border-amber-500/40 text-amber-300'
+                  }`}
+                >
+                  {sj.status === 'queued' ? 'QUEUED' : 'SCAN'}
                 </span>
-                <span className="font-semibold text-slate-100">Scanning {sj.sourceName}</span>
+                <span className="font-semibold text-slate-100">
+                  {sj.status === 'queued' ? `Queued: ${sj.sourceName}` : `Scanning ${sj.sourceName}`}
+                </span>
                 {sj.currentItem && (
                   <span className="text-slate-400 truncate max-w-[240px]">{sj.currentItem}</span>
                 )}
                 <div className="flex-1 min-w-[120px] max-w-xs h-1.5 rounded-full bg-slate-800 overflow-hidden">
                   <div
-                    className="h-full bg-amber-400 transition-all duration-300"
+                    className={`h-full transition-all duration-300 ${
+                      sj.status === 'queued' ? 'bg-slate-500' : 'bg-amber-400'
+                    }`}
                     style={{ width: `${Math.max(5, sj.overallPercent)}%` }}
                   />
                 </div>

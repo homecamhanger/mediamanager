@@ -272,7 +272,6 @@ export const api = {
     asyncScan?: boolean;
   }) => req<{ source: MediaSource; job?: SourceScanJob }>('/api/settings/sources', { method: 'POST', body: JSON.stringify(input) }),
   listScanJobs: () => req<{ jobs: SourceScanJob[] }>('/api/settings/sources/jobs'),
-  getScanJob: (jobId: string) => req<{ job: SourceScanJob }>(`/api/settings/sources/jobs/${encodeURIComponent(jobId)}`),
   deleteSource: (id: number) => req<{ ok: boolean }>(`/api/settings/sources/${id}`, { method: 'DELETE' }),
   scanSources: (sourceId?: number, asyncScan = false) =>
     req<{ moviesScanned?: number; showsScanned?: number; episodesScanned?: number; job?: SourceScanJob }>('/api/settings/sources/scan', {

@@ -40,18 +40,30 @@ export function createInitialScanSteps(source: MediaSource, registerDone = true)
   ];
 }
 
+interface QueuedScanTask {
+  jobId: string;
+  run: () => Promise<void>;
+}
+
 export class ScanJobManager {
   private jobs = new Map<string, SourceScanJob>();
+  private queue: QueuedScanTask[] = [];
+  private activeJobId: string | null = null;
 
-  createJob(source: MediaSource, registerDone = true): SourceScanJob {
+  createJob(
+    source: MediaSource,
+    registerDone = true,
+    initialStatus: 'queued' | 'running' = 'running'
+  ): SourceScanJob {
     const job: SourceScanJob = {
       jobId: crypto.randomUUID(),
       sourceId: source.id,
       sourceName: source.name,
       sourcePath: source.path,
       mediaKind: source.mediaKind,
-      status: 'running',
-      overallPercent: registerDone ? 8 : 2,
+      status: initialStatus,
+      overallPercent: initialStatus === 'queued' ? 5 : registerDone ? 8 : 2,
+      currentItem: initialStatus === 'queued' ? 'Queued behind active scan...' : undefined,
       itemsProcessed: 0,
       itemsTotal: 0,
       moviesScanned: 0,
@@ -66,6 +78,54 @@ export class ScanJobManager {
     return this.clone(job);
   }
 
+  enqueueScan(source: MediaSource, runner: (jobId: string) => Promise<void>): SourceScanJob {
+    // Avoid creating duplicate queued/running jobs for the same source
+    const existing = [...this.jobs.values()].find(
+      (j) => j.sourceId === source.id && (j.status === 'running' || j.status === 'queued')
+    );
+    if (existing) {
+      return this.clone(existing);
+    }
+
+    const shouldStartImmediately = !this.activeJobId && this.queue.length === 0;
+    const job = this.createJob(source, true, shouldStartImmediately ? 'running' : 'queued');
+
+    if (shouldStartImmediately) {
+      this.activeJobId = job.jobId;
+      setImmediate(() => {
+        void this.runTask(job.jobId, () => runner(job.jobId));
+      });
+    } else {
+      this.queue.push({ jobId: job.jobId, run: () => runner(job.jobId) });
+    }
+
+    return job;
+  }
+
+  private async runTask(jobId: string, run: () => Promise<void>): Promise<void> {
+    this.activeJobId = jobId;
+    const job = this.jobs.get(jobId);
+    if (job && job.status === 'queued') {
+      job.status = 'running';
+      job.overallPercent = 8;
+      job.currentItem = undefined;
+    }
+
+    try {
+      await run();
+    } catch (err) {
+      this.failJob(jobId, (err as Error).message);
+    } finally {
+      this.activeJobId = null;
+      const next = this.queue.shift();
+      if (next) {
+        setImmediate(() => {
+          void this.runTask(next.jobId, next.run);
+        });
+      }
+    }
+  }
+
   getJob(jobId: string): SourceScanJob | null {
     const j = this.jobs.get(jobId);
     return j ? this.clone(j) : null;
@@ -73,7 +133,7 @@ export class ScanJobManager {
 
   listJobs(): SourceScanJob[] {
     return [...this.jobs.values()]
-      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+      .reverse()
       .slice(0, 12)
       .map((j) => this.clone(j));
   }
@@ -120,18 +180,21 @@ export class ScanJobManager {
     return this.clone(job);
   }
 
-  private pruneOldJobs() {
-    if (this.jobs.size <= 30) return;
-    const sorted = [...this.jobs.values()].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
-    for (const j of sorted.slice(0, this.jobs.size - 30)) {
-      if (j.status !== 'running') this.jobs.delete(j.jobId);
-    }
-  }
-
   private clone(job: SourceScanJob): SourceScanJob {
     return {
       ...job,
       steps: job.steps.map((s) => ({ ...s })),
     };
+  }
+
+  private pruneOldJobs() {
+    if (this.jobs.size <= 30) return;
+    const sorted = [...this.jobs.values()]
+      .filter((j) => j.status === 'completed' || j.status === 'failed')
+      .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+    while (this.jobs.size > 30 && sorted.length > 0) {
+      const old = sorted.shift();
+      if (old) this.jobs.delete(old.jobId);
+    }
   }
 }

@@ -4,6 +4,7 @@ import {
   Check,
   CheckCircle2,
   Circle,
+  Clock,
   Download,
   FolderOpen,
   FolderPlus,
@@ -44,9 +45,12 @@ export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
   const [newKind, setNewKind] = useState<'movie' | 'tvshow'>('movie');
   const [browseOpen, setBrowseOpen] = useState(false);
 
-  // Live source scan job tracking
-  const [scanJob, setScanJob] = useState<SourceScanJob | null>(null);
-  const pollTimerRef = useRef<number | null>(null);
+  // Live source scan job tracking (supports multiple queued / running jobs)
+  const [scanJobs, setScanJobs] = useState<SourceScanJob[]>([]);
+  const [dismissedJobIds, setDismissedJobIds] = useState<Set<string>>(() => new Set());
+  const prevJobStatusRef = useRef<Map<string, SourceScanJob['status']>>(new Map());
+  const onRefreshRef = useRef(onRefresh);
+  onRefreshRef.current = onRefresh;
 
   // Smart playlist & sources XML
   const [playlistName, setPlaylistName] = useState('Top Rated 4K Movies');
@@ -59,46 +63,38 @@ export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const stopPolling = () => {
-    if (pollTimerRef.current !== null) {
-      window.clearInterval(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
-  };
-
-  const startPollingJob = (jobId: string) => {
-    stopPolling();
-    const poll = async () => {
-      try {
-        const res = await api.getScanJob(jobId);
-        setScanJob(res.job);
-        if (res.job.status !== 'running') {
-          stopPolling();
-          await loadSourcesOnly();
-          onRefresh();
-          if (res.job.status === 'completed') {
-            const summary =
-              res.job.mediaKind === 'movie'
-                ? `${res.job.moviesScanned} movie${res.job.moviesScanned === 1 ? '' : 's'}`
-                : `${res.job.showsScanned} show${res.job.showsScanned === 1 ? '' : 's'} & ${res.job.episodesScanned} episode${res.job.episodesScanned === 1 ? '' : 's'}`;
-            notify(`Source "${res.job.sourceName}" indexed (${summary})`);
-          } else if (res.job.error) {
-            setErrorMsg(`Scan failed for "${res.job.sourceName}": ${res.job.error}`);
-          }
-        }
-      } catch {
-        stopPolling();
-      }
-    };
-    void poll();
-    pollTimerRef.current = window.setInterval(() => {
-      void poll();
-    }, 250);
-  };
-
   const loadSourcesOnly = async () => {
     const sRes = await api.listSources();
     setSources(sRes.sources);
+  };
+
+  const applyJobSnapshot = (jobs: SourceScanJob[]) => {
+    const prevMap = prevJobStatusRef.current;
+    let completedOrFailed = false;
+
+    for (const job of jobs) {
+      const prevStatus = prevMap.get(job.jobId);
+      if (prevStatus === 'running' || prevStatus === 'queued') {
+        if (job.status === 'completed') {
+          completedOrFailed = true;
+          const summary =
+            job.mediaKind === 'movie'
+              ? `${job.moviesScanned} movie${job.moviesScanned === 1 ? '' : 's'}`
+              : `${job.showsScanned} show${job.showsScanned === 1 ? '' : 's'} & ${job.episodesScanned} episode${job.episodesScanned === 1 ? '' : 's'}`;
+          notify(`Source "${job.sourceName}" indexed (${summary})`);
+        } else if (job.status === 'failed') {
+          completedOrFailed = true;
+          setErrorMsg(`Scan failed for "${job.sourceName}": ${job.error || 'Unknown error'}`);
+        }
+      }
+      prevMap.set(job.jobId, job.status);
+    }
+
+    setScanJobs(jobs);
+    if (completedOrFailed) {
+      void loadSourcesOnly();
+      onRefreshRef.current();
+    }
   };
 
   const load = async () => {
@@ -113,23 +109,60 @@ export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
     setPrefs(pRes);
     setKodi(kRes);
     setSubCfg(subRes);
-    const active = jRes.jobs.find((j) => j.status === 'running');
-    if (active) {
-      setScanJob(active);
-      startPollingJob(active.jobId);
+
+    // Seed status tracking for existing jobs and avoid resurrecting stale finished banners on mount
+    const initiallyFinished = new Set<string>();
+    for (const job of jRes.jobs) {
+      prevJobStatusRef.current.set(job.jobId, job.status);
+      if (job.status === 'completed' || job.status === 'failed') {
+        initiallyFinished.add(job.jobId);
+      }
     }
+    setDismissedJobIds((prev) => {
+      const next = new Set(prev);
+      for (const id of initiallyFinished) next.add(id);
+      return next;
+    });
+    setScanJobs(jRes.jobs);
   };
 
   useEffect(() => {
     void load();
-    return () => stopPolling();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const hasActiveScan = scanJobs.some((j) => j.status === 'running' || j.status === 'queued');
+
+  useEffect(() => {
+    if (!hasActiveScan) return;
+    const poll = () => {
+      void api
+        .listScanJobs()
+        .then((res) => applyJobSnapshot(res.jobs))
+        .catch(() => {
+          // ignore transient poll failures
+        });
+    };
+    const timer = window.setInterval(poll, 250);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasActiveScan]);
 
   const notify = (text: string) => {
     setErrorMsg(null);
     setMsg(text);
     setTimeout(() => setMsg(null), 4000);
+  };
+
+  const trackStartedJob = (job: SourceScanJob) => {
+    prevJobStatusRef.current.set(job.jobId, job.status);
+    setDismissedJobIds((prev) => {
+      const next = new Set(prev);
+      next.delete(job.jobId);
+      return next;
+    });
+    setScanJobs((prev) => [job, ...prev.filter((j) => j.jobId !== job.jobId)]);
+    onRefreshRef.current();
   };
 
   const handleAddSource = async (e: React.FormEvent) => {
@@ -154,8 +187,7 @@ export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
       // Immediately reflect newly added source in the list
       setSources((prev) => (prev.some((s) => s.id === res.source.id) ? prev : [...prev, res.source]));
       if (res.job) {
-        setScanJob(res.job);
-        startPollingJob(res.job.jobId);
+        trackStartedJob(res.job);
       } else {
         await loadSourcesOnly();
         onRefresh();
@@ -173,8 +205,7 @@ export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
     try {
       const res = await api.scanSources(s.id, true);
       if (res.job) {
-        setScanJob(res.job);
-        startPollingJob(res.job.jobId);
+        trackStartedJob(res.job);
       } else {
         onRefresh();
         notify(`Rescanned "${s.name}"`);
@@ -271,17 +302,31 @@ export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
 
         <div className="space-y-2">
           {sources.map((s) => {
-            const isScanningThis = scanJob?.sourceId === s.id && scanJob.status === 'running';
+            const activeJob = scanJobs.find(
+              (j) => j.sourceId === s.id && (j.status === 'running' || j.status === 'queued')
+            );
+            const isBusyThis = Boolean(activeJob);
+            const isQueuedThis = activeJob?.status === 'queued';
             return (
               <div key={s.id} className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="px-2 py-0.5 rounded bg-sky-500/15 text-sky-300 font-bold uppercase text-[10px]">{s.mediaKind}</span>
                     <span className="font-bold text-slate-100">{s.name}</span>
-                    {isScanningThis && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[10px] font-semibold">
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        Scanning ({scanJob.overallPercent}%)
+                    {activeJob && (
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-semibold ${
+                          isQueuedThis
+                            ? 'bg-slate-800 border-slate-700 text-slate-300'
+                            : 'bg-amber-500/15 border-amber-500/30 text-amber-300'
+                        }`}
+                      >
+                        {isQueuedThis ? (
+                          <Clock className="w-3 h-3 text-slate-400" />
+                        ) : (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        )}
+                        {isQueuedThis ? 'Queued' : `Scanning (${activeJob.overallPercent}%)`}
                       </span>
                     )}
                   </div>
@@ -289,18 +334,24 @@ export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
                 </div>
                 <div className="flex items-center gap-2">
                   <button
-                    disabled={isScanningThis}
+                    disabled={isBusyThis}
                     onClick={() => handleScanSingleSource(s)}
                     className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 flex items-center gap-1 cursor-pointer"
                   >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isScanningThis ? 'animate-spin' : ''}`} />
-                    {isScanningThis ? 'Scanning...' : 'Scan'}
+                    <RefreshCw className={`w-3.5 h-3.5 ${activeJob?.status === 'running' ? 'animate-spin' : ''}`} />
+                    {isQueuedThis ? 'Queued' : isBusyThis ? 'Scanning...' : 'Scan'}
                   </button>
                   <button
-                    disabled={isScanningThis}
+                    disabled={isBusyThis}
                     onClick={async () => {
                       await api.deleteSource(s.id);
-                      if (scanJob?.sourceId === s.id) setScanJob(null);
+                      setDismissedJobIds((prev) => {
+                        const next = new Set(prev);
+                        for (const j of scanJobs) {
+                          if (j.sourceId === s.id) next.add(j.jobId);
+                        }
+                        return next;
+                      });
                       await loadSourcesOnly();
                       onRefresh();
                     }}
@@ -314,133 +365,155 @@ export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
           })}
         </div>
 
-        {/* Source Setup & Scan Progress Steps */}
-        {scanJob && (
-          <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  {scanJob.status === 'running' ? (
-                    <Loader2 className="w-4 h-4 text-sky-400 animate-spin shrink-0" />
-                  ) : scanJob.status === 'completed' ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                  ) : (
-                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+        {/* Source Setup & Scan Progress Steps (all active, queued, and undismissed jobs) */}
+        {[...scanJobs]
+          .filter((j) => j.status === 'running' || j.status === 'queued' || !dismissedJobIds.has(j.jobId))
+          .sort((a, b) => {
+            const rank = (s: SourceScanJob['status']) =>
+              s === 'running' ? 0 : s === 'queued' ? 1 : 2;
+            return rank(a.status) - rank(b.status);
+          })
+          .map((scanJob) => {
+            const isJobActive = scanJob.status === 'running' || scanJob.status === 'queued';
+            return (
+              <div key={scanJob.jobId} className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {scanJob.status === 'running' ? (
+                        <Loader2 className="w-4 h-4 text-sky-400 animate-spin shrink-0" />
+                      ) : scanJob.status === 'queued' ? (
+                        <Clock className="w-4 h-4 text-slate-400 shrink-0" />
+                      ) : scanJob.status === 'completed' ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                      )}
+                      <span className="text-xs font-bold text-slate-100">
+                        {scanJob.status === 'running'
+                          ? `Indexing Source: ${scanJob.sourceName}`
+                          : scanJob.status === 'queued'
+                            ? `Queued Source: ${scanJob.sourceName}`
+                            : scanJob.status === 'completed'
+                              ? `Completed Source Scan: ${scanJob.sourceName}`
+                              : `Failed Source Scan: ${scanJob.sourceName}`}
+                      </span>
+                      <span className="text-[11px] font-mono text-sky-300 font-semibold">{scanJob.overallPercent}%</span>
+                    </div>
+                    <div className="text-[11px] text-slate-400 font-mono truncate mt-0.5">
+                      {scanJob.currentItem ? `Current: ${scanJob.currentItem}` : scanJob.sourcePath}
+                    </div>
+                  </div>
+                  {!isJobActive && (
+                    <button
+                      onClick={() =>
+                        setDismissedJobIds((prev) => {
+                          const next = new Set(prev);
+                          next.add(scanJob.jobId);
+                          return next;
+                        })
+                      }
+                      aria-label="Dismiss scan summary"
+                      className="p-1 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
                   )}
-                  <span className="text-xs font-bold text-slate-100">
-                    {scanJob.status === 'running'
-                      ? `Indexing Source: ${scanJob.sourceName}`
-                      : scanJob.status === 'completed'
-                        ? `Completed Source Scan: ${scanJob.sourceName}`
-                        : `Failed Source Scan: ${scanJob.sourceName}`}
-                  </span>
-                  <span className="text-[11px] font-mono text-sky-300 font-semibold">{scanJob.overallPercent}%</span>
                 </div>
-                <div className="text-[11px] text-slate-400 font-mono truncate mt-0.5">
-                  {scanJob.currentItem ? `Current: ${scanJob.currentItem}` : scanJob.sourcePath}
+
+                {/* Overall Progress Bar */}
+                <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-200 ${
+                      scanJob.status === 'failed'
+                        ? 'bg-rose-500'
+                        : scanJob.status === 'completed'
+                          ? 'bg-emerald-500'
+                          : scanJob.status === 'queued'
+                            ? 'bg-slate-500'
+                            : 'bg-sky-500'
+                    }`}
+                    style={{ width: `${scanJob.overallPercent}%` }}
+                  />
+                </div>
+
+                {/* Step Checklist */}
+                <div className="space-y-2">
+                  {scanJob.steps.map((step, idx) => {
+                    const hasCounts =
+                      typeof step.totalCount === 'number' && typeof step.completedCount === 'number' && step.totalCount > 0;
+                    const stepPct = hasCounts ? Math.round((step.completedCount! / step.totalCount!) * 100) : null;
+                    return (
+                      <div
+                        key={step.id}
+                        className={`p-2.5 rounded-lg border text-xs transition ${
+                          step.status === 'in_progress'
+                            ? 'bg-sky-500/10 border-sky-500/40'
+                            : step.status === 'completed'
+                              ? 'bg-emerald-500/5 border-emerald-500/25'
+                              : step.status === 'error'
+                                ? 'bg-rose-500/10 border-rose-500/40'
+                                : 'bg-slate-900/50 border-slate-800/80 opacity-70'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            {step.status === 'completed' ? (
+                              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                            ) : step.status === 'in_progress' ? (
+                              <Loader2 className="w-4 h-4 text-sky-400 animate-spin shrink-0" />
+                            ) : step.status === 'error' ? (
+                              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                            ) : (
+                              <Circle className="w-4 h-4 text-slate-600 shrink-0" />
+                            )}
+                            <span className="font-semibold text-slate-100">
+                              {idx + 1}. {step.label}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {hasCounts && (
+                              <span className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-[10px] font-mono text-slate-300">
+                                {step.completedCount}/{step.totalCount}
+                                {stepPct !== null ? ` (${stepPct}%)` : ''}
+                              </span>
+                            )}
+                            <span
+                              className={`text-[10px] font-bold uppercase ${
+                                step.status === 'completed'
+                                  ? 'text-emerald-400'
+                                  : step.status === 'in_progress'
+                                    ? 'text-sky-300'
+                                    : step.status === 'error'
+                                      ? 'text-rose-400'
+                                      : 'text-slate-500'
+                              }`}
+                            >
+                              {step.status === 'in_progress' ? 'In Progress' : step.status}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="mt-1 pl-6 flex items-center justify-between gap-3 text-[11px] text-slate-400">
+                          <span>{step.description}</span>
+                          {step.detail && <span className="font-mono text-slate-300 truncate max-w-[260px]">{step.detail}</span>}
+                        </div>
+                        {step.status === 'in_progress' && stepPct !== null && (
+                          <div className="mt-2 pl-6">
+                            <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                              <div
+                                className="h-full bg-sky-400 transition-all duration-150"
+                                style={{ width: `${stepPct}%` }}
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
-              {scanJob.status !== 'running' && (
-                <button
-                  onClick={() => setScanJob(null)}
-                  aria-label="Dismiss scan summary"
-                  className="p-1 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-
-            {/* Overall Progress Bar */}
-            <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
-              <div
-                className={`h-full transition-all duration-200 ${
-                  scanJob.status === 'failed'
-                    ? 'bg-rose-500'
-                    : scanJob.status === 'completed'
-                      ? 'bg-emerald-500'
-                      : 'bg-sky-500'
-                }`}
-                style={{ width: `${scanJob.overallPercent}%` }}
-              />
-            </div>
-
-            {/* Step Checklist */}
-            <div className="space-y-2">
-              {scanJob.steps.map((step, idx) => {
-                const hasCounts =
-                  typeof step.totalCount === 'number' && typeof step.completedCount === 'number' && step.totalCount > 0;
-                const stepPct = hasCounts ? Math.round((step.completedCount! / step.totalCount!) * 100) : null;
-                return (
-                  <div
-                    key={step.id}
-                    className={`p-2.5 rounded-lg border text-xs transition ${
-                      step.status === 'in_progress'
-                        ? 'bg-sky-500/10 border-sky-500/40'
-                        : step.status === 'completed'
-                          ? 'bg-emerald-500/5 border-emerald-500/25'
-                          : step.status === 'error'
-                            ? 'bg-rose-500/10 border-rose-500/40'
-                            : 'bg-slate-900/50 border-slate-800/80 opacity-70'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        {step.status === 'completed' ? (
-                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                        ) : step.status === 'in_progress' ? (
-                          <Loader2 className="w-4 h-4 text-sky-400 animate-spin shrink-0" />
-                        ) : step.status === 'error' ? (
-                          <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-                        ) : (
-                          <Circle className="w-4 h-4 text-slate-600 shrink-0" />
-                        )}
-                        <span className="font-semibold text-slate-100">
-                          {idx + 1}. {step.label}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {hasCounts && (
-                          <span className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-[10px] font-mono text-slate-300">
-                            {step.completedCount}/{step.totalCount}
-                            {stepPct !== null ? ` (${stepPct}%)` : ''}
-                          </span>
-                        )}
-                        <span
-                          className={`text-[10px] font-bold uppercase ${
-                            step.status === 'completed'
-                              ? 'text-emerald-400'
-                              : step.status === 'in_progress'
-                                ? 'text-sky-300'
-                                : step.status === 'error'
-                                  ? 'text-rose-400'
-                                  : 'text-slate-500'
-                          }`}
-                        >
-                          {step.status === 'in_progress' ? 'In Progress' : step.status}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="mt-1 pl-6 flex items-center justify-between gap-3 text-[11px] text-slate-400">
-                      <span>{step.description}</span>
-                      {step.detail && <span className="font-mono text-slate-300 truncate max-w-[260px]">{step.detail}</span>}
-                    </div>
-                    {step.status === 'in_progress' && stepPct !== null && (
-                      <div className="mt-2 pl-6">
-                        <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
-                          <div
-                            className="h-full bg-sky-400 transition-all duration-150"
-                            style={{ width: `${stepPct}%` }}
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+            );
+          })}
 
         <form onSubmit={handleAddSource} className="grid grid-cols-1 md:grid-cols-12 gap-2.5 pt-2 border-t border-slate-800 text-xs">
           <input

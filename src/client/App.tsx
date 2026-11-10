@@ -69,7 +69,7 @@ export const App: React.FC = () => {
     setBatchJobs(jobsRes.jobs);
     setScanJobs(jobsRes.scanJobs);
     setBackgroundScanning(
-      jobsRes.scanJobs.some((j) => j.status === 'running') ||
+      jobsRes.scanJobs.some((j) => j.status === 'running' || j.status === 'queued') ||
         jobsRes.jobs.some((j) => j.status === 'running')
     );
 
@@ -99,12 +99,14 @@ export const App: React.FC = () => {
   useEffect(() => {
     const runningNow = new Set<string>([
       ...batchJobs.filter((j) => j.status === 'running').map((j) => j.jobId),
-      ...scanJobs.filter((j) => j.status === 'running').map((j) => j.jobId),
+      ...scanJobs.filter((j) => j.status === 'running' || j.status === 'queued').map((j) => j.jobId),
     ]);
     const prevRunning = prevRunningIdsRef.current;
 
+    let anyFinished = false;
     for (const oldId of prevRunning) {
       if (!runningNow.has(oldId)) {
+        anyFinished = true;
         const doneBatch = batchJobs.find((j) => j.jobId === oldId);
         if (doneBatch) {
           showToast(
@@ -112,13 +114,24 @@ export const App: React.FC = () => {
               ? `${doneBatch.label} cancelled (${doneBatch.processedCount}/${doneBatch.totalCount})`
               : doneBatch.detail || `${doneBatch.label} finished`
           );
+          setBusyAction(null);
         }
-        setBusyAction(null);
-        void refreshAll();
-        break;
+        const doneScan = scanJobs.find((j) => j.jobId === oldId);
+        if (doneScan && doneScan.status === 'completed') {
+          const summaryText =
+            doneScan.mediaKind === 'movie'
+              ? `${doneScan.moviesScanned} movie${doneScan.moviesScanned === 1 ? '' : 's'}`
+              : `${doneScan.showsScanned} show${doneScan.showsScanned === 1 ? '' : 's'}, ${doneScan.episodesScanned} episode${doneScan.episodesScanned === 1 ? '' : 's'}`;
+          showToast(`Finished scanning "${doneScan.sourceName}" (${summaryText})`);
+        } else if (doneScan && doneScan.status === 'failed') {
+          showToast(`Scan failed for "${doneScan.sourceName}"`);
+        }
       }
     }
     prevRunningIdsRef.current = runningNow;
+    if (anyFinished) {
+      void refreshAll();
+    }
 
     if (runningNow.size === 0) return;
     const id = setInterval(() => {
@@ -126,7 +139,8 @@ export const App: React.FC = () => {
         setBatchJobs(res.jobs);
         setScanJobs(res.scanJobs);
         setBackgroundScanning(
-          res.jobs.some((j) => j.status === 'running') || res.scanJobs.some((j) => j.status === 'running')
+          res.jobs.some((j) => j.status === 'running') ||
+            res.scanJobs.some((j) => j.status === 'running' || j.status === 'queued')
         );
       });
     }, 650);

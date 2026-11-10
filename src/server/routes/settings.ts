@@ -16,27 +16,20 @@ export function createSettingsRouter(db: MediaDatabase, sharedScanJobs?: ScanJob
   const scanJobs = sharedScanJobs ?? new ScanJobManager();
 
   const startAsyncScan = (source: ReturnType<MediaDatabase['addSource']>) => {
-    const job = scanJobs.createJob(source, true);
-    setImmediate(() => {
-      void (async () => {
-        try {
-          const res = await scanner.scanSource(source, (update) => {
-            scanJobs.updateJob(job.jobId, update);
-          });
-          scanJobs.updateJob(job.jobId, {
-            status: 'completed',
-            overallPercent: 100,
-            moviesScanned: res.moviesScanned,
-            showsScanned: res.showsScanned,
-            episodesScanned: res.episodesScanned,
-            finishedAt: new Date().toISOString(),
-          });
-        } catch (err) {
-          scanJobs.failJob(job.jobId, (err as Error).message);
-        }
-      })();
+    return scanJobs.enqueueScan(source, async (jobId) => {
+      const res = await scanner.scanSource(source, (update) => {
+        scanJobs.updateJob(jobId, update);
+      });
+      scanJobs.updateJob(jobId, {
+        status: 'completed',
+        overallPercent: 100,
+        currentItem: undefined,
+        moviesScanned: res.moviesScanned,
+        showsScanned: res.showsScanned,
+        episodesScanned: res.episodesScanned,
+        finishedAt: new Date().toISOString(),
+      });
     });
-    return job;
   };
 
   router.get('/sources', (_req, res) => {

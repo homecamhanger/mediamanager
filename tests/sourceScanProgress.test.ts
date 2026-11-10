@@ -22,7 +22,7 @@ async function pollUntilDone(app: ReturnType<typeof createApiApp>, jobId: string
     const res = await request(app).get(`/api/settings/sources/jobs/${jobId}`);
     expect(res.status).toBe(200);
     seenPercents.push(res.body.job.overallPercent);
-    if (res.body.job.status !== 'running') {
+    if (res.body.job.status !== 'running' && res.body.job.status !== 'queued') {
       return { job: res.body.job, seenPercents };
     }
     await new Promise((r) => setTimeout(r, 25));
@@ -110,6 +110,55 @@ describe('Async Source Addition & Step Progress Tracking', () => {
     const jobsList = await request(app).get('/api/settings/sources/jobs');
     expect(jobsList.status).toBe(200);
     expect(jobsList.body.jobs.length).toBeGreaterThanOrEqual(1);
+
+    db.close();
+  });
+
+  it('queues a second source sequentially until the first finishes and prevents duplicate active scans', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kv-queue-seq-'));
+    tmpDirs.push(tmp);
+
+    const dir1 = path.join(tmp, 'MoviesA');
+    const dir2 = path.join(tmp, 'MoviesB');
+    fs.mkdirSync(path.join(dir1, 'Alien (1979)'), { recursive: true });
+    fs.mkdirSync(path.join(dir2, 'Heat (1995)'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir1, 'Alien (1979)', 'Alien (1979) [1080p].mp4'),
+      createMinimalValidMp4({ width: 1920, height: 1080, durationSeconds: 7020 })
+    );
+    fs.writeFileSync(
+      path.join(dir2, 'Heat (1995)', 'Heat (1995) [1080p].mp4'),
+      createMinimalValidMp4({ width: 1920, height: 1080, durationSeconds: 10200 })
+    );
+
+    const db = new MediaDatabase(path.join(tmp, 'queue.db'));
+    const app = createApiApp(db);
+
+    const [res1, res2] = await Promise.all([
+      request(app).post('/api/settings/sources').send({ name: 'Movies A', path: dir1, mediaKind: 'movie', asyncScan: true }),
+      request(app).post('/api/settings/sources').send({ name: 'Movies B', path: dir2, mediaKind: 'movie', asyncScan: true }),
+    ]);
+
+    expect(res1.status).toBe(200);
+    expect(res2.status).toBe(200);
+    expect(res1.body.job.status).toBe('running');
+    expect(res2.body.job.status).toBe('queued');
+
+    // Triggering a scan on an already-queued source returns the existing job instead of duplicating
+    const dupScan = await request(app)
+      .post('/api/settings/sources/scan')
+      .send({ sourceId: res2.body.source.id, asyncScan: true });
+    expect(dupScan.status).toBe(200);
+    expect(dupScan.body.job.jobId).toBe(res2.body.job.jobId);
+
+    const done1 = await pollUntilDone(app, res1.body.job.jobId);
+    const done2 = await pollUntilDone(app, res2.body.job.jobId);
+    expect(done1.job.status).toBe('completed');
+    expect(done2.job.status).toBe('completed');
+    expect(Date.parse(done1.job.finishedAt)).toBeLessThanOrEqual(Date.parse(done2.job.finishedAt));
+
+    const moviesRes = await request(app).get('/api/movies');
+    expect(moviesRes.body.movies).toHaveLength(2);
 
     db.close();
   });

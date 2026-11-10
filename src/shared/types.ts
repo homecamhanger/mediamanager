@@ -591,7 +591,7 @@ export interface SourceScanJob {
   sourceName: string;
   sourcePath: string;
   mediaKind: MediaKind;
-  status: 'running' | 'completed' | 'failed';
+  status: 'queued' | 'running' | 'completed' | 'failed';
   overallPercent: number;
   currentItem?: string;
   itemsProcessed: number;
