@@ -14,10 +14,17 @@ import {
   Square,
   Subtitles,
   Tv,
+  Users,
   X,
 } from 'lucide-react';
 import type { MovieRecord, MovieSetRecord } from '../../shared/types.js';
 import { api } from '../lib/api.js';
+import {
+  filterMoviesByActorAndQuery,
+  filterSetsByActorAndQuery,
+  filterShowTreeByActorAndQuery,
+  findActorMatch,
+} from '../lib/castFilter.js';
 import type { LeftLibraryTab, SelectedMedia, ShowTreeNode } from '../lib/workspaceTypes.js';
 import { PosterImage } from './PosterImage.js';
 
@@ -31,6 +38,8 @@ interface MediaTreeSidebarProps {
   showTree: ShowTreeNode[];
   sets: MovieSetRecord[];
   selected: SelectedMedia;
+  actorFilter: string | null;
+  onClearActorFilter: () => void;
   onSelectMedia: (sel: SelectedMedia) => void;
   onRefresh: () => Promise<void> | void;
   onToast: (msg: string) => void;
@@ -43,6 +52,8 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
   showTree,
   sets,
   selected,
+  actorFilter,
+  onClearActorFilter,
   onSelectMedia,
   onRefresh,
   onToast,
@@ -98,13 +109,20 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
   const [newSetName, setNewSetName] = useState('');
 
   const q = search.toLowerCase().trim();
+  const actorNeedle = actorFilter?.trim().toLowerCase() || '';
+
+  const actorMovieMatches = useMemo(
+    () => (actorNeedle ? filterMoviesByActorAndQuery(movies, actorFilter, '') : movies),
+    [movies, actorFilter, actorNeedle]
+  );
+
+  const actorShowMatches = useMemo(
+    () => (actorNeedle ? filterShowTreeByActorAndQuery(showTree, actorFilter, '') : []),
+    [showTree, actorFilter, actorNeedle]
+  );
 
   const filteredMovies = useMemo(() => {
-    return movies.filter((m) => {
-      if (q) {
-        const hay = `${m.title} ${m.originalTitle} ${m.year ?? ''} ${m.setName ?? ''} ${m.fileName}`.toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
+    return filterMoviesByActorAndQuery(movies, actorFilter, search).filter((m) => {
       if (movieFilter === 'unscraped' && m.scraped) return false;
       if (movieFilter === 'missing_nfo' && m.hasNfo) return false;
       if (movieFilter === 'nfo_warnings' && !(m.hasNfo && (!m.nfoValid || m.nfoWarnings.length > 0))) return false;
@@ -115,11 +133,11 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
       }
       return true;
     });
-  }, [movies, q, movieFilter]);
+  }, [movies, actorFilter, search, movieFilter]);
 
   const filteredShowTree = useMemo(() => {
-    return showTree
-      .map((node) => {
+    return filterShowTreeByActorAndQuery(showTree, actorFilter, search)
+      .map(({ node }) => {
         const showHasNfoWarn = node.show.hasNfo && (!node.show.nfoValid || node.show.nfoWarnings.length > 0);
         const epHasNfoWarn = (ep: ShowTreeNode['episodes'][number]) =>
           ep.hasNfo && (!ep.nfoValid || ep.nfoWarnings.length > 0);
@@ -133,55 +151,33 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
           (tvFilter === 'missing_subs' && node.episodes.some(epMissingSubs));
         if (!showMatchesFilter) return null;
 
-        let scopedNode = node;
         if (tvFilter === 'nfo_warnings' && !showHasNfoWarn) {
           const warnEps = node.episodes.filter(epHasNfoWarn);
           const seasonNums = new Set(warnEps.map((e) => e.displaySeason ?? e.seasonNumber));
-          scopedNode = {
+          return {
             show: node.show,
             seasons: node.seasons.filter((s) => seasonNums.has(s.seasonNumber)),
             episodes: warnEps,
           };
-        } else if (tvFilter === 'missing_subs') {
+        }
+        if (tvFilter === 'missing_subs') {
           const noSubEps = node.episodes.filter(epMissingSubs);
           const seasonNums = new Set(noSubEps.map((e) => e.displaySeason ?? e.seasonNumber));
-          scopedNode = {
+          return {
             show: node.show,
             seasons: node.seasons.filter((s) => seasonNums.has(s.seasonNumber)),
             episodes: noSubEps,
           };
         }
-
-        if (!q) return scopedNode;
-        const showTitleMatch = `${scopedNode.show.title} ${scopedNode.show.year ?? ''} ${scopedNode.show.studio}`.toLowerCase().includes(q);
-        const matchingEps = scopedNode.episodes.filter((ep) => {
-          const effSeason = ep.displaySeason ?? ep.seasonNumber;
-          const effEp = ep.displayEpisode ?? ep.episodeNumber;
-          const code = `s${String(ep.seasonNumber).padStart(2, '0')}e${String(ep.episodeNumber).padStart(2, '0')}`;
-          const effCode = `s${String(effSeason).padStart(2, '0')}e${String(effEp).padStart(2, '0')}`;
-          return `${ep.title} ${code} ${effCode} ${ep.fileName}`.toLowerCase().includes(q);
-        });
-        if (!showTitleMatch && matchingEps.length === 0) return null;
-
-        if (showTitleMatch) return scopedNode;
-        const seasonNums = new Set(matchingEps.map((e) => e.displaySeason ?? e.seasonNumber));
-        return {
-          show: scopedNode.show,
-          seasons: scopedNode.seasons.filter((s) => seasonNums.has(s.seasonNumber)),
-          episodes: matchingEps,
-        };
+        return node;
       })
       .filter((x): x is ShowTreeNode => Boolean(x));
-  }, [showTree, q, tvFilter]);
+  }, [showTree, actorFilter, search, tvFilter]);
 
-  const filteredSets = useMemo(() => {
-    if (!q) return sets;
-    return sets.filter(
-      (s) =>
-        s.name.toLowerCase().includes(q) ||
-        s.movies.some((m) => m.title.toLowerCase().includes(q))
-    );
-  }, [sets, q]);
+  const filteredSets = useMemo(
+    () => filterSetsByActorAndQuery(sets, actorFilter, search),
+    [sets, actorFilter, search]
+  );
 
   const toggleMovieCheck = (id: number, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -272,9 +268,24 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
       {/* 3 Primary Library Tabs: Movies | TV Shows | Movie Sets */}
       <div className="grid grid-cols-3 border-b border-slate-800 bg-[#0a0f1a]">
         {[
-          { id: 'movies' as const, label: 'Movies', count: movies.length, icon: <Clapperboard className="w-3.5 h-3.5" /> },
-          { id: 'tvshows' as const, label: 'TV Shows', count: showTree.length, icon: <Tv className="w-3.5 h-3.5" /> },
-          { id: 'sets' as const, label: 'Sets', count: sets.length, icon: <Layers className="w-3.5 h-3.5" /> },
+          {
+            id: 'movies' as const,
+            label: 'Movies',
+            count: actorNeedle ? actorMovieMatches.length : movies.length,
+            icon: <Clapperboard className="w-3.5 h-3.5" />,
+          },
+          {
+            id: 'tvshows' as const,
+            label: 'TV Shows',
+            count: actorNeedle ? actorShowMatches.length : showTree.length,
+            icon: <Tv className="w-3.5 h-3.5" />,
+          },
+          {
+            id: 'sets' as const,
+            label: 'Sets',
+            count: actorNeedle ? filteredSets.length : sets.length,
+            icon: <Layers className="w-3.5 h-3.5" />,
+          },
         ].map((t) => {
           const active = activeTab === t.id;
           return (
@@ -301,6 +312,44 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
         })}
       </div>
 
+      {/* Persistent Active Cast Filter Banner */}
+      {actorFilter && (
+        <div className="px-2.5 py-1.5 bg-sky-500/15 border-b border-sky-500/35 flex items-center justify-between gap-2 text-xs">
+          <div className="min-w-0 flex items-center gap-1.5">
+            <Users className="w-3.5 h-3.5 text-sky-300 shrink-0" />
+            <div className="min-w-0">
+              <div className="text-[11px] font-bold text-sky-200 truncate">Cast: {actorFilter}</div>
+              <div className="text-[10px] text-sky-300/80 flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => onTabChange('movies')}
+                  className="hover:underline cursor-pointer"
+                >
+                  {actorMovieMatches.length} Movie{actorMovieMatches.length === 1 ? '' : 's'}
+                </button>
+                <span>·</span>
+                <button
+                  type="button"
+                  onClick={() => onTabChange('tvshows')}
+                  className="hover:underline cursor-pointer"
+                >
+                  {actorShowMatches.length} TV Show{actorShowMatches.length === 1 ? '' : 's'}
+                </button>
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClearActorFilter}
+            aria-label="Clear cast filter"
+            title="Clear cast filter"
+            className="p-1 rounded-md hover:bg-sky-500/25 text-sky-200 cursor-pointer shrink-0"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Filter & Search Bar */}
       <div className="p-2 border-b border-slate-800/80 space-y-1.5 bg-[#0f1625]">
         <div className="relative">
@@ -310,10 +359,10 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
             onChange={(e) => setSearch(e.target.value)}
             placeholder={
               activeTab === 'movies'
-                ? 'Filter movies, year, file...'
+                ? 'Filter movies, year, actor...'
                 : activeTab === 'tvshows'
-                  ? 'Filter shows or episodes...'
-                  : 'Filter movie sets...'
+                  ? 'Filter shows, eps, actor...'
+                  : 'Filter movie sets, actor...'
             }
             className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-7 py-1.5 text-xs text-slate-100 placeholder:text-slate-500"
           />
@@ -506,6 +555,15 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                       </span>
                       {m.year && <span className="text-[10px] text-slate-400 shrink-0">{m.year}</span>}
                     </div>
+                    {actorNeedle && (() => {
+                      const matchedActor = findActorMatch(m.actors, actorNeedle);
+                      if (!matchedActor) return null;
+                      return (
+                        <div className="text-[10px] text-sky-300 truncate">
+                          as {matchedActor.role || 'Cast'}
+                        </div>
+                      );
+                    })()}
                     <div className="flex items-center justify-between gap-1 mt-0.5">
                       <div className="flex items-center gap-1 min-w-0">
                         {resLabel && (
@@ -559,7 +617,9 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
             <EmptyListState text="No TV shows match your filter." />
           ) : (
             filteredShowTree.map(({ show, seasons, episodes }) => {
-              const isShowExpanded = expandedShows.has(show.id) || Boolean(q);
+              const showActorMatch = actorNeedle ? findActorMatch(show.actors, actorNeedle) : null;
+              const hasEpisodeActorMatches = Boolean(actorNeedle && !showActorMatch && episodes.length > 0);
+              const isShowExpanded = expandedShows.has(show.id) || Boolean(q) || hasEpisodeActorMatches;
               const isShowSelected =
                 selected?.kind === 'show' && selected.showId === show.id && selected.seasonNumber == null;
               const sortedSeasons = [...seasons].sort((a, b) => a.seasonNumber - b.seasonNumber);
@@ -597,6 +657,13 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                         </span>
                         {show.year && <span className="text-[10px] text-slate-400 shrink-0">{show.year}</span>}
                       </div>
+                      {actorNeedle && (showActorMatch || hasEpisodeActorMatches) && (
+                        <div className="text-[10px] text-sky-300 truncate">
+                          {showActorMatch
+                            ? `as ${showActorMatch.role || 'Series Cast'}`
+                            : `Guest in ${episodes.length} episode${episodes.length === 1 ? '' : 's'}`}
+                        </div>
+                      )}
                       <div className="flex items-center justify-between gap-1 mt-0.5 text-[10px] text-slate-400">
                         <div className="flex items-center gap-1.5">
                           <span>
@@ -639,7 +706,7 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                       ) : (
                         sortedSeasons.map((season) => {
                           const sKey = `${show.id}:${season.seasonNumber}`;
-                          const isSeasonExpanded = expandedSeasons.has(sKey) || Boolean(q);
+                          const isSeasonExpanded = expandedSeasons.has(sKey) || Boolean(q) || hasEpisodeActorMatches;
                           const isSeasonSelected =
                             selected?.kind === 'show' &&
                             selected.showId === show.id &&
@@ -725,7 +792,18 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                                         >
                                           {code}
                                         </span>
-                                        <span className="text-[11px] truncate flex-1">{ep.title}</span>
+                                        <div className="min-w-0 flex-1">
+                                          <div className="text-[11px] truncate">{ep.title}</div>
+                                          {actorNeedle && (() => {
+                                            const epActorMatch = findActorMatch(ep.actors, actorNeedle);
+                                            if (!epActorMatch) return null;
+                                            return (
+                                              <div className="text-[9px] text-sky-300 truncate">
+                                                as {epActorMatch.role || 'Guest'}
+                                              </div>
+                                            );
+                                          })()}
+                                        </div>
                                         <div className="flex items-center gap-1 shrink-0">
                                           <span
                                             title={
@@ -778,7 +856,7 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
             <EmptyListState text="No movie sets found." />
           ) : (
             filteredSets.map((s) => {
-              const isSetExpanded = expandedSets.has(s.id) || Boolean(q);
+              const isSetExpanded = expandedSets.has(s.id) || Boolean(q) || Boolean(actorNeedle);
               const isSetSelected = selected?.kind === 'set' && selected.setId === s.id;
               return (
                 <div key={s.id} className="select-none">
@@ -823,6 +901,7 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                         .sort((a, b) => (a.year ?? 0) - (b.year ?? 0))
                         .map((m) => {
                           const isMovSelected = selected?.kind === 'movie' && selected.movieId === m.id;
+                          const matchedSetActor = actorNeedle ? findActorMatch(m.actors, actorNeedle) : null;
                           return (
                             <div
                               key={m.id}
@@ -834,7 +913,14 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                               }`}
                             >
                               <Clapperboard className="w-3 h-3 text-sky-400/80 shrink-0" />
-                              <span className="text-[11px] truncate flex-1">{m.title}</span>
+                              <div className="min-w-0 flex-1">
+                                <div className="text-[11px] truncate">{m.title}</div>
+                                {matchedSetActor && (
+                                  <div className="text-[9px] text-sky-300 truncate">
+                                    as {matchedSetActor.role || 'Cast'}
+                                  </div>
+                                )}
+                              </div>
                               <span className="text-[10px] text-slate-500">{m.year ?? '—'}</span>
                             </div>
                           );

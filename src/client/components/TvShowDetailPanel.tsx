@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import type { NfoValidationReport, TvEpisodeRecord, TvSeasonRecord, TvShowRecord } from '../../shared/types.js';
 import { api, getArtworkUrl } from '../lib/api.js';
+import { CastListColumn } from './CastListColumn.js';
 import { PosterImage } from './PosterImage.js';
 import { TechBadges } from './QualityBadges.js';
 import { RatingBadges } from './RatingBadges.js';
@@ -46,11 +47,13 @@ export const TvShowDetailPanel: React.FC<{
   showId: number;
   selectedSeason?: number | null;
   initialTab?: TvTab;
+  activeActor?: string | null;
+  onSelectActor?: (actorName: string) => void;
   onSelectSeason?: (seasonNumber: number | null) => void;
   onSelectEpisode?: (episodeId: number) => void;
   onUpdated: () => void;
   onClose?: () => void;
-}> = ({ showId, selectedSeason = null, initialTab, onSelectSeason, onSelectEpisode, onUpdated, onClose }) => {
+}> = ({ showId, selectedSeason = null, initialTab, activeActor, onSelectActor, onSelectSeason, onSelectEpisode, onUpdated, onClose }) => {
   const [show, setShow] = useState<TvShowRecord | null>(null);
   const [seasons, setSeasons] = useState<TvSeasonRecord[]>([]);
   const [episodes, setEpisodes] = useState<TvEpisodeRecord[]>([]);
@@ -706,85 +709,89 @@ export const TvShowDetailPanel: React.FC<{
         )}
 
         {tab === 'metadata' && (
-          <div className="space-y-3 max-w-4xl">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-              <Field label="Show Title" value={form.title ?? ''} onChange={(v) => setForm({ ...form, title: v })} />
-              <Field label="Original Title" value={form.originalTitle ?? ''} onChange={(v) => setForm({ ...form, originalTitle: v })} />
-              <Field label="Sort Title" value={form.sortTitle ?? ''} onChange={(v) => setForm({ ...form, sortTitle: v })} />
-              <Field
-                label="Year"
-                type="number"
-                value={form.year != null ? String(form.year) : ''}
-                onChange={(v) => setForm({ ...form, year: v ? Number(v) : null })}
-              />
-              <Field label="Premiered" value={form.premiered ?? ''} onChange={(v) => setForm({ ...form, premiered: v })} />
-              <Field label="Status" value={form.status ?? ''} onChange={(v) => setForm({ ...form, status: v })} />
-              <Field label="MPAA" value={form.mpaa ?? ''} onChange={(v) => setForm({ ...form, mpaa: v })} />
-              <Field label="Studio / Network" value={form.studio ?? ''} onChange={(v) => setForm({ ...form, studio: v })} />
-              <Field
-                label="User Rating (1–10)"
-                type="number"
-                value={form.userRating != null ? String(form.userRating) : ''}
-                onChange={(v) => setForm({ ...form, userRating: v ? Number(v) : null })}
-              />
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
+            <div className="xl:col-span-8 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                <Field label="Show Title" value={form.title ?? ''} onChange={(v) => setForm({ ...form, title: v })} />
+                <Field label="Original Title" value={form.originalTitle ?? ''} onChange={(v) => setForm({ ...form, originalTitle: v })} />
+                <Field label="Sort Title" value={form.sortTitle ?? ''} onChange={(v) => setForm({ ...form, sortTitle: v })} />
+                <Field
+                  label="Year"
+                  type="number"
+                  value={form.year != null ? String(form.year) : ''}
+                  onChange={(v) => setForm({ ...form, year: v ? Number(v) : null })}
+                />
+                <Field label="Premiered" value={form.premiered ?? ''} onChange={(v) => setForm({ ...form, premiered: v })} />
+                <Field label="Status" value={form.status ?? ''} onChange={(v) => setForm({ ...form, status: v })} />
+                <Field label="MPAA" value={form.mpaa ?? ''} onChange={(v) => setForm({ ...form, mpaa: v })} />
+                <Field label="Studio / Network" value={form.studio ?? ''} onChange={(v) => setForm({ ...form, studio: v })} />
+                <Field
+                  label="User Rating (1–10)"
+                  type="number"
+                  value={form.userRating != null ? String(form.userRating) : ''}
+                  onChange={(v) => setForm({ ...form, userRating: v ? Number(v) : null })}
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Series Overview</label>
+                <textarea
+                  rows={4}
+                  value={form.plot ?? ''}
+                  onChange={(e) => setForm({ ...form, plot: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 leading-relaxed"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <Field
+                  label="Genres (comma separated)"
+                  value={(form.genres ?? []).join(', ')}
+                  onChange={(v) => setForm({ ...form, genres: v.split(',').map((s) => s.trim()).filter(Boolean) })}
+                />
+                <Field
+                  label="Tags (comma separated)"
+                  value={(form.tags ?? []).join(', ')}
+                  onChange={(v) => setForm({ ...form, tags: v.split(',').map((s) => s.trim()).filter(Boolean) })}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <Field
+                  label="TVDB ID"
+                  value={form.uniqueIds?.tvdb ?? ''}
+                  onChange={(v) => setForm({ ...form, uniqueIds: { ...(form.uniqueIds ?? {}), tvdb: v || undefined } })}
+                />
+                <Field
+                  label="TMDb ID"
+                  value={form.uniqueIds?.tmdb ?? ''}
+                  onChange={(v) => setForm({ ...form, uniqueIds: { ...(form.uniqueIds ?? {}), tmdb: v || undefined } })}
+                />
+                <Field
+                  label="IMDb ID"
+                  value={form.uniqueIds?.imdb ?? ''}
+                  onChange={(v) => setForm({ ...form, uniqueIds: { ...(form.uniqueIds ?? {}), imdb: v || undefined } })}
+                />
+                <Field
+                  label="TVmaze ID"
+                  value={form.uniqueIds?.tvmaze ?? ''}
+                  onChange={(v) => setForm({ ...form, uniqueIds: { ...(form.uniqueIds ?? {}), tvmaze: v || undefined } })}
+                />
+              </div>
+
+              <div className="flex justify-end pt-2 border-t border-slate-800">
+                <button
+                  onClick={handleSaveMetadata}
+                  disabled={busy}
+                  className="px-4 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  {busy ? 'Saving...' : 'Save & Write tvshow.nfo'}
+                </button>
+              </div>
             </div>
 
-            <div>
-              <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Series Overview</label>
-              <textarea
-                rows={4}
-                value={form.plot ?? ''}
-                onChange={(e) => setForm({ ...form, plot: e.target.value })}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 leading-relaxed"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              <Field
-                label="Genres (comma separated)"
-                value={(form.genres ?? []).join(', ')}
-                onChange={(v) => setForm({ ...form, genres: v.split(',').map((s) => s.trim()).filter(Boolean) })}
-              />
-              <Field
-                label="Tags (comma separated)"
-                value={(form.tags ?? []).join(', ')}
-                onChange={(v) => setForm({ ...form, tags: v.split(',').map((s) => s.trim()).filter(Boolean) })}
-              />
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-              <Field
-                label="TVDB ID"
-                value={form.uniqueIds?.tvdb ?? ''}
-                onChange={(v) => setForm({ ...form, uniqueIds: { ...(form.uniqueIds ?? {}), tvdb: v || undefined } })}
-              />
-              <Field
-                label="TMDb ID"
-                value={form.uniqueIds?.tmdb ?? ''}
-                onChange={(v) => setForm({ ...form, uniqueIds: { ...(form.uniqueIds ?? {}), tmdb: v || undefined } })}
-              />
-              <Field
-                label="IMDb ID"
-                value={form.uniqueIds?.imdb ?? ''}
-                onChange={(v) => setForm({ ...form, uniqueIds: { ...(form.uniqueIds ?? {}), imdb: v || undefined } })}
-              />
-              <Field
-                label="TVmaze ID"
-                value={form.uniqueIds?.tvmaze ?? ''}
-                onChange={(v) => setForm({ ...form, uniqueIds: { ...(form.uniqueIds ?? {}), tvmaze: v || undefined } })}
-              />
-            </div>
-
-            <div className="flex justify-end pt-2 border-t border-slate-800">
-              <button
-                onClick={handleSaveMetadata}
-                disabled={busy}
-                className="px-4 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-              >
-                <Save className="w-3.5 h-3.5" />
-                {busy ? 'Saving...' : 'Save & Write tvshow.nfo'}
-              </button>
-            </div>
+            <CastListColumn actors={show.actors} label="Series Cast" activeActor={activeActor} onSelectActor={onSelectActor} />
           </div>
         )}
 

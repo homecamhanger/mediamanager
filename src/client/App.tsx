@@ -7,6 +7,11 @@ import { SetDetailPanel } from './components/SetDetailPanel.js';
 import { TopRibbon } from './components/TopRibbon.js';
 import { TvShowDetailPanel } from './components/TvShowDetailPanel.js';
 import { api } from './lib/api.js';
+import {
+  filterMoviesByActorAndQuery,
+  filterSetsByActorAndQuery,
+  filterShowTreeByActorAndQuery,
+} from './lib/castFilter.js';
 import type { LeftLibraryTab, RibbonTool, SelectedMedia, ShowTreeNode } from './lib/workspaceTypes.js';
 import { AuditPage } from './pages/AuditPage.js';
 import { DashboardPage } from './pages/DashboardPage.js';
@@ -19,6 +24,7 @@ export const App: React.FC = () => {
   const [activeTool, setActiveTool] = useState<RibbonTool | null>(null);
   const [selected, setSelected] = useState<SelectedMedia>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [actorFilter, setActorFilter] = useState<string | null>(null);
 
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [movies, setMovies] = useState<MovieRecord[]>([]);
@@ -135,16 +141,66 @@ export const App: React.FC = () => {
     else if (sel?.kind === 'set') setLeftTab('sets');
   };
 
+  const handleFilterByActor = (actorName: string) => {
+    const cleaned = actorName.trim();
+    if (!cleaned) return;
+    const needle = cleaned.toLowerCase();
+    if (actorFilter?.trim().toLowerCase() === needle) {
+      setActorFilter(null);
+      showToast('Cleared cast filter');
+      return;
+    }
+
+    setActorFilter(cleaned);
+    setSidebarCollapsed(false);
+
+    const movieHits = filterMoviesByActorAndQuery(movies, cleaned, '').length;
+    const showHits = filterShowTreeByActorAndQuery(showTree, cleaned, '').length;
+    const setHits = filterSetsByActorAndQuery(sets, cleaned, '').length;
+
+    if (leftTab === 'movies' && movieHits === 0 && showHits > 0) setLeftTab('tvshows');
+    else if (leftTab === 'tvshows' && showHits === 0 && movieHits > 0) setLeftTab('movies');
+    else if (leftTab === 'sets' && setHits === 0) {
+      if (movieHits > 0) setLeftTab('movies');
+      else if (showHits > 0) setLeftTab('tvshows');
+    }
+
+    showToast(
+      `Cast filter: ${cleaned} (${movieHits} movie${movieHits === 1 ? '' : 's'} · ${showHits} show${showHits === 1 ? '' : 's'})`
+    );
+  };
+
   const handleLeftTabChange = (tab: LeftLibraryTab) => {
     setLeftTab(tab);
     setActiveTool(null);
-    // Keep selection aligned if user switches tabs and current selection is from a different kind
-    if (tab === 'movies' && selected?.kind !== 'movie' && movies.length > 0) {
-      setSelected({ kind: 'movie', movieId: movies[0].id });
-    } else if (tab === 'tvshows' && selected?.kind !== 'show' && selected?.kind !== 'episode' && showTree.length > 0) {
-      setSelected({ kind: 'show', showId: showTree[0].show.id, seasonNumber: null });
-    } else if (tab === 'sets' && selected?.kind !== 'set' && sets.length > 0) {
-      setSelected({ kind: 'set', setId: sets[0].id });
+
+    // Keep selection aligned if user switches tabs and current selection is from a different kind (or doesn't match actorFilter)
+    if (tab === 'movies' && movies.length > 0) {
+      const matchingMovies = actorFilter ? filterMoviesByActorAndQuery(movies, actorFilter, '') : movies;
+      const pool = matchingMovies.length > 0 ? matchingMovies : movies;
+      const currentStillValid =
+        selected?.kind === 'movie' && pool.some((m) => m.id === selected.movieId);
+      if (!currentStillValid) {
+        setSelected({ kind: 'movie', movieId: pool[0].id });
+      }
+    } else if (tab === 'tvshows' && showTree.length > 0) {
+      const matchingShows = actorFilter
+        ? filterShowTreeByActorAndQuery(showTree, actorFilter, '').map((m) => m.node)
+        : showTree;
+      const pool = matchingShows.length > 0 ? matchingShows : showTree;
+      const currentStillValid =
+        (selected?.kind === 'show' || selected?.kind === 'episode') &&
+        pool.some((n) => n.show.id === selected.showId);
+      if (!currentStillValid) {
+        setSelected({ kind: 'show', showId: pool[0].show.id, seasonNumber: null });
+      }
+    } else if (tab === 'sets' && sets.length > 0) {
+      const matchingSets = actorFilter ? filterSetsByActorAndQuery(sets, actorFilter, '') : sets;
+      const pool = matchingSets.length > 0 ? matchingSets : sets;
+      const currentStillValid = selected?.kind === 'set' && pool.some((s) => s.id === selected.setId);
+      if (!currentStillValid) {
+        setSelected({ kind: 'set', setId: pool[0].id });
+      }
     }
   };
 
@@ -222,6 +278,11 @@ export const App: React.FC = () => {
             showTree={showTree}
             sets={sets}
             selected={selected}
+            actorFilter={actorFilter}
+            onClearActorFilter={() => {
+              setActorFilter(null);
+              showToast('Cleared cast filter');
+            }}
             onSelectMedia={handleSelectMedia}
             onRefresh={refreshAll}
             onToast={showToast}
@@ -269,6 +330,8 @@ export const App: React.FC = () => {
             <MovieDetailPanel
               movieId={selected.movieId}
               initialTab={selected.focusTab}
+              activeActor={actorFilter}
+              onSelectActor={handleFilterByActor}
               onUpdated={refreshAll}
             />
           ) : selected?.kind === 'show' ? (
@@ -280,6 +343,8 @@ export const App: React.FC = () => {
                   ? selected.focusTab
                   : undefined
               }
+              activeActor={actorFilter}
+              onSelectActor={handleFilterByActor}
               onSelectSeason={(seasonNumber) =>
                 setSelected({ kind: 'show', showId: selected.showId, seasonNumber })
               }
@@ -297,6 +362,8 @@ export const App: React.FC = () => {
                   ? selected.focusTab
                   : undefined
               }
+              activeActor={actorFilter}
+              onSelectActor={handleFilterByActor}
               onSelectShow={(showId, seasonNumber) =>
                 setSelected({ kind: 'show', showId, seasonNumber: seasonNumber ?? null })
               }

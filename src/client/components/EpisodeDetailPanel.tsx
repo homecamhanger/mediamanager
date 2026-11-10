@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import type { NfoValidationReport, TvEpisodeRecord, TvShowRecord } from '../../shared/types.js';
 import { api, formatBytes } from '../lib/api.js';
+import { CastListColumn } from './CastListColumn.js';
 import { PosterImage } from './PosterImage.js';
 import { TechBadges } from './QualityBadges.js';
 import { SubtitleEditorModal, SubtitleSearchModal } from './SubtitleSearchModal.js';
@@ -26,9 +27,11 @@ export const EpisodeDetailPanel: React.FC<{
   showId: number;
   episodeId: number;
   initialTab?: EpisodeTab;
+  activeActor?: string | null;
+  onSelectActor?: (actorName: string) => void;
   onSelectShow: (showId: number, seasonNumber?: number | null) => void;
   onUpdated: () => void;
-}> = ({ showId, episodeId, initialTab, onSelectShow, onUpdated }) => {
+}> = ({ showId, episodeId, initialTab, activeActor, onSelectActor, onSelectShow, onUpdated }) => {
   const [show, setShow] = useState<TvShowRecord | null>(null);
   const [episode, setEpisode] = useState<TvEpisodeRecord | null>(null);
   const [form, setForm] = useState<Partial<TvEpisodeRecord>>({});
@@ -250,63 +253,73 @@ export const EpisodeDetailPanel: React.FC<{
       {/* Body */}
       <div className="flex-1 overflow-y-auto p-5">
         {tab === 'metadata' && (
-          <div className="space-y-3 max-w-4xl">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-              <Field label="Episode Title" value={form.title ?? ''} onChange={(v) => setForm({ ...form, title: v })} />
-              <Field label="Aired Date (YYYY-MM-DD)" value={form.aired ?? ''} onChange={(v) => setForm({ ...form, aired: v })} />
-              <Field
-                label="Runtime (minutes)"
-                type="number"
-                value={form.runtimeMinutes != null ? String(form.runtimeMinutes) : ''}
-                onChange={(v) => setForm({ ...form, runtimeMinutes: v ? Number(v) : null })}
-              />
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Episode Plot</label>
-              <textarea
-                rows={4}
-                value={form.plot ?? ''}
-                onChange={(e) => setForm({ ...form, plot: e.target.value })}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 leading-relaxed"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              <Field
-                label="Directors (comma separated)"
-                value={(form.directors ?? []).join(', ')}
-                onChange={(v) => setForm({ ...form, directors: v.split(',').map((s) => s.trim()).filter(Boolean) })}
-              />
-              <Field
-                label="Writers / Credits (comma separated)"
-                value={(form.writers ?? []).join(', ')}
-                onChange={(v) => setForm({ ...form, writers: v.split(',').map((s) => s.trim()).filter(Boolean) })}
-              />
-            </div>
-
-            <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-              <div className="flex items-center gap-1.5">
-                <Star className="w-3.5 h-3.5 text-amber-400" />
-                <span className="text-xs text-slate-400">User Rating:</span>
-                <input
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
+            <div className="xl:col-span-8 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <Field label="Episode Title" value={form.title ?? ''} onChange={(v) => setForm({ ...form, title: v })} />
+                <Field label="Aired Date (YYYY-MM-DD)" value={form.aired ?? ''} onChange={(v) => setForm({ ...form, aired: v })} />
+                <Field
+                  label="Runtime (minutes)"
                   type="number"
-                  min={1}
-                  max={10}
-                  value={form.userRating ?? ''}
-                  onChange={(e) => setForm({ ...form, userRating: e.target.value ? Number(e.target.value) : null })}
-                  className="w-14 bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-slate-100"
+                  value={form.runtimeMinutes != null ? String(form.runtimeMinutes) : ''}
+                  onChange={(v) => setForm({ ...form, runtimeMinutes: v ? Number(v) : null })}
                 />
               </div>
-              <button
-                onClick={handleSaveMetadata}
-                disabled={saving}
-                className="px-4 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-              >
-                <Save className="w-3.5 h-3.5" />
-                {saving ? 'Saving...' : 'Save & Write Episode NFO'}
-              </button>
+
+              <div>
+                <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Episode Plot</label>
+                <textarea
+                  rows={4}
+                  value={form.plot ?? ''}
+                  onChange={(e) => setForm({ ...form, plot: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 leading-relaxed"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <Field
+                  label="Directors (comma separated)"
+                  value={(form.directors ?? []).join(', ')}
+                  onChange={(v) => setForm({ ...form, directors: v.split(',').map((s) => s.trim()).filter(Boolean) })}
+                />
+                <Field
+                  label="Writers / Credits (comma separated)"
+                  value={(form.writers ?? []).join(', ')}
+                  onChange={(v) => setForm({ ...form, writers: v.split(',').map((s) => s.trim()).filter(Boolean) })}
+                />
+              </div>
+
+              <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+                <div className="flex items-center gap-1.5">
+                  <Star className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="text-xs text-slate-400">User Rating:</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={form.userRating ?? ''}
+                    onChange={(e) => setForm({ ...form, userRating: e.target.value ? Number(e.target.value) : null })}
+                    className="w-14 bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-slate-100"
+                  />
+                </div>
+                <button
+                  onClick={handleSaveMetadata}
+                  disabled={saving}
+                  className="px-4 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  {saving ? 'Saving...' : 'Save & Write Episode NFO'}
+                </button>
+              </div>
             </div>
+
+            <CastListColumn
+              actors={episode.actors.length > 0 ? episode.actors : show.actors}
+              label={episode.actors.length > 0 ? 'Episode Cast & Guest Stars' : 'Series Cast'}
+              emptyText="No cast credits found on this episode or series yet."
+              activeActor={activeActor}
+              onSelectActor={onSelectActor}
+            />
           </div>
         )}
 

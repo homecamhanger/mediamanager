@@ -14,11 +14,11 @@ import {
   Star,
   Subtitles,
   Trash2,
-  Users,
   X,
 } from 'lucide-react';
 import type { ArtworkKind, MovieRecord, NfoValidationReport } from '../../shared/types.js';
 import { api, formatBytes, getArtworkUrl } from '../lib/api.js';
+import { CastListColumn } from './CastListColumn.js';
 import { PosterImage } from './PosterImage.js';
 import { TechBadges } from './QualityBadges.js';
 import { RatingBadges } from './RatingBadges.js';
@@ -40,9 +40,11 @@ const ARTWORK_SLOTS: Array<{ kind: ArtworkKind; label: string; aspect: 'poster' 
 export const MovieDetailPanel: React.FC<{
   movieId: number;
   initialTab?: DetailTab;
+  activeActor?: string | null;
+  onSelectActor?: (actorName: string) => void;
   onUpdated: () => void;
   onClose?: () => void;
-}> = ({ movieId, initialTab, onUpdated, onClose }) => {
+}> = ({ movieId, initialTab, activeActor, onSelectActor, onUpdated, onClose }) => {
   const [movie, setMovie] = useState<MovieRecord | null>(null);
   const [tab, setTab] = useState<DetailTab>(initialTab ?? 'metadata');
   const [saving, setSaving] = useState(false);
@@ -377,32 +379,7 @@ export const MovieDetailPanel: React.FC<{
               </div>
             </div>
 
-            {/* Cast Column */}
-            <div className="xl:col-span-4 space-y-2">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                <Users className="w-3.5 h-3.5 text-sky-400" /> Cast ({movie.actors.length})
-              </div>
-              <div className="space-y-1.5 max-h-[460px] overflow-y-auto pr-1">
-                {movie.actors.length === 0 ? (
-                  <div className="text-xs text-slate-500 bg-slate-900/60 border border-slate-800 rounded-xl p-3">
-                    No cast scraped yet. Click “Scrape” to populate cast & crew.
-                  </div>
-                ) : (
-                  movie.actors.map((a, idx) => (
-                    <div
-                      key={`${a.name}-${idx}`}
-                      className="px-2.5 py-1.5 rounded-lg bg-slate-900/80 border border-slate-800 flex items-center justify-between gap-2"
-                    >
-                      <div className="min-w-0">
-                        <div className="text-xs font-semibold text-slate-100 truncate">{a.name}</div>
-                        <div className="text-[11px] text-slate-400 truncate">{a.role || 'Actor'}</div>
-                      </div>
-                      <span className="text-[10px] text-slate-500 shrink-0">#{a.order + 1}</span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
+            <CastListColumn actors={movie.actors} activeActor={activeActor} onSelectActor={onSelectActor} />
           </div>
         )}
 
