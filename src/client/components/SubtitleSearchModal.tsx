@@ -3,6 +3,7 @@ import { Check, Clock, Download, FileText, Hash, Languages, Search, Sparkles, X 
 import type { SubtitleCue, SubtitleFileRecord, SubtitleSearchResult } from '../../shared/types.js';
 import { api } from '../lib/api.js';
 import { useEscapeKey } from '../lib/useEscapeKey.js';
+import { FileDropZone } from './FileDropZone.js';
 
 const LANG_OPTIONS = [
   { code: 'en', label: 'English' },
@@ -149,6 +150,25 @@ export const SubtitleSearchModal: React.FC<{
               Forced Only
             </label>
           </div>
+
+          <FileDropZone
+            accept=".srt,.vtt,.ass,.ssa,.sub"
+            readAs="text"
+            compact
+            label="Or drop a local .srt / .vtt / .ass subtitle file here to attach it directly"
+            onFileLoaded={async ({ name, content }) => {
+              await api.uploadSubtitle({
+                mediaType,
+                mediaId,
+                fileName: name,
+                contentText: content,
+                language: selectedLangs[0] || 'en',
+                forced: forcedOnly || undefined,
+              });
+              onDownloaded();
+              onClose();
+            }}
+          />
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-2.5">

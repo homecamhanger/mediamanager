@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowLeft,
   Check,
   Code2,
@@ -16,10 +17,12 @@ import {
   Trash2,
   Users,
 } from 'lucide-react';
-import type { NfoValidationReport, TvEpisodeRecord, TvSeasonRecord, TvShowRecord } from '../../shared/types.js';
+import type { ActorEntry, NfoValidationReport, TvEpisodeRecord, TvSeasonRecord, TvShowRecord } from '../../shared/types.js';
 import { api, formatBytes, getArtworkUrl } from '../lib/api.js';
 import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 import { CastListColumn } from './CastListColumn.js';
+import { ChipInput } from './ChipInput.js';
+import { FileDropZone } from './FileDropZone.js';
 import { PosterImage } from './PosterImage.js';
 import { TechBadges } from './QualityBadges.js';
 import { SubtitleEditorModal, SubtitleSearchModal } from './SubtitleSearchModal.js';
@@ -41,7 +44,8 @@ export const EpisodeDetailPanel: React.FC<{
   onSelectActor?: (actorName: string) => void;
   onSelectShow: (showId: number, seasonNumber?: number | null) => void;
   onUpdated: () => void;
-}> = ({ showId, episodeId, initialTab, activeActor, onSelectActor, onSelectShow, onUpdated }) => {
+  onDeleted?: () => void;
+}> = ({ showId, episodeId, initialTab, activeActor, onSelectActor, onSelectShow, onUpdated, onDeleted }) => {
   const [show, setShow] = useState<TvShowRecord | null>(null);
   const [seasons, setSeasons] = useState<TvSeasonRecord[]>([]);
   const [episode, setEpisode] = useState<TvEpisodeRecord | null>(null);
@@ -51,6 +55,10 @@ export const EpisodeDetailPanel: React.FC<{
   const [nfoVal, setNfoVal] = useState<NfoValidationReport | null>(null);
   const [subSearchOpen, setSubSearchOpen] = useState(false);
   const [editSubId, setEditSubId] = useState<number | null>(null);
+  const [thumbUrlDraft, setThumbUrlDraft] = useState('');
+  const [artCacheKey, setArtCacheKey] = useState(0);
+  const [uploadSubLang, setUploadSubLang] = useState('en');
+  const [confirmDeleteMode, setConfirmDeleteMode] = useState<'db' | 'files' | null>(null);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -60,6 +68,8 @@ export const EpisodeDetailPanel: React.FC<{
     setSeasons(res.seasons);
     const ep = res.episodes.find((e) => e.id === episodeId) ?? null;
     setEpisode(ep);
+    setConfirmDeleteMode(null);
+    setArtCacheKey((k) => k + 1);
     if (ep) {
       setForm(ep);
       const nfo = await api.readNfo('episode', ep.id);
@@ -180,6 +190,48 @@ export const EpisodeDetailPanel: React.FC<{
     await load();
     onUpdated();
     notify('Episode & sidecars renamed cleanly');
+  };
+
+  const handleSetEpisodeThumb = async (url?: string, dataBase64?: string) => {
+    await api.setEpisodeArtwork(episode.id, url, dataBase64);
+    setThumbUrlDraft('');
+    await load();
+    onUpdated();
+    notify('Saved episode thumbnail');
+  };
+
+  const handleSetSeasonPoster = async (dataBase64: string) => {
+    if (!matchingSeason) return;
+    await api.setSeasonArtwork(matchingSeason.id, 'poster', undefined, dataBase64);
+    await load();
+    onUpdated();
+    notify(`Updated ${matchingSeason.name} poster`);
+  };
+
+  const handleSaveActors = async (actors: ActorEntry[]) => {
+    await api.updateEpisode(episode.id, { actors, writeNfo: true });
+    await load();
+    onUpdated();
+    notify(`Saved ${actors.length} episode cast member(s) & updated NFO`);
+  };
+
+  const handleUploadActorThumb = async (actorName: string, dataBase64: string) => {
+    const res = await api.uploadActorThumb({
+      mediaType: 'episode',
+      mediaId: episode.id,
+      actorName,
+      dataBase64,
+    });
+    notify(`Saved portrait to .actors for ${actorName}`);
+    return res.thumbPath;
+  };
+
+  const handleDeleteEpisode = async (deleteFiles: boolean) => {
+    await api.deleteEpisode(episode.id, deleteFiles);
+    setConfirmDeleteMode(null);
+    onUpdated();
+    if (onDeleted) onDeleted();
+    else onSelectShow(show.id, effSeason);
   };
 
   return (
@@ -325,8 +377,17 @@ export const EpisodeDetailPanel: React.FC<{
                     filePath={seasonOrShowPoster}
                     alt={`${show.title} Season ${effSeason}`}
                     aspect="poster"
+                    cacheKey={artCacheKey}
                     className="w-full shadow-xl"
                   />
+                  {matchingSeason && (
+                    <FileDropZone
+                      accept="image/png,image/jpeg,image/webp"
+                      label={`Upload Season ${effSeason} poster`}
+                      compact
+                      onFileLoaded={({ content }) => handleSetSeasonPoster(content)}
+                    />
+                  )}
                 </div>
               </div>
 
@@ -352,16 +413,18 @@ export const EpisodeDetailPanel: React.FC<{
                   />
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  <Field
-                    label="Directors (comma separated)"
-                    value={(form.directors ?? []).join(', ')}
-                    onChange={(v) => setForm({ ...form, directors: v.split(',').map((s) => s.trim()).filter(Boolean) })}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <ChipInput
+                    label="Directors"
+                    values={form.directors ?? []}
+                    onChange={(directors) => setForm({ ...form, directors })}
+                    accent="emerald"
                   />
-                  <Field
-                    label="Writers / Credits (comma separated)"
-                    value={(form.writers ?? []).join(', ')}
-                    onChange={(v) => setForm({ ...form, writers: v.split(',').map((s) => s.trim()).filter(Boolean) })}
+                  <ChipInput
+                    label="Writers / Credits"
+                    values={form.writers ?? []}
+                    onChange={(writers) => setForm({ ...form, writers })}
+                    accent="sky"
                   />
                 </div>
 
@@ -407,7 +470,32 @@ export const EpisodeDetailPanel: React.FC<{
                       {episode.thumbPath ? 'Present' : 'Fallback'}
                     </span>
                   </div>
-                  <PosterImage filePath={episode.thumbPath ?? show.artwork.fanart} alt={episode.title} aspect="fanart" />
+                  <PosterImage
+                    filePath={episode.thumbPath ?? show.artwork.fanart}
+                    alt={episode.title}
+                    aspect="fanart"
+                    cacheKey={artCacheKey}
+                  />
+                  <div className="flex gap-1.5">
+                    <input
+                      value={thumbUrlDraft}
+                      onChange={(e) => setThumbUrlDraft(e.target.value)}
+                      placeholder="URL or blank to generate"
+                      className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[11px] text-slate-200"
+                    />
+                    <button
+                      onClick={() => handleSetEpisodeThumb(thumbUrlDraft || undefined)}
+                      className="px-2 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/30 text-sky-300 text-[11px] font-semibold cursor-pointer shrink-0"
+                    >
+                      {thumbUrlDraft ? 'Fetch' : 'Generate'}
+                    </button>
+                  </div>
+                  <FileDropZone
+                    accept="image/png,image/jpeg,image/webp"
+                    label="Drop episode thumb or browse"
+                    compact
+                    onFileLoaded={({ content }) => handleSetEpisodeThumb(undefined, content)}
+                  />
                 </div>
 
                 {(
@@ -443,6 +531,8 @@ export const EpisodeDetailPanel: React.FC<{
             emptyText="No cast credits found on this episode or series yet."
             activeActor={activeActor}
             onSelectActor={onSelectActor}
+            onSaveActors={handleSaveActors}
+            onUploadActorThumb={handleUploadActorThumb}
           />
         )}
 
@@ -558,6 +648,40 @@ export const EpisodeDetailPanel: React.FC<{
                 </button>
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-[120px_1fr] gap-2 items-center">
+                <select
+                  value={uploadSubLang}
+                  onChange={(e) => setUploadSubLang(e.target.value)}
+                  className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-xs text-slate-200"
+                >
+                  <option value="en">English (en)</option>
+                  <option value="es">Spanish (es)</option>
+                  <option value="fr">French (fr)</option>
+                  <option value="de">German (de)</option>
+                  <option value="ja">Japanese (ja)</option>
+                  <option value="ko">Korean (ko)</option>
+                  <option value="zh">Chinese (zh)</option>
+                </select>
+                <FileDropZone
+                  accept=".srt,.vtt,.ass,.ssa,.sub"
+                  readAs="text"
+                  compact
+                  label="Drop local .srt / .vtt / .ass subtitle file or browse"
+                  onFileLoaded={async ({ name, content }) => {
+                    await api.uploadSubtitle({
+                      mediaType: 'episode',
+                      mediaId: episode.id,
+                      fileName: name,
+                      contentText: content,
+                      language: uploadSubLang,
+                    });
+                    await load();
+                    onUpdated();
+                    notify(`Uploaded subtitle ${name}`);
+                  }}
+                />
+              </div>
+
               {episode.subtitles.length === 0 ? (
                 <div className="p-5 rounded-xl border border-dashed border-slate-700 text-center text-xs text-slate-400">
                   No subtitles attached to this episode yet.
@@ -598,6 +722,54 @@ export const EpisodeDetailPanel: React.FC<{
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+            </div>
+
+            {/* Safe Library / Disk Removal */}
+            <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 flex flex-wrap items-center justify-between gap-2">
+              <span className="text-[11px] text-slate-400">
+                Remove this episode from KodiVault library or delete video + sidecar files from disk.
+              </span>
+              {confirmDeleteMode ? (
+                <div className="flex items-center gap-2 bg-rose-500/15 border border-rose-500/40 rounded-lg px-3 py-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                  <span className="text-[11px] text-rose-200 font-semibold">
+                    {confirmDeleteMode === 'files'
+                      ? 'Delete episode video, NFO, thumb & subs from disk?'
+                      : 'Remove this episode from KodiVault DB?'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void handleDeleteEpisode(confirmDeleteMode === 'files')}
+                    className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-bold cursor-pointer"
+                  >
+                    Confirm
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteMode(null)}
+                    className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteMode('db')}
+                    className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold cursor-pointer"
+                  >
+                    Remove from Library
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteMode('files')}
+                    className="px-2.5 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Delete Files from Disk
+                  </button>
                 </div>
               )}
             </div>

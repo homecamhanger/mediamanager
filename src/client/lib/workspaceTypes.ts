@@ -1,4 +1,4 @@
-import type { TvEpisodeRecord, TvSeasonRecord, TvShowRecord } from '../../shared/types.js';
+import type { MissingEpisodeRecord, TvEpisodeRecord, TvSeasonRecord, TvShowRecord } from '../../shared/types.js';
 
 export type LeftLibraryTab = 'movies' | 'tvshows' | 'sets';
 
@@ -9,7 +9,7 @@ export type RibbonTool =
   | 'scrapers'
   | 'settings';
 
-export type InspectorFocusTab = 'nfo' | 'subtitles' | 'artwork';
+export type InspectorFocusTab = 'nfo' | 'subtitles' | 'artwork' | 'cast';
 
 export type SelectedMedia =
   | { kind: 'movie'; movieId: number; focusTab?: InspectorFocusTab }
@@ -22,4 +22,5 @@ export interface ShowTreeNode {
   show: TvShowRecord;
   seasons: TvSeasonRecord[];
   episodes: TvEpisodeRecord[];
+  missingEpisodes?: MissingEpisodeRecord[];
 }

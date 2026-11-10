@@ -628,6 +628,16 @@ export class ScraperEngine {
       artwork[kind] = targetPath;
     }
 
+    const episodeGuide = (bundle.episodes ?? []).map((ep) => ({
+      seasonNumber: ep.seasonNumber,
+      episodeNumber: ep.episodeNumber,
+      title: ep.title,
+      aired: ep.aired ?? null,
+      plot: ep.plot ?? '',
+      runtimeMinutes: ep.runtimeMinutes ?? null,
+      thumbUrl: ep.thumbUrl,
+    }));
+
     const updatedShow = this.db.updateTvShow(showId, {
       scraped: true,
       scrapedSource: bundle.sourcesUsed.join(', '),
@@ -643,6 +653,7 @@ export class ScraperEngine {
       genres: bundle.genres,
       tags: bundle.tags,
       actors: bundle.actors,
+      episodeGuide,
       uniqueIds: { ...show.uniqueIds, ...bundle.uniqueIds },
       ratings: bundle.ratings,
       artwork,

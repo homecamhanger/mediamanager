@@ -1,11 +1,21 @@
 import { Router } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { ArtworkKind, DashboardSummary, LibraryAuditReport, MovieRecord } from '../../shared/types.js';
-import { DEFAULT_PREFERENCES, MediaDatabase } from '../db/database.js';
+import type {
+  ArtworkKind,
+  DashboardSummary,
+  LibraryAuditReport,
+  MissingEpisodeRecord,
+  MovieRecord,
+} from '../../shared/types.js';
+import { computeMissingEpisodesFromGuide, DEFAULT_PREFERENCES, MediaDatabase } from '../db/database.js';
 import { KodiClient } from '../kodi/kodiClient.js';
 import { serializeEpisodeNfo, serializeTvShowNfo, validateKodiNfoXml } from '../nfo/kodiNfo.js';
-import { saveArtworkToDisk } from '../scrapers/artworkRenderer.js';
+import {
+  saveActorThumbToDisk,
+  saveArtworkToDisk,
+  saveUploadedArtworkToDisk,
+} from '../scrapers/artworkRenderer.js';
 import { ScraperEngine } from '../scrapers/scraperEngine.js';
 
 export function createLibraryRouter(db: MediaDatabase): Router {
@@ -117,7 +127,7 @@ export function createLibraryRouter(db: MediaDatabase): Router {
 
   router.post('/movies/:id/artwork', async (req, res) => {
     const id = Number(req.params.id);
-    const { kind, url } = req.body as { kind: ArtworkKind; url?: string };
+    const { kind, url, dataBase64 } = req.body as { kind: ArtworkKind; url?: string; dataBase64?: string };
     const movie = db.getMovie(id);
     if (!movie) return res.status(404).json({ error: 'Movie not found' });
 
@@ -128,19 +138,95 @@ export function createLibraryRouter(db: MediaDatabase): Router {
     const ext = kind === 'clearlogo' || kind === 'clearart' || kind === 'disc' ? '.png' : '.jpg';
     const targetPath = path.join(movie.folderPath, artNaming === 'filename' ? `${base}-${kind}${ext}` : `${kind}${ext}`);
 
-    const defaultRating = movie.ratings.find((r) => r.isDefault)?.value ?? movie.ratings[0]?.value ?? null;
-    await saveArtworkToDisk(targetPath, url, {
-      kind,
-      title: movie.title,
-      year: movie.year,
-      tagline: movie.tagline,
-      genres: movie.genres,
-      rating: defaultRating,
-    });
+    try {
+      if (dataBase64) {
+        saveUploadedArtworkToDisk(targetPath, dataBase64);
+      } else {
+        const defaultRating = movie.ratings.find((r) => r.isDefault)?.value ?? movie.ratings[0]?.value ?? null;
+        await saveArtworkToDisk(targetPath, url, {
+          kind,
+          title: movie.title,
+          year: movie.year,
+          tagline: movie.tagline,
+          genres: movie.genres,
+          rating: defaultRating,
+        });
+      }
+    } catch (err) {
+      return res.status(400).json({ error: (err as Error).message });
+    }
 
     const updated = db.updateMovie(id, { artwork: { ...movie.artwork, [kind]: targetPath } });
     db.logActivity('scrape', 'Update Artwork', `Saved ${kind} artwork for "${movie.title}"`, 'success');
     res.json({ movie: updated });
+  });
+
+  router.post('/movies/:id/edition', async (req, res) => {
+    const id = Number(req.params.id);
+    const movie = db.getMovie(id);
+    if (!movie) return res.status(404).json({ error: 'Movie not found' });
+    const edition = String((req.body as { edition?: string })?.edition ?? '').trim();
+    const nextParsed = {
+      ...movie.parsedInfo,
+      edition: edition || null,
+    };
+    const updated = db.updateMovie(id, { parsedInfo: nextParsed });
+    db.logActivity(
+      'scan',
+      'Tag Movie Edition',
+      edition ? `Tagged "${movie.title}" as "${edition}"` : `Cleared edition tag for "${movie.title}"`,
+      'info'
+    );
+    res.json({ movie: updated });
+  });
+
+  router.delete('/movies/:id', (req, res) => {
+    const id = Number(req.params.id);
+    const movie = db.getMovie(id);
+    if (!movie) return res.status(404).json({ error: 'Movie not found' });
+
+    const deleteFiles = req.query.deleteFiles === 'true' || req.body?.deleteFiles === true;
+    const removedPaths: string[] = [];
+
+    if (deleteFiles) {
+      const source = db.getSource(movie.sourceId);
+      const sourceRoot = source ? path.resolve(source.path) : null;
+      const isSafePath = (p: string | null | undefined) => {
+        if (!p) return false;
+        const resolved = path.resolve(p);
+        if (sourceRoot) return resolved.startsWith(sourceRoot + path.sep);
+        return resolved.startsWith(path.resolve(movie.folderPath) + path.sep) || resolved === path.resolve(movie.filePath);
+      };
+
+      const siblingsInSameFolder = db
+        .listMovies()
+        .filter((m) => m.id !== movie.id && path.resolve(m.folderPath) === path.resolve(movie.folderPath));
+
+      const candidates = [movie.filePath, movie.nfoPath, ...movie.subtitles.map((s) => s.filePath)];
+      if (siblingsInSameFolder.length === 0) {
+        candidates.push(...Object.values(movie.artwork));
+      }
+
+      for (const p of candidates) {
+        if (p && isSafePath(p) && fs.existsSync(p)) {
+          try {
+            fs.unlinkSync(p);
+            removedPaths.push(p);
+          } catch {
+            // ignore unlink errors on read-only paths
+          }
+        }
+      }
+    }
+
+    db.deleteMovie(id);
+    db.logActivity(
+      'scan',
+      deleteFiles ? 'Delete Movie & Files' : 'Remove Movie from Library',
+      `${deleteFiles ? 'Deleted files and removed' : 'Removed'} "${movie.title}"`,
+      deleteFiles ? 'warning' : 'info'
+    );
+    res.json({ ok: true, deletedFiles: deleteFiles, removedPaths });
   });
 
   router.post('/movies/batch', async (req, res) => {
@@ -212,11 +298,23 @@ export function createLibraryRouter(db: MediaDatabase): Router {
   // ---- TV Shows & Episodes ----
   router.get('/shows/tree', (_req, res) => {
     const shows = db.listTvShows();
-    const tree = shows.map((show) => ({
-      show,
-      seasons: db.listSeasonsForShow(show.id),
-      episodes: db.listEpisodesForShow(show.id),
-    }));
+    const tree = shows.map((show) => {
+      const seasons = db.listSeasonsForShow(show.id);
+      const episodes = db.listEpisodesForShow(show.id);
+      const missingEpisodes = computeMissingEpisodesFromGuide(
+        show.id,
+        show.title,
+        show.episodeGuide ?? [],
+        episodes,
+        seasons
+      );
+      return {
+        show,
+        seasons,
+        episodes,
+        missingEpisodes,
+      };
+    });
     res.json({ tree });
   });
 
@@ -230,7 +328,14 @@ export function createLibraryRouter(db: MediaDatabase): Router {
     if (!show) return res.status(404).json({ error: 'TV Show not found' });
     const seasons = db.listSeasonsForShow(showId);
     const episodes = db.listEpisodesForShow(showId);
-    res.json({ show, seasons, episodes });
+    const missingEpisodes = computeMissingEpisodesFromGuide(
+      show.id,
+      show.title,
+      show.episodeGuide ?? [],
+      episodes,
+      seasons
+    );
+    res.json({ show, seasons, episodes, missingEpisodes });
   });
 
   router.patch('/shows/:id', (req, res) => {
@@ -250,7 +355,7 @@ export function createLibraryRouter(db: MediaDatabase): Router {
 
   router.post('/shows/:id/artwork', async (req, res) => {
     const showId = Number(req.params.id);
-    const { kind, url } = req.body as { kind: ArtworkKind; url?: string };
+    const { kind, url, dataBase64 } = req.body as { kind: ArtworkKind; url?: string; dataBase64?: string };
     const show = db.getTvShow(showId);
     if (!show) return res.status(404).json({ error: 'TV Show not found' });
 
@@ -258,18 +363,65 @@ export function createLibraryRouter(db: MediaDatabase): Router {
     const targetPath = path.join(show.folderPath, `${kind}${ext}`);
     const defaultRating = show.ratings.find((r) => r.isDefault)?.value ?? show.ratings[0]?.value ?? null;
 
-    await saveArtworkToDisk(targetPath, url, {
-      kind,
-      title: show.title,
-      year: show.year,
-      tagline: show.status,
-      genres: show.genres,
-      rating: defaultRating,
-    });
+    try {
+      if (dataBase64) {
+        saveUploadedArtworkToDisk(targetPath, dataBase64);
+      } else {
+        await saveArtworkToDisk(targetPath, url, {
+          kind,
+          title: show.title,
+          year: show.year,
+          tagline: show.status,
+          genres: show.genres,
+          rating: defaultRating,
+        });
+      }
+    } catch (err) {
+      return res.status(400).json({ error: (err as Error).message });
+    }
 
     const updated = db.updateTvShow(showId, { artwork: { ...show.artwork, [kind]: targetPath } });
     db.logActivity('scrape', 'Update Artwork', `Saved ${kind} artwork for "${show.title}"`, 'success');
     res.json({ show: updated });
+  });
+
+  router.post('/seasons/:id/artwork', async (req, res) => {
+    const seasonId = Number(req.params.id);
+    const { kind = 'poster', url, dataBase64 } = req.body as {
+      kind?: 'poster' | 'banner';
+      url?: string;
+      dataBase64?: string;
+    };
+    const season = db.getTvSeasonById(seasonId);
+    if (!season) return res.status(404).json({ error: 'Season not found' });
+    const show = db.getTvShow(season.showId);
+    if (!show) return res.status(404).json({ error: 'TV Show not found' });
+
+    const prefix =
+      season.seasonNumber === 0 ? 'season-specials' : `season${String(season.seasonNumber).padStart(2, '0')}`;
+    const fileName = kind === 'banner' ? `${prefix}-banner.jpg` : `${prefix}-poster.jpg`;
+    const targetPath = path.join(show.folderPath, fileName);
+
+    try {
+      if (dataBase64) {
+        saveUploadedArtworkToDisk(targetPath, dataBase64);
+      } else {
+        await saveArtworkToDisk(targetPath, url, {
+          kind: kind === 'banner' ? 'banner' : 'poster',
+          title: show.title,
+          subtitle: season.name,
+          year: show.year,
+          genres: show.genres,
+          seasonNumber: season.seasonNumber,
+        });
+      }
+    } catch (err) {
+      return res.status(400).json({ error: (err as Error).message });
+    }
+
+    const updated = db.updateTvSeasonArtwork(seasonId, kind === 'banner' ? 'banner' : 'poster', targetPath);
+    db.logActivity('scrape', 'Update Season Artwork', `Saved ${kind} for "${show.title}" ${season.name}`, 'success');
+    res.json({ season: updated });
   });
 
   router.post('/shows/:id/episode-order', (req, res) => {
@@ -378,6 +530,118 @@ export function createLibraryRouter(db: MediaDatabase): Router {
       db.updateTvEpisode(epId, { nfoPath, hasNfo: true, nfoValid: rep.valid, nfoWarnings: rep.warnings });
     }
     res.json({ episode: db.getTvEpisode(epId) });
+  });
+
+  router.post('/episodes/:id/artwork', async (req, res) => {
+    const epId = Number(req.params.id);
+    const { url, dataBase64 } = (req.body ?? {}) as { url?: string; dataBase64?: string };
+    const ep = db.getTvEpisode(epId);
+    if (!ep) return res.status(404).json({ error: 'Episode not found' });
+    const show = db.getTvShow(ep.showId);
+
+    const base = path.basename(ep.filePath, path.extname(ep.filePath));
+    const targetPath = path.join(ep.folderPath, `${base}-thumb.jpg`);
+    try {
+      if (dataBase64) {
+        saveUploadedArtworkToDisk(targetPath, dataBase64);
+      } else {
+        await saveArtworkToDisk(targetPath, url, {
+          kind: 'thumb',
+          title: ep.title,
+          subtitle: show?.title ?? ep.showTitle,
+          episodeCode: `S${String(ep.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')}`,
+          genres: show?.genres ?? [],
+          rating: ep.ratings[0]?.value ?? null,
+        });
+      }
+    } catch (err) {
+      return res.status(400).json({ error: (err as Error).message });
+    }
+
+    const updated = db.updateTvEpisode(epId, { thumbPath: targetPath });
+    db.logActivity(
+      'scrape',
+      'Update Episode Thumb',
+      `Saved thumbnail for ${ep.showTitle || 'Series'} S${String(ep.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')}`,
+      'success'
+    );
+    res.json({ episode: updated });
+  });
+
+  router.delete('/episodes/:id', (req, res) => {
+    const epId = Number(req.params.id);
+    const ep = db.getTvEpisode(epId);
+    if (!ep) return res.status(404).json({ error: 'Episode not found' });
+
+    const deleteFiles = req.query.deleteFiles === 'true' || req.body?.deleteFiles === true;
+    const removedPaths: string[] = [];
+
+    if (deleteFiles) {
+      const show = db.getTvShow(ep.showId);
+      const source = show ? db.getSource(show.sourceId) : null;
+      const sourceRoot = source ? path.resolve(source.path) : path.resolve(ep.folderPath);
+      const isSafe = (p: string | null | undefined) => {
+        if (!p) return false;
+        const r = path.resolve(p);
+        return r.startsWith(sourceRoot + path.sep) || r === path.resolve(ep.filePath);
+      };
+      const candidates = [ep.filePath, ep.nfoPath, ep.thumbPath, ...ep.subtitles.map((s) => s.filePath)];
+      for (const p of candidates) {
+        if (p && isSafe(p) && fs.existsSync(p)) {
+          try {
+            fs.unlinkSync(p);
+            removedPaths.push(p);
+          } catch {
+            // ignore unlink errors
+          }
+        }
+      }
+    }
+
+    db.deleteTvEpisode(epId);
+    db.logActivity(
+      'scan',
+      deleteFiles ? 'Delete Episode & Files' : 'Remove Episode from Library',
+      `${deleteFiles ? 'Deleted files and removed' : 'Removed'} S${String(ep.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')} (${ep.title})`,
+      deleteFiles ? 'warning' : 'info'
+    );
+    res.json({ ok: true, deletedFiles: deleteFiles, removedPaths });
+  });
+
+  router.post('/actors/thumb', async (req, res) => {
+    const { mediaType, mediaId, actorName, url, dataBase64 } = (req.body ?? {}) as {
+      mediaType: 'movie' | 'tvshow' | 'episode';
+      mediaId: number;
+      actorName: string;
+      url?: string;
+      dataBase64?: string;
+    };
+    if (!actorName?.trim() || !mediaId || !mediaType) {
+      return res.status(400).json({ error: 'mediaType, mediaId, and actorName are required' });
+    }
+
+    let folderPath = '';
+    if (mediaType === 'movie') {
+      const m = db.getMovie(Number(mediaId));
+      if (!m) return res.status(404).json({ error: 'Movie not found' });
+      folderPath = m.folderPath;
+    } else if (mediaType === 'tvshow') {
+      const s = db.getTvShow(Number(mediaId));
+      if (!s) return res.status(404).json({ error: 'TV Show not found' });
+      folderPath = s.folderPath;
+    } else {
+      const ep = db.getTvEpisode(Number(mediaId));
+      if (!ep) return res.status(404).json({ error: 'Episode not found' });
+      const s = db.getTvShow(ep.showId);
+      folderPath = s?.folderPath ?? ep.folderPath;
+    }
+
+    try {
+      const thumbPath = await saveActorThumbToDisk(folderPath, actorName, { url, dataBase64 });
+      res.json({ thumbPath });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
   });
 
   router.post('/episodes/batch', (req, res) => {
@@ -507,10 +771,16 @@ export function buildAuditReport(db: MediaDatabase): LibraryAuditReport {
     }
   }
 
-  // Duplicate Movies (by IMDb ID or normalized title + year)
+  // Duplicate Movies (by IMDb ID or normalized title + year, keeping distinct tagged editions separate)
   const movieGroups = new Map<string, { reason: string; items: MovieRecord[] }>();
   for (const m of movies) {
-    const key = m.uniqueIds.imdb ? `imdb:${m.uniqueIds.imdb}` : `title:${m.title.toLowerCase().trim()}::${m.year ?? ''}`;
+    const editionSuffix = m.parsedInfo.edition?.trim()
+      ? `::edition:${m.parsedInfo.edition.trim().toLowerCase()}`
+      : '';
+    const baseKey = m.uniqueIds.imdb
+      ? `imdb:${m.uniqueIds.imdb}`
+      : `title:${m.title.toLowerCase().trim()}::${m.year ?? ''}`;
+    const key = `${baseKey}${editionSuffix}`;
     const reason = m.uniqueIds.imdb ? `Same IMDb ID (${m.uniqueIds.imdb})` : 'Same Title & Year';
     const g = movieGroups.get(key) ?? { reason, items: [] };
     g.items.push(m);
@@ -584,6 +854,16 @@ export function buildAuditReport(db: MediaDatabase): LibraryAuditReport {
     }
   }
 
+  const missingEpisodes: MissingEpisodeRecord[] = [];
+  for (const show of shows) {
+    if (!show.episodeGuide?.length) continue;
+    const showSeasons = db.listSeasonsForShow(show.id);
+    const showEpisodes = episodes.filter((e) => e.showId === show.id);
+    missingEpisodes.push(
+      ...computeMissingEpisodesFromGuide(show.id, show.title, show.episodeGuide, showEpisodes, showSeasons)
+    );
+  }
+
   // Compute health score (0-100)
   const totalItems = Math.max(1, movies.length + shows.length + episodes.length);
   const checks = [
@@ -615,6 +895,7 @@ export function buildAuditReport(db: MediaDatabase): LibraryAuditReport {
       duplicateEpisodes,
       invalidNfoFiles,
       lowResolutionItems,
+      missingEpisodes,
     },
   };
 }

@@ -25,7 +25,7 @@ export function createMediaRouter(db: MediaDatabase): Router {
       return res.status(404).send('Not found');
     }
     res.setHeader('Cache-Control', 'no-cache');
-    return res.sendFile(resolved);
+    return res.sendFile(resolved, { dotfiles: 'allow' });
   });
 
   router.get('/artwork/render', (req, res) => {

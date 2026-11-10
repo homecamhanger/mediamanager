@@ -66,6 +66,37 @@ export function createSubtitlesRouter(db: MediaDatabase): Router {
     }
   });
 
+  router.post('/upload', (req, res) => {
+    try {
+      const { mediaType, mediaId, fileName, contentText, contentBase64, language, forced, sdh } = req.body as {
+        mediaType: 'movie' | 'episode';
+        mediaId: number;
+        fileName: string;
+        contentText?: string;
+        contentBase64?: string;
+        language?: string;
+        forced?: boolean;
+        sdh?: boolean;
+      };
+      if (!mediaType || !mediaId || !fileName) {
+        return res.status(400).json({ error: 'mediaType, mediaId, and fileName are required' });
+      }
+      const saved = engine.uploadSubtitle({
+        mediaType,
+        mediaId: Number(mediaId),
+        fileName,
+        contentText,
+        contentBase64,
+        language,
+        forced,
+        sdh,
+      });
+      res.json({ subtitle: saved });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
   router.post('/batch-missing', async (req, res) => {
     const prefs = db.getSetting('preferences', DEFAULT_PREFERENCES);
     const {

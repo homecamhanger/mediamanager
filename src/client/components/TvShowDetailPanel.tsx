@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  AlertCircle,
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  CalendarClock,
   Check,
   Code2,
   Eye,
@@ -20,10 +22,20 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import type { ArtworkKind, NfoValidationReport, TvEpisodeRecord, TvSeasonRecord, TvShowRecord } from '../../shared/types.js';
+import type {
+  ActorEntry,
+  ArtworkKind,
+  MissingEpisodeRecord,
+  NfoValidationReport,
+  TvEpisodeRecord,
+  TvSeasonRecord,
+  TvShowRecord,
+} from '../../shared/types.js';
 import { api, getArtworkUrl } from '../lib/api.js';
 import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 import { CastListColumn } from './CastListColumn.js';
+import { ChipInput } from './ChipInput.js';
+import { FileDropZone } from './FileDropZone.js';
 import { PosterImage } from './PosterImage.js';
 import { TechBadges } from './QualityBadges.js';
 import { RatingBadges } from './RatingBadges.js';
@@ -75,6 +87,8 @@ export const TvShowDetailPanel: React.FC<{
   const [show, setShow] = useState<TvShowRecord | null>(null);
   const [seasons, setSeasons] = useState<TvSeasonRecord[]>([]);
   const [episodes, setEpisodes] = useState<TvEpisodeRecord[]>([]);
+  const [missingEpisodes, setMissingEpisodes] = useState<MissingEpisodeRecord[]>([]);
+  const [showMissingOnly, setShowMissingOnly] = useState(false);
   const [activeSeason, setActiveSeason] = useState<number | 'all'>(selectedSeason ?? 'all');
   const [tab, setTab] = useState<TvTab>(resolveTvTab(initialTab));
   const [form, setForm] = useState<Partial<TvShowRecord>>({});
@@ -99,6 +113,7 @@ export const TvShowDetailPanel: React.FC<{
     setForm(res.show);
     setSeasons(res.seasons);
     setEpisodes(res.episodes);
+    setMissingEpisodes(res.missingEpisodes ?? []);
     setArtCacheKey((k) => k + 1);
     const nfo = await api.readNfo('tvshow', showId);
     setNfoXml(nfo.xml);
@@ -137,6 +152,12 @@ export const TvShowDetailPanel: React.FC<{
         : episodes.filter((e) => (e.displaySeason ?? e.seasonNumber) === activeSeason);
     return sortEpisodesEffective(filtered);
   }, [episodes, activeSeason]);
+
+  const visibleMissing = useMemo(() => {
+    return activeSeason === 'all'
+      ? missingEpisodes
+      : missingEpisodes.filter((m) => m.seasonNumber === activeSeason);
+  }, [missingEpisodes, activeSeason]);
 
   useEffect(() => {
     if (activeSeason !== 'all') {
@@ -326,11 +347,36 @@ export const TvShowDetailPanel: React.FC<{
     }
   };
 
-  const handlePickArtwork = async (kind: ArtworkKind, url?: string) => {
-    await api.setShowArtwork(show.id, kind, url);
+  const handlePickArtwork = async (kind: ArtworkKind, url?: string, dataBase64?: string) => {
+    await api.setShowArtwork(show.id, kind, url, dataBase64);
     await load();
     onUpdated();
     notify(`Updated ${kind} artwork`);
+  };
+
+  const handleUploadSeasonPoster = async (seasonId: number, seasonName: string, dataBase64: string) => {
+    await api.setSeasonArtwork(seasonId, 'poster', undefined, dataBase64);
+    await load();
+    onUpdated();
+    notify(`Updated ${seasonName} poster`);
+  };
+
+  const handleSaveActors = async (actors: ActorEntry[]) => {
+    await api.updateShow(show.id, { actors, writeNfo: true });
+    await load();
+    onUpdated();
+    notify(`Saved ${actors.length} cast member(s) & updated tvshow.nfo`);
+  };
+
+  const handleUploadActorThumb = async (actorName: string, dataBase64: string) => {
+    const res = await api.uploadActorThumb({
+      mediaType: 'tvshow',
+      mediaId: show.id,
+      actorName,
+      dataBase64,
+    });
+    notify(`Saved portrait to .actors for ${actorName}`);
+    return res.thumbPath;
   };
 
   const fanartUrl = getArtworkUrl(show.artwork.fanart, artCacheKey);
@@ -394,6 +440,11 @@ export const TvShowDetailPanel: React.FC<{
                 <span>
                   {show.seasonsCount} Seasons · {show.episodesCount} Episodes ({show.watchedEpisodesCount} watched)
                 </span>
+                {missingEpisodes.length > 0 && (
+                  <span className="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300 text-[11px] font-semibold inline-flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" /> {missingEpisodes.length} Missing Aired
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -474,27 +525,48 @@ export const TvShowDetailPanel: React.FC<{
                     activeSeason === 'all' ? 'bg-sky-500 text-white' : 'bg-slate-900 border border-slate-800 text-slate-300'
                   }`}
                 >
-                  All Seasons ({episodes.length})
+                  All Seasons ({episodes.length}
+                  {missingEpisodes.length > 0 ? ` · ${missingEpisodes.length} missing` : ''})
                 </button>
-                {seasons.map((s) => (
-                  <button
-                    key={s.id}
-                    onClick={() => {
-                      setActiveSeason(s.seasonNumber);
-                      onSelectSeason?.(s.seasonNumber);
-                    }}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer ${
-                      activeSeason === s.seasonNumber
-                        ? 'bg-sky-500 text-white'
-                        : 'bg-slate-900 border border-slate-800 text-slate-300'
-                    }`}
-                  >
-                    {s.name} ({episodes.filter((e) => (e.displaySeason ?? e.seasonNumber) === s.seasonNumber).length})
-                  </button>
-                ))}
+                {seasons.map((s) => {
+                  const seasonLocalCount = episodes.filter(
+                    (e) => (e.displaySeason ?? e.seasonNumber) === s.seasonNumber
+                  ).length;
+                  const seasonMissingCount = missingEpisodes.filter((m) => m.seasonNumber === s.seasonNumber).length;
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => {
+                        setActiveSeason(s.seasonNumber);
+                        onSelectSeason?.(s.seasonNumber);
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer ${
+                        activeSeason === s.seasonNumber
+                          ? 'bg-sky-500 text-white'
+                          : 'bg-slate-900 border border-slate-800 text-slate-300'
+                      }`}
+                    >
+                      {s.name} ({seasonLocalCount}
+                      {seasonMissingCount > 0 ? `/${seasonLocalCount + seasonMissingCount}` : ''})
+                    </button>
+                  );
+                })}
               </div>
 
               <div className="flex items-center gap-1.5">
+                {visibleMissing.length > 0 && (
+                  <button
+                    onClick={() => setShowMissingOnly((v) => !v)}
+                    className={`px-2 py-1 rounded-md border text-[11px] font-semibold cursor-pointer inline-flex items-center gap-1 ${
+                      showMissingOnly
+                        ? 'bg-amber-500/20 border-amber-500/40 text-amber-200'
+                        : 'bg-slate-900 border-slate-800 hover:border-amber-500/40 text-amber-300'
+                    }`}
+                  >
+                    <CalendarClock className="w-3 h-3" />
+                    {showMissingOnly ? `Show Local (${visibleEpisodes.length})` : `Missing Only (${visibleMissing.length})`}
+                  </button>
+                )}
                 <button
                   onClick={() => handleMarkSeasonWatched(true)}
                   disabled={busy}
@@ -513,8 +585,9 @@ export const TvShowDetailPanel: React.FC<{
             </div>
 
             {/* Dense Episode List */}
-            <div className="rounded-xl border border-slate-800 divide-y divide-slate-800/70 bg-slate-900/50 overflow-hidden">
-              {visibleEpisodes.map((ep) => {
+            {!showMissingOnly && (
+              <div className="rounded-xl border border-slate-800 divide-y divide-slate-800/70 bg-slate-900/50 overflow-hidden">
+                {visibleEpisodes.map((ep) => {
                 const effSeason = ep.displaySeason ?? ep.seasonNumber;
                 const effEp = ep.displayEpisode ?? ep.episodeNumber;
                 const hasCustomOrder =
@@ -592,7 +665,44 @@ export const TvShowDetailPanel: React.FC<{
                   </div>
                 );
               })}
-            </div>
+              </div>
+            )}
+
+            {/* Missing Aired Episodes Completeness Panel */}
+            {visibleMissing.length > 0 && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 overflow-hidden">
+                <div className="px-3.5 py-2 border-b border-amber-500/20 flex items-center justify-between gap-2 bg-amber-500/10">
+                  <div className="text-xs font-bold text-amber-200 flex items-center gap-1.5">
+                    <CalendarClock className="w-3.5 h-3.5 text-amber-400" />
+                    Missing Aired Episodes ({visibleMissing.length})
+                  </div>
+                  <span className="text-[11px] text-amber-300/80">
+                    Compared against scraped series episode guide
+                  </span>
+                </div>
+                <div className="divide-y divide-amber-500/10">
+                  {visibleMissing.map((m) => (
+                    <div key={m.code} className="px-3.5 py-2 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <span className="px-2 py-0.5 rounded font-mono text-xs font-bold bg-amber-500/15 border border-amber-500/30 text-amber-300 shrink-0">
+                          {m.code}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-semibold text-slate-200 truncate">{m.title}</span>
+                            {m.aired && <span className="text-[11px] text-slate-500 shrink-0">{m.aired}</span>}
+                          </div>
+                          {m.plot && <div className="text-[11px] text-slate-400 truncate mt-0.5">{m.plot}</div>}
+                        </div>
+                      </div>
+                      <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-[10px] font-bold uppercase text-amber-300 shrink-0">
+                        Missing File
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -798,6 +908,12 @@ export const TvShowDetailPanel: React.FC<{
                       {customArtUrl.poster ? 'Fetch' : 'Generate'}
                     </button>
                   </div>
+                  <FileDropZone
+                    accept="image/png,image/jpeg,image/webp"
+                    label="Drop poster image or browse"
+                    compact
+                    onFileLoaded={({ content }) => handlePickArtwork('poster', undefined, content)}
+                  />
                 </div>
               </div>
 
@@ -834,16 +950,20 @@ export const TvShowDetailPanel: React.FC<{
                   />
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  <Field
-                    label="Genres (comma separated)"
-                    value={(form.genres ?? []).join(', ')}
-                    onChange={(v) => setForm({ ...form, genres: v.split(',').map((s) => s.trim()).filter(Boolean) })}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <ChipInput
+                    label="Genres"
+                    values={form.genres ?? []}
+                    onChange={(genres) => setForm({ ...form, genres })}
+                    suggestions={['Science Fiction', 'Drama', 'Mystery', 'Thriller', 'Action', 'Animation']}
+                    accent="sky"
                   />
-                  <Field
-                    label="Tags (comma separated)"
-                    value={(form.tags ?? []).join(', ')}
-                    onChange={(v) => setForm({ ...form, tags: v.split(',').map((s) => s.trim()).filter(Boolean) })}
+                  <ChipInput
+                    label="Tags"
+                    values={form.tags ?? []}
+                    onChange={(tags) => setForm({ ...form, tags })}
+                    suggestions={['4K', 'Continuing', 'Mini-Series', 'Favorites']}
+                    accent="indigo"
                   />
                 </div>
 
@@ -930,6 +1050,12 @@ export const TvShowDetailPanel: React.FC<{
                             {customArtUrl[slot.kind] ? 'Fetch' : 'Generate'}
                           </button>
                         </div>
+                        <FileDropZone
+                          accept="image/png,image/jpeg,image/webp"
+                          label="Drop image or browse local file"
+                          compact
+                          onFileLoaded={({ content }) => handlePickArtwork(slot.kind, undefined, content)}
+                        />
                       </div>
                     );
                   })}
@@ -939,11 +1065,17 @@ export const TvShowDetailPanel: React.FC<{
               {seasons.length > 0 && (
                 <div>
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2.5">Season Posters</h4>
-                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
                     {seasons.map((s) => (
-                      <div key={s.id} className="space-y-1">
+                      <div key={s.id} className="space-y-1.5 p-2 rounded-xl bg-slate-900/60 border border-slate-800">
                         <PosterImage filePath={s.posterPath ?? show.artwork.poster} alt={s.name} cacheKey={artCacheKey} />
                         <div className="text-[11px] font-semibold text-center text-slate-300">{s.name}</div>
+                        <FileDropZone
+                          accept="image/png,image/jpeg,image/webp"
+                          label="Upload poster"
+                          compact
+                          onFileLoaded={({ content }) => handleUploadSeasonPoster(s.id, s.name, content)}
+                        />
                       </div>
                     ))}
                   </div>
@@ -954,7 +1086,14 @@ export const TvShowDetailPanel: React.FC<{
         )}
 
         {tab === 'cast' && (
-          <CastListColumn actors={show.actors} label="Series Cast" activeActor={activeActor} onSelectActor={onSelectActor} />
+          <CastListColumn
+            actors={show.actors}
+            label="Series Cast"
+            activeActor={activeActor}
+            onSelectActor={onSelectActor}
+            onSaveActors={handleSaveActors}
+            onUploadActorThumb={handleUploadActorThumb}
+          />
         )}
 
         {tab === 'nfo' && (

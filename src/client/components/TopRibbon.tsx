@@ -14,8 +14,9 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  X,
 } from 'lucide-react';
-import type { DashboardSummary } from '../../shared/types.js';
+import type { BatchJob, DashboardSummary, SourceScanJob } from '../../shared/types.js';
 import type { RibbonTool } from '../lib/workspaceTypes.js';
 
 interface TopRibbonProps {
@@ -33,6 +34,8 @@ interface TopRibbonProps {
   };
   scanning: boolean;
   backgroundScanning: boolean;
+  batchJobs?: BatchJob[];
+  scanJobs?: SourceScanJob[];
   busyAction: string | null;
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
@@ -40,6 +43,7 @@ interface TopRibbonProps {
   onAutoScrapeAll: () => void;
   onDownloadMissingSubs: () => void;
   onRegenerateNfos: () => void;
+  onCancelJob?: (jobId: string) => void;
 }
 
 export const TopRibbon: React.FC<TopRibbonProps> = ({
@@ -50,6 +54,8 @@ export const TopRibbon: React.FC<TopRibbonProps> = ({
   counts,
   scanning,
   backgroundScanning,
+  batchJobs = [],
+  scanJobs = [],
   busyAction,
   sidebarCollapsed,
   onToggleSidebar,
@@ -57,6 +63,7 @@ export const TopRibbon: React.FC<TopRibbonProps> = ({
   onAutoScrapeAll,
   onDownloadMissingSubs,
   onRegenerateNfos,
+  onCancelJob,
 }) => {
   const health = summary?.healthScore ?? 100;
 
@@ -246,6 +253,66 @@ export const TopRibbon: React.FC<TopRibbonProps> = ({
           </button>
         )}
       </div>
+
+      {/* Unified Live Background Job Strip */}
+      {(batchJobs.some((j) => j.status === 'running') || scanJobs.some((j) => j.status === 'running')) && (
+        <div className="px-3 py-1.5 border-t border-slate-800/80 bg-[#0d1525] flex flex-col gap-1.5">
+          {batchJobs
+            .filter((j) => j.status === 'running')
+            .map((job) => (
+              <div key={job.jobId} className="flex flex-wrap items-center gap-2.5 text-[11px]">
+                <span className="px-1.5 py-0.5 rounded bg-sky-500/20 border border-sky-500/40 text-sky-300 font-bold uppercase text-[10px]">
+                  {job.kind}
+                </span>
+                <span className="font-semibold text-slate-100">{job.label}</span>
+                {job.currentItem && (
+                  <span className="text-slate-400 truncate max-w-[260px]">{job.currentItem}</span>
+                )}
+                <div className="flex-1 min-w-[120px] max-w-xs h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-sky-500 to-indigo-400 transition-all duration-300"
+                    style={{ width: `${Math.max(4, job.overallPercent)}%` }}
+                  />
+                </div>
+                <span className="font-mono text-slate-300 shrink-0">
+                  {job.processedCount}/{job.totalCount} ({job.overallPercent}%)
+                </span>
+                {onCancelJob && (
+                  <button
+                    type="button"
+                    disabled={job.cancelRequested}
+                    onClick={() => onCancelJob(job.jobId)}
+                    className="px-2 py-0.5 rounded bg-rose-500/15 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 text-[10px] font-semibold inline-flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  >
+                    <X className="w-3 h-3" />
+                    {job.cancelRequested ? 'Cancelling...' : 'Cancel'}
+                  </button>
+                )}
+              </div>
+            ))}
+
+          {scanJobs
+            .filter((j) => j.status === 'running')
+            .map((sj) => (
+              <div key={sj.jobId} className="flex flex-wrap items-center gap-2.5 text-[11px]">
+                <span className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold uppercase text-[10px]">
+                  SCAN
+                </span>
+                <span className="font-semibold text-slate-100">Scanning {sj.sourceName}</span>
+                {sj.currentItem && (
+                  <span className="text-slate-400 truncate max-w-[240px]">{sj.currentItem}</span>
+                )}
+                <div className="flex-1 min-w-[120px] max-w-xs h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                  <div
+                    className="h-full bg-amber-400 transition-all duration-300"
+                    style={{ width: `${Math.max(5, sj.overallPercent)}%` }}
+                  />
+                </div>
+                <span className="font-mono text-slate-300 shrink-0">{sj.overallPercent}%</span>
+              </div>
+            ))}
+        </div>
+      )}
     </header>
   );
 };

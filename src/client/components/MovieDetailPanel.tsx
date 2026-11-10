@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   Check,
   Code2,
   Eye,
@@ -13,14 +14,17 @@ import {
   Sparkles,
   Star,
   Subtitles,
+  Tag,
   Trash2,
   Users,
   X,
 } from 'lucide-react';
-import type { ArtworkKind, MovieRecord, NfoValidationReport } from '../../shared/types.js';
+import type { ActorEntry, ArtworkKind, MovieRecord, NfoValidationReport } from '../../shared/types.js';
 import { api, formatBytes, getArtworkUrl } from '../lib/api.js';
 import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 import { CastListColumn } from './CastListColumn.js';
+import { ChipInput } from './ChipInput.js';
+import { FileDropZone } from './FileDropZone.js';
 import { PosterImage } from './PosterImage.js';
 import { TechBadges } from './QualityBadges.js';
 import { RatingBadges } from './RatingBadges.js';
@@ -51,8 +55,9 @@ export const MovieDetailPanel: React.FC<{
   activeActor?: string | null;
   onSelectActor?: (actorName: string) => void;
   onUpdated: () => void;
+  onDeleted?: () => void;
   onClose?: () => void;
-}> = ({ movieId, initialTab, activeActor, onSelectActor, onUpdated, onClose }) => {
+}> = ({ movieId, initialTab, activeActor, onSelectActor, onUpdated, onDeleted, onClose }) => {
   const [movie, setMovie] = useState<MovieRecord | null>(null);
   const [tab, setTab] = useState<DetailTab>(resolveMovieTab(initialTab));
   const [saving, setSaving] = useState(false);
@@ -65,12 +70,17 @@ export const MovieDetailPanel: React.FC<{
   const [nfoXml, setNfoXml] = useState('');
   const [nfoVal, setNfoVal] = useState<NfoValidationReport | null>(null);
   const [customArtUrl, setCustomArtUrl] = useState<Record<string, string>>({});
+  const [uploadSubLang, setUploadSubLang] = useState('en');
+  const [editionDraft, setEditionDraft] = useState('');
+  const [confirmDeleteMode, setConfirmDeleteMode] = useState<'db' | 'files' | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   const loadMovie = async () => {
     const res = await api.getMovie(movieId);
     setMovie(res.movie);
     setForm(res.movie);
+    setEditionDraft(res.movie.parsedInfo.edition ?? '');
+    setConfirmDeleteMode(null);
     setArtCacheKey((k) => k + 1);
     const nfo = await api.readNfo('movie', movieId);
     setNfoXml(nfo.xml);
@@ -156,11 +166,43 @@ export const MovieDetailPanel: React.FC<{
     }
   };
 
-  const handlePickArtwork = async (kind: ArtworkKind, url?: string) => {
-    await api.setMovieArtwork(movie.id, kind, url);
+  const handlePickArtwork = async (kind: ArtworkKind, url?: string, dataBase64?: string) => {
+    await api.setMovieArtwork(movie.id, kind, url, dataBase64);
     await loadMovie();
     onUpdated();
     notify(`Updated ${kind} artwork`);
+  };
+
+  const handleSaveActors = async (actors: ActorEntry[]) => {
+    await api.updateMovie(movie.id, { actors, writeNfo: true });
+    await loadMovie();
+    onUpdated();
+    notify(`Saved ${actors.length} cast member(s) & updated NFO`);
+  };
+
+  const handleUploadActorThumb = async (actorName: string, dataBase64: string) => {
+    const res = await api.uploadActorThumb({
+      mediaType: 'movie',
+      mediaId: movie.id,
+      actorName,
+      dataBase64,
+    });
+    notify(`Saved portrait to .actors for ${actorName}`);
+    return res.thumbPath;
+  };
+
+  const handleSaveEdition = async () => {
+    await api.setMovieEdition(movie.id, editionDraft);
+    await loadMovie();
+    onUpdated();
+    notify(editionDraft.trim() ? `Tagged edition: ${editionDraft.trim()}` : 'Cleared edition tag');
+  };
+
+  const handleDeleteMovie = async (deleteFiles: boolean) => {
+    await api.deleteMovie(movie.id, deleteFiles);
+    setConfirmDeleteMode(null);
+    onUpdated();
+    onDeleted?.();
   };
 
   const handleQuickRename = async () => {
@@ -355,6 +397,12 @@ export const MovieDetailPanel: React.FC<{
                       {customArtUrl.poster ? 'Fetch' : 'Generate'}
                     </button>
                   </div>
+                  <FileDropZone
+                    accept="image/png,image/jpeg,image/webp"
+                    label="Drop poster image or browse"
+                    compact
+                    onFileLoaded={({ content }) => handlePickArtwork('poster', undefined, content)}
+                  />
                   {posterCandidates.length > 0 && (
                     <div className="flex gap-1 overflow-x-auto pt-0.5">
                       {posterCandidates.map((c, idx) => (
@@ -408,27 +456,41 @@ export const MovieDetailPanel: React.FC<{
                   />
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  <Field
-                    label="Genres (comma separated)"
-                    value={(form.genres ?? []).join(', ')}
-                    onChange={(v) => setForm({ ...form, genres: v.split(',').map((s) => s.trim()).filter(Boolean) })}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <ChipInput
+                    label="Genres"
+                    values={form.genres ?? []}
+                    onChange={(genres) => setForm({ ...form, genres })}
+                    suggestions={['Science Fiction', 'Action', 'Drama', 'Thriller', 'Adventure', 'Mystery']}
+                    accent="sky"
                   />
-                  <Field
-                    label="Tags (comma separated)"
-                    value={(form.tags ?? []).join(', ')}
-                    onChange={(v) => setForm({ ...form, tags: v.split(',').map((s) => s.trim()).filter(Boolean) })}
+                  <ChipInput
+                    label="Tags"
+                    values={form.tags ?? []}
+                    onChange={(tags) => setForm({ ...form, tags })}
+                    suggestions={['4K HDR', 'Atmos', 'Director Cut', 'IMAX', 'Favorites']}
+                    accent="indigo"
                   />
-                  <Field
+                  <ChipInput
                     label="Directors"
-                    value={(form.directors ?? []).join(', ')}
-                    onChange={(v) => setForm({ ...form, directors: v.split(',').map((s) => s.trim()).filter(Boolean) })}
+                    values={form.directors ?? []}
+                    onChange={(directors) => setForm({ ...form, directors })}
+                    accent="emerald"
                   />
-                  <Field
-                    label="Studios"
-                    value={(form.studios ?? []).join(', ')}
-                    onChange={(v) => setForm({ ...form, studios: v.split(',').map((s) => s.trim()).filter(Boolean) })}
+                  <ChipInput
+                    label="Writers / Credits"
+                    values={form.writers ?? []}
+                    onChange={(writers) => setForm({ ...form, writers })}
+                    accent="emerald"
                   />
+                  <div className="sm:col-span-2">
+                    <ChipInput
+                      label="Studios"
+                      values={form.studios ?? []}
+                      onChange={(studios) => setForm({ ...form, studios })}
+                      accent="amber"
+                    />
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
@@ -513,6 +575,12 @@ export const MovieDetailPanel: React.FC<{
                           {customArtUrl[slot.kind] ? 'Fetch' : 'Generate'}
                         </button>
                       </div>
+                      <FileDropZone
+                        accept="image/png,image/jpeg,image/webp"
+                        label="Drop image or browse local file"
+                        compact
+                        onFileLoaded={({ content }) => handlePickArtwork(slot.kind, undefined, content)}
+                      />
                       {candidates.length > 0 && (
                         <div className="flex gap-1 overflow-x-auto pt-0.5">
                           {candidates.map((c, idx) => (
@@ -535,7 +603,13 @@ export const MovieDetailPanel: React.FC<{
         )}
 
         {tab === 'cast' && (
-          <CastListColumn actors={movie.actors} activeActor={activeActor} onSelectActor={onSelectActor} />
+          <CastListColumn
+            actors={movie.actors}
+            activeActor={activeActor}
+            onSelectActor={onSelectActor}
+            onSaveActors={handleSaveActors}
+            onUploadActorThumb={handleUploadActorThumb}
+          />
         )}
 
         {tab === 'nfo' && (
@@ -647,8 +721,44 @@ export const MovieDetailPanel: React.FC<{
                   onClick={() => setSubSearchOpen(true)}
                   className="px-3 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                 >
-                  <Languages className="w-3.5 h-3.5" /> Search & Download Subtitles
+                  <Languages className="w-3.5 h-3.5" /> Search &amp; Download Subtitles
                 </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-[120px_1fr] gap-2 items-center">
+                <select
+                  value={uploadSubLang}
+                  onChange={(e) => setUploadSubLang(e.target.value)}
+                  className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-xs text-slate-200"
+                  title="Subtitle language code (also auto-detected from filename if present)"
+                >
+                  <option value="en">English (en)</option>
+                  <option value="es">Spanish (es)</option>
+                  <option value="fr">French (fr)</option>
+                  <option value="de">German (de)</option>
+                  <option value="ja">Japanese (ja)</option>
+                  <option value="ko">Korean (ko)</option>
+                  <option value="zh">Chinese (zh)</option>
+                  <option value="pt">Portuguese (pt)</option>
+                </select>
+                <FileDropZone
+                  accept=".srt,.vtt,.ass,.ssa,.sub"
+                  readAs="text"
+                  compact
+                  label="Drop local .srt / .vtt / .ass subtitle file or browse"
+                  onFileLoaded={async ({ name, content }) => {
+                    await api.uploadSubtitle({
+                      mediaType: 'movie',
+                      mediaId: movie.id,
+                      fileName: name,
+                      contentText: content,
+                      language: uploadSubLang,
+                    });
+                    await loadMovie();
+                    onUpdated();
+                    notify(`Uploaded subtitle ${name}`);
+                  }}
+                />
               </div>
 
               {movie.subtitles.length === 0 ? (
@@ -693,6 +803,83 @@ export const MovieDetailPanel: React.FC<{
                   ))}
                 </div>
               )}
+            </div>
+
+            {/* Edition Tagging & Safe Library / Disk Removal */}
+            <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
+                    <Tag className="w-3.5 h-3.5 text-amber-400" /> Edition &amp; Library Actions
+                  </h4>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Tag alternate cuts (e.g. Director&apos;s Cut, Extended) to separate intentional releases from duplicates, or safely remove entries.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  value={editionDraft}
+                  onChange={(e) => setEditionDraft(e.target.value)}
+                  placeholder="Edition tag (e.g. Director's Cut, IMAX, Extended)"
+                  className="flex-1 min-w-[220px] bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-100"
+                />
+                <button
+                  type="button"
+                  onClick={handleSaveEdition}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-200 cursor-pointer"
+                >
+                  Save Edition Tag
+                </button>
+              </div>
+
+              <div className="pt-2 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[11px] text-slate-400">
+                  Remove from KodiVault database only, or permanently delete media + sidecar files from disk.
+                </span>
+                {confirmDeleteMode ? (
+                  <div className="flex items-center gap-2 bg-rose-500/15 border border-rose-500/40 rounded-lg px-3 py-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                    <span className="text-[11px] text-rose-200 font-semibold">
+                      {confirmDeleteMode === 'files'
+                        ? 'Delete video, NFO, subs & art from disk?'
+                        : 'Remove this movie from KodiVault DB?'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteMovie(confirmDeleteMode === 'files')}
+                      className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-bold cursor-pointer"
+                    >
+                      Confirm
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteMode(null)}
+                      className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteMode('db')}
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold cursor-pointer"
+                    >
+                      Remove from Library
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteMode('files')}
+                      className="px-2.5 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> Delete Files from Disk
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}

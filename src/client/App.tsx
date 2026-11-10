@@ -1,5 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import type { DashboardSummary, LibraryAuditReport, MovieRecord, MovieSetRecord } from '../shared/types.js';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type {
+  BatchJob,
+  DashboardSummary,
+  LibraryAuditReport,
+  MovieRecord,
+  MovieSetRecord,
+  SourceScanJob,
+} from '../shared/types.js';
 import { EpisodeDetailPanel } from './components/EpisodeDetailPanel.js';
 import { MediaTreeSidebar } from './components/MediaTreeSidebar.js';
 import { MovieDetailPanel } from './components/MovieDetailPanel.js';
@@ -34,8 +41,11 @@ export const App: React.FC = () => {
 
   const [scanning, setScanning] = useState(false);
   const [backgroundScanning, setBackgroundScanning] = useState(false);
+  const [batchJobs, setBatchJobs] = useState<BatchJob[]>([]);
+  const [scanJobs, setScanJobs] = useState<SourceScanJob[]>([]);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const prevRunningIdsRef = useRef<Set<string>>(new Set());
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -49,14 +59,19 @@ export const App: React.FC = () => {
       api.getShowsTree(),
       api.listSets(),
       api.getAudit(),
-      api.listScanJobs().catch(() => ({ jobs: [] })),
+      api.listJobs().catch(() => ({ jobs: [] as BatchJob[], scanJobs: [] as SourceScanJob[] })),
     ]);
     setSummary(d);
     setMovies(m.movies);
     setShowTree(stTree.tree);
     setSets(st.sets);
     setAudit(au);
-    setBackgroundScanning(jobsRes.jobs.some((j) => j.status === 'running'));
+    setBatchJobs(jobsRes.jobs);
+    setScanJobs(jobsRes.scanJobs);
+    setBackgroundScanning(
+      jobsRes.scanJobs.some((j) => j.status === 'running') ||
+        jobsRes.jobs.some((j) => j.status === 'running')
+    );
 
     // Initialize or repair selection when library changes
     setSelected((prev) => {
@@ -82,12 +97,41 @@ export const App: React.FC = () => {
   }, [refreshAll]);
 
   useEffect(() => {
-    if (!backgroundScanning) return;
+    const runningNow = new Set<string>([
+      ...batchJobs.filter((j) => j.status === 'running').map((j) => j.jobId),
+      ...scanJobs.filter((j) => j.status === 'running').map((j) => j.jobId),
+    ]);
+    const prevRunning = prevRunningIdsRef.current;
+
+    for (const oldId of prevRunning) {
+      if (!runningNow.has(oldId)) {
+        const doneBatch = batchJobs.find((j) => j.jobId === oldId);
+        if (doneBatch) {
+          showToast(
+            doneBatch.status === 'cancelled'
+              ? `${doneBatch.label} cancelled (${doneBatch.processedCount}/${doneBatch.totalCount})`
+              : doneBatch.detail || `${doneBatch.label} finished`
+          );
+        }
+        setBusyAction(null);
+        void refreshAll();
+        break;
+      }
+    }
+    prevRunningIdsRef.current = runningNow;
+
+    if (runningNow.size === 0) return;
     const id = setInterval(() => {
-      void refreshAll();
-    }, 1500);
+      void api.listJobs().then((res) => {
+        setBatchJobs(res.jobs);
+        setScanJobs(res.scanJobs);
+        setBackgroundScanning(
+          res.jobs.some((j) => j.status === 'running') || res.scanJobs.some((j) => j.status === 'running')
+        );
+      });
+    }, 650);
     return () => clearInterval(id);
-  }, [backgroundScanning, refreshAll]);
+  }, [batchJobs, scanJobs, refreshAll]);
 
   const handleScanAll = async () => {
     setScanning(true);
@@ -102,35 +146,40 @@ export const App: React.FC = () => {
 
   const handleAutoScrapeAll = async () => {
     setBusyAction('scrape');
-    try {
-      const res = await api.batchScrape({ onlyUnscraped: true });
-      await refreshAll();
-      showToast(`Scraped ${res.scrapedMovies} movies and ${res.scrapedShows} TV shows`);
-    } finally {
+    const { job } = await api.startBatchScrape('unscraped');
+    setBatchJobs((prev) => [job, ...prev.filter((j) => j.jobId !== job.jobId)]);
+    if (job.status !== 'running') {
       setBusyAction(null);
+      await refreshAll();
+      showToast(job.detail || 'Batch scrape finished');
     }
   };
 
   const handleDownloadMissingSubs = async () => {
     setBusyAction('subs');
-    try {
-      const res = await api.batchMissingSubtitles({});
-      await refreshAll();
-      showToast(`Downloaded ${res.downloaded} missing subtitle files`);
-    } finally {
+    const { job } = await api.startBatchSubtitles();
+    setBatchJobs((prev) => [job, ...prev.filter((j) => j.jobId !== job.jobId)]);
+    if (job.status !== 'running') {
       setBusyAction(null);
+      await refreshAll();
+      showToast(job.detail || 'Missing subtitles check finished');
     }
   };
 
   const handleRegenerateNfos = async () => {
     setBusyAction('nfo');
-    try {
-      const res = await api.regenerateNfos({ scope: 'all' });
-      await refreshAll();
-      showToast(`Synced ${res.written} Kodi NFO files to disk`);
-    } finally {
+    const { job } = await api.startBatchNfo('all');
+    setBatchJobs((prev) => [job, ...prev.filter((j) => j.jobId !== job.jobId)]);
+    if (job.status !== 'running') {
       setBusyAction(null);
+      await refreshAll();
+      showToast(job.detail || 'NFO sync finished');
     }
+  };
+
+  const handleCancelJob = async (jobId: string) => {
+    const { job } = await api.cancelJob(jobId);
+    setBatchJobs((prev) => prev.map((j) => (j.jobId === jobId ? job : j)));
   };
 
   const handleSelectMedia = (sel: SelectedMedia) => {
@@ -236,7 +285,9 @@ export const App: React.FC = () => {
       audit.issues.unscrapedShows.length +
       audit.issues.missingMovieNfo.length +
       audit.issues.missingEpisodeNfo.length +
-      audit.issues.duplicateMovies.length
+      audit.issues.duplicateMovies.length +
+      audit.issues.duplicateEpisodes.length +
+      (audit.issues.missingEpisodes?.length ?? 0)
     : 0;
 
   const selectedSet = selected?.kind === 'set' ? sets.find((s) => s.id === selected.setId) ?? null : null;
@@ -259,6 +310,8 @@ export const App: React.FC = () => {
         }}
         scanning={scanning}
         backgroundScanning={backgroundScanning}
+        batchJobs={batchJobs}
+        scanJobs={scanJobs}
         busyAction={busyAction}
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
@@ -266,6 +319,7 @@ export const App: React.FC = () => {
         onAutoScrapeAll={handleAutoScrapeAll}
         onDownloadMissingSubs={handleDownloadMissingSubs}
         onRegenerateNfos={handleRegenerateNfos}
+        onCancelJob={handleCancelJob}
       />
 
       {/* Split Workspace: Left Tabbed List/Tree + Right Inspector / Tool Workspace */}
@@ -333,6 +387,11 @@ export const App: React.FC = () => {
               activeActor={actorFilter}
               onSelectActor={handleFilterByActor}
               onUpdated={refreshAll}
+              onDeleted={() => {
+                const next = movies.find((m) => m.id !== selected.movieId);
+                setSelected(next ? { kind: 'movie', movieId: next.id } : null);
+                showToast('Movie removed');
+              }}
             />
           ) : selected?.kind === 'show' ? (
             <TvShowDetailPanel
@@ -360,6 +419,10 @@ export const App: React.FC = () => {
                 setSelected({ kind: 'show', showId, seasonNumber: seasonNumber ?? null })
               }
               onUpdated={refreshAll}
+              onDeleted={() => {
+                setSelected({ kind: 'show', showId: selected.showId, seasonNumber: null });
+                showToast('Episode removed');
+              }}
             />
           ) : selectedSet ? (
             <SetDetailPanel

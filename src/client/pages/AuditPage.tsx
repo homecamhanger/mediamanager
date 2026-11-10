@@ -1,6 +1,17 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Copy, FileCode2, Languages, ShieldAlert, Sparkles } from 'lucide-react';
-import type { LibraryAuditReport } from '../../shared/types.js';
+import {
+  AlertTriangle,
+  CalendarClock,
+  CheckCircle2,
+  Copy,
+  FileCode2,
+  Languages,
+  ShieldAlert,
+  Sparkles,
+  Tag,
+  Trash2,
+} from 'lucide-react';
+import type { LibraryAuditReport, MissingEpisodeRecord } from '../../shared/types.js';
 import { api } from '../lib/api.js';
 import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 
@@ -12,6 +23,13 @@ export const AuditPage: React.FC<{
 }> = ({ onRefresh, onOpenMovie, onOpenShow, onOpenEpisode }) => {
   const [audit, setAudit] = useState<LibraryAuditReport | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [editionMovieId, setEditionMovieId] = useState<number | null>(null);
+  const [editionInput, setEditionInput] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<{
+    kind: 'movie' | 'episode';
+    id: number;
+    deleteFiles: boolean;
+  } | null>(null);
 
   const load = async () => {
     setAudit(await api.getAudit());
@@ -57,6 +75,33 @@ export const AuditPage: React.FC<{
       setBusy(null);
     }
   };
+
+  const handleTagEdition = async (movieId: number, edition: string) => {
+    await api.setMovieEdition(movieId, edition);
+    setEditionMovieId(null);
+    setEditionInput('');
+    await load();
+    onRefresh();
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!pendingDelete) return;
+    if (pendingDelete.kind === 'movie') {
+      await api.deleteMovie(pendingDelete.id, pendingDelete.deleteFiles);
+    } else {
+      await api.deleteEpisode(pendingDelete.id, pendingDelete.deleteFiles);
+    }
+    setPendingDelete(null);
+    await load();
+    onRefresh();
+  };
+
+  const missingByShow = new Map<number, { showTitle: string; items: MissingEpisodeRecord[] }>();
+  for (const m of issues.missingEpisodes ?? []) {
+    const grp = missingByShow.get(m.showId) ?? { showTitle: m.showTitle, items: [] };
+    grp.items.push(m);
+    missingByShow.set(m.showId, grp);
+  }
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
@@ -181,19 +226,201 @@ export const AuditPage: React.FC<{
           emptyText="No duplicate movies or episodes detected."
         >
           {issues.duplicateMovies.map((d) => (
-            <div key={d.key} className="p-2 rounded-lg bg-slate-900 border border-slate-800 space-y-1">
+            <div key={d.key} className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 space-y-2">
               <div className="text-xs font-semibold text-amber-300 flex items-center gap-1">
-                <Copy className="w-3.5 h-3.5" /> {d.reason}
+                <Copy className="w-3.5 h-3.5" /> {d.reason} ({d.items.length} files)
               </div>
-              {d.items.map((item) => (
+              <div className="space-y-1.5">
+                {d.items.map((item) => {
+                  const isDeleting = pendingDelete?.kind === 'movie' && pendingDelete.id === item.id;
+                  const isEditingEdition = editionMovieId === item.id;
+                  return (
+                    <div key={item.id} className="p-2 rounded bg-slate-950/70 border border-slate-800/80 space-y-1.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <button
+                          onClick={() => onOpenMovie?.(item.id)}
+                          className="min-w-0 flex-1 text-left text-[11px] font-mono text-slate-300 hover:text-sky-300 truncate cursor-pointer"
+                        >
+                          <span className="px-1.5 py-0.5 rounded bg-slate-800 text-sky-300 mr-1.5">{item.resolution || 'SD'}</span>
+                          {item.filePath}
+                        </button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditionMovieId(isEditingEdition ? null : item.id);
+                              setEditionInput('');
+                            }}
+                            title="Tag distinct edition (e.g. Director's Cut) to resolve duplicate"
+                            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] font-semibold text-amber-300 inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <Tag className="w-3 h-3" /> Edition
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPendingDelete({ kind: 'movie', id: item.id, deleteFiles: false })}
+                            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 cursor-pointer"
+                          >
+                            Remove DB
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPendingDelete({ kind: 'movie', id: item.id, deleteFiles: true })}
+                            className="px-2 py-0.5 rounded bg-rose-500/15 hover:bg-rose-500/25 text-[10px] font-semibold text-rose-300 inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <Trash2 className="w-3 h-3" /> Delete Files
+                          </button>
+                        </div>
+                      </div>
+
+                      {isEditingEdition && (
+                        <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-800">
+                          <input
+                            value={editionInput}
+                            onChange={(e) => setEditionInput(e.target.value)}
+                            placeholder="e.g. Director's Cut"
+                            className="flex-1 min-w-[140px] bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-100"
+                          />
+                          {["Director's Cut", 'Extended Edition', '4K Remaster'].map((preset) => (
+                            <button
+                              key={preset}
+                              type="button"
+                              onClick={() => void handleTagEdition(item.id, preset)}
+                              className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 cursor-pointer"
+                            >
+                              {preset}
+                            </button>
+                          ))}
+                          <button
+                            type="button"
+                            disabled={!editionInput.trim()}
+                            onClick={() => void handleTagEdition(item.id, editionInput)}
+                            className="px-2 py-1 rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-40 text-white text-[10px] font-bold cursor-pointer"
+                          >
+                            Save
+                          </button>
+                        </div>
+                      )}
+
+                      {isDeleting && (
+                        <div className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-rose-500/15 border border-rose-500/35">
+                          <span className="text-[11px] text-rose-200 font-semibold">
+                            {pendingDelete.deleteFiles ? 'Permanently delete file + sidecars?' : 'Remove entry from database?'}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => void handleConfirmDelete()}
+                              className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-bold cursor-pointer"
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPendingDelete(null)}
+                              className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px] cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+
+          {issues.duplicateEpisodes.map((d) => (
+            <div key={d.key} className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 space-y-1.5">
+              <div className="text-xs font-semibold text-amber-300 flex items-center gap-1">
+                <Copy className="w-3.5 h-3.5" /> {d.showTitle} S{String(d.season).padStart(2, '0')}E
+                {String(d.episode).padStart(2, '0')} ({d.items.length} files)
+              </div>
+              {d.items.map((item) => {
+                const isDeleting = pendingDelete?.kind === 'episode' && pendingDelete.id === item.id;
+                return (
+                  <div key={item.id} className="p-1.5 rounded bg-slate-950/70 border border-slate-800/80 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-mono text-slate-300 truncate">{item.filePath}</span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setPendingDelete({ kind: 'episode', id: item.id, deleteFiles: false })}
+                          className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 cursor-pointer"
+                        >
+                          Remove DB
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPendingDelete({ kind: 'episode', id: item.id, deleteFiles: true })}
+                          className="px-2 py-0.5 rounded bg-rose-500/15 hover:bg-rose-500/25 text-[10px] font-semibold text-rose-300 cursor-pointer"
+                        >
+                          Delete Files
+                        </button>
+                      </div>
+                    </div>
+                    {isDeleting && (
+                      <div className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-rose-500/15 border border-rose-500/35">
+                        <span className="text-[11px] text-rose-200 font-semibold">
+                          {pendingDelete.deleteFiles ? 'Delete episode file + sidecars?' : 'Remove episode from DB?'}
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => void handleConfirmDelete()}
+                            className="px-2 py-0.5 rounded bg-rose-600 text-white text-[10px] font-bold cursor-pointer"
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPendingDelete(null)}
+                            className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px] cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </AuditSection>
+
+        <AuditSection
+          title={`Missing Aired Episodes (${(issues.missingEpisodes ?? []).length})`}
+          emptyText="All scraped series have every aired episode in their episode guide."
+        >
+          {[...missingByShow.entries()].map(([showId, grp]) => (
+            <div key={showId} className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
                 <button
-                  key={item.id}
-                  onClick={() => onOpenMovie?.(item.id)}
-                  className="block w-full text-left text-[11px] font-mono text-slate-400 hover:text-sky-300 truncate cursor-pointer"
+                  onClick={() => onOpenShow?.(showId)}
+                  className="text-xs font-bold text-white hover:text-sky-300 flex items-center gap-1.5 cursor-pointer"
                 >
-                  [{item.resolution}] {item.filePath}
+                  <CalendarClock className="w-3.5 h-3.5 text-amber-400" />
+                  {grp.showTitle}
                 </button>
-              ))}
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 font-bold">
+                  {grp.items.length} missing
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {grp.items.map((m) => (
+                  <button
+                    key={m.code}
+                    onClick={() => onOpenShow?.(showId)}
+                    title={`${m.title}${m.aired ? ` (${m.aired})` : ''}`}
+                    className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 hover:border-amber-500/40 text-[11px] font-mono text-amber-200 cursor-pointer"
+                  >
+                    {m.code} · {m.title}
+                  </button>
+                ))}
+              </div>
             </div>
           ))}
         </AuditSection>

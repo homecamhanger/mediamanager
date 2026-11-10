@@ -454,6 +454,93 @@ export class SubtitleEngine {
     this.db.deleteSubtitle(subId);
     this.db.logActivity('subtitle', 'Delete Subtitle', `Removed ${sub.fileName}`, 'info');
   }
+
+  uploadSubtitle(params: {
+    mediaType: 'movie' | 'episode';
+    mediaId: number;
+    fileName: string;
+    contentText?: string;
+    contentBase64?: string;
+    language?: string;
+    forced?: boolean;
+    sdh?: boolean;
+  }): SubtitleFileRecord {
+    let videoPath = '';
+    if (params.mediaType === 'movie') {
+      const m = this.db.getMovie(params.mediaId);
+      if (!m) throw new Error('Movie not found');
+      videoPath = m.filePath;
+    } else {
+      const ep = this.db.getTvEpisode(params.mediaId);
+      if (!ep) throw new Error('Episode not found');
+      videoPath = ep.filePath;
+    }
+
+    let rawContent = params.contentText ?? '';
+    if (!rawContent && params.contentBase64) {
+      const trimmed = params.contentBase64.trim();
+      const commaIdx = trimmed.indexOf(',');
+      const rawB64 = trimmed.startsWith('data:') && commaIdx >= 0 ? trimmed.slice(commaIdx + 1) : trimmed;
+      rawContent = Buffer.from(rawB64, 'base64').toString('utf-8');
+    }
+    if (!rawContent.trim()) {
+      throw new Error('Uploaded subtitle file is empty');
+    }
+
+    const origLower = params.fileName.toLowerCase();
+    const extRaw = path.extname(origLower).replace(/^\./, '');
+    const format: SubtitleFileRecord['format'] =
+      extRaw === 'vtt' || extRaw === 'ass' || extRaw === 'ssa' || extRaw === 'sub' ? extRaw : 'srt';
+
+    const stemTokens = path.basename(origLower, path.extname(origLower)).split('.').slice(1);
+    let detectedLang = params.language ? normalizeLangCode(params.language) : '';
+    if (!detectedLang) {
+      for (const tok of stemTokens) {
+        if (tok !== 'forced' && tok !== 'sdh' && tok !== 'hi' && tok !== 'cc' && /^[a-z]{2,3}(-[a-z]{2})?$/i.test(tok)) {
+          detectedLang = normalizeLangCode(tok);
+          break;
+        }
+      }
+    }
+    const language = detectedLang || 'en';
+    const forced = params.forced ?? stemTokens.includes('forced');
+    const sdh = params.sdh ?? (stemTokens.includes('sdh') || stemTokens.includes('hi') || stemTokens.includes('cc'));
+
+    const dir = path.dirname(videoPath);
+    const videoBase = path.basename(videoPath, path.extname(videoPath));
+    const destName = buildKodiSubtitleFileName(videoBase, {
+      language,
+      forced,
+      sdh,
+      format,
+    });
+    const destPath = path.join(dir, destName);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(destPath, rawContent, 'utf-8');
+
+    const cues = parseSubtitleContent(rawContent);
+    const stat = fs.statSync(destPath);
+    const saved = this.db.addSubtitle({
+      mediaType: params.mediaType,
+      mediaId: params.mediaId,
+      filePath: destPath,
+      fileName: destName,
+      language,
+      format,
+      forced,
+      sdh,
+      sizeBytes: stat.size,
+      cueCount: cues.length,
+    });
+
+    this.db.logActivity(
+      'subtitle',
+      'Upload Subtitle',
+      `Uploaded ${destName} (${getLanguageDisplayName(saved.language)}${saved.forced ? ', Forced' : ''}${saved.sdh ? ', SDH' : ''})`,
+      'success'
+    );
+    return saved;
+  }
 }
 
 function synthesizeRealisticSrt(input: {

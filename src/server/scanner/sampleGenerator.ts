@@ -1,13 +1,36 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { MediaDatabase } from '../db/database.js';
+import { CATALOG_SHOWS } from '../scrapers/catalogData.js';
 import { ScraperEngine } from '../scrapers/scraperEngine.js';
 import { SubtitleEngine } from '../subtitles/subtitleEngine.js';
 import { LibraryScanner } from './libraryScanner.js';
 import { createMinimalValidMp4 } from './mediaProbe.js';
 
 export async function seedSampleLibraryIfEmpty(db: MediaDatabase, rootDir?: string) {
-  if (db.listSources().length > 0) return false;
+  if (db.listSources().length > 0) {
+    for (const show of db.listTvShows()) {
+      if (!show.scraped || (show.episodeGuide && show.episodeGuide.length > 0)) continue;
+      const match = CATALOG_SHOWS.find(
+        (c) =>
+          (c.uniqueIds.imdb && c.uniqueIds.imdb === show.uniqueIds.imdb) ||
+          c.title.toLowerCase() === show.title.toLowerCase()
+      );
+      if (match) {
+        db.updateTvShow(show.id, {
+          episodeGuide: match.episodes.map((ep) => ({
+            seasonNumber: ep.seasonNumber,
+            episodeNumber: ep.episodeNumber,
+            title: ep.title,
+            aired: ep.aired ?? null,
+            plot: ep.plot ?? '',
+            runtimeMinutes: ep.runtimeMinutes ?? null,
+          })),
+        });
+      }
+    }
+    return false;
+  }
   await resetAndSeedSampleLibrary(db, rootDir);
   return true;
 }

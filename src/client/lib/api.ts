@@ -2,10 +2,12 @@ import type {
   ActivityLogEntry,
   AppPreferences,
   ArtworkKind,
+  BatchJob,
   DashboardSummary,
   KodiRpcConfig,
   LibraryAuditReport,
   MediaSource,
+  MissingEpisodeRecord,
   MovieRecord,
   MovieSetRecord,
   NfoValidationReport,
@@ -80,8 +82,15 @@ export const api = {
     req<{ movie: MovieRecord }>(`/api/movies/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   batchMovies: (action: 'markWatched' | 'markUnwatched' | 'writeNfo' | 'addTag' | 'assignSet', movieIds: number[], payload?: Record<string, unknown>) =>
     req<{ affected: number }>('/api/movies/batch', { method: 'POST', body: JSON.stringify({ action, movieIds, payload }) }),
-  setMovieArtwork: (id: number, kind: ArtworkKind, url?: string) =>
-    req<{ movie: MovieRecord }>(`/api/movies/${id}/artwork`, { method: 'POST', body: JSON.stringify({ kind, url }) }),
+  setMovieArtwork: (id: number, kind: ArtworkKind, url?: string, dataBase64?: string) =>
+    req<{ movie: MovieRecord }>(`/api/movies/${id}/artwork`, { method: 'POST', body: JSON.stringify({ kind, url, dataBase64 }) }),
+  setMovieEdition: (id: number, edition: string) =>
+    req<{ movie: MovieRecord }>(`/api/movies/${id}/edition`, { method: 'POST', body: JSON.stringify({ edition }) }),
+  deleteMovie: (id: number, deleteFiles = false) =>
+    req<{ ok: boolean; deletedFiles: boolean; removedPaths: string[] }>(
+      `/api/movies/${id}?deleteFiles=${deleteFiles ? 'true' : 'false'}`,
+      { method: 'DELETE' }
+    ),
 
   // Movie Sets
   listSets: () => req<{ sets: MovieSetRecord[] }>('/api/sets'),
@@ -94,14 +103,43 @@ export const api = {
   // TV Shows & Episodes
   listShows: () => req<{ shows: TvShowRecord[] }>('/api/shows'),
   getShowsTree: () =>
-    req<{ tree: Array<{ show: TvShowRecord; seasons: TvSeasonRecord[]; episodes: TvEpisodeRecord[] }> }>('/api/shows/tree'),
-  getShow: (id: number) => req<{ show: TvShowRecord; seasons: TvSeasonRecord[]; episodes: TvEpisodeRecord[] }>(`/api/shows/${id}`),
+    req<{
+      tree: Array<{
+        show: TvShowRecord;
+        seasons: TvSeasonRecord[];
+        episodes: TvEpisodeRecord[];
+        missingEpisodes?: MissingEpisodeRecord[];
+      }>;
+    }>('/api/shows/tree'),
+  getShow: (id: number) =>
+    req<{
+      show: TvShowRecord;
+      seasons: TvSeasonRecord[];
+      episodes: TvEpisodeRecord[];
+      missingEpisodes?: MissingEpisodeRecord[];
+    }>(`/api/shows/${id}`),
   updateShow: (id: number, patch: Partial<TvShowRecord> & { writeNfo?: boolean }) =>
     req<{ show: TvShowRecord }>(`/api/shows/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
-  setShowArtwork: (id: number, kind: ArtworkKind, url?: string) =>
-    req<{ show: TvShowRecord }>(`/api/shows/${id}/artwork`, { method: 'POST', body: JSON.stringify({ kind, url }) }),
+  setShowArtwork: (id: number, kind: ArtworkKind, url?: string, dataBase64?: string) =>
+    req<{ show: TvShowRecord }>(`/api/shows/${id}/artwork`, { method: 'POST', body: JSON.stringify({ kind, url, dataBase64 }) }),
+  setSeasonArtwork: (id: number, kind: 'poster' | 'banner', url?: string, dataBase64?: string) =>
+    req<{ season: TvSeasonRecord }>(`/api/seasons/${id}/artwork`, { method: 'POST', body: JSON.stringify({ kind, url, dataBase64 }) }),
   updateEpisode: (id: number, patch: Partial<TvEpisodeRecord> & { writeNfo?: boolean }) =>
     req<{ episode: TvEpisodeRecord }>(`/api/episodes/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  setEpisodeArtwork: (id: number, url?: string, dataBase64?: string) =>
+    req<{ episode: TvEpisodeRecord }>(`/api/episodes/${id}/artwork`, { method: 'POST', body: JSON.stringify({ url, dataBase64 }) }),
+  deleteEpisode: (id: number, deleteFiles = false) =>
+    req<{ ok: boolean; deletedFiles: boolean; removedPaths: string[] }>(
+      `/api/episodes/${id}?deleteFiles=${deleteFiles ? 'true' : 'false'}`,
+      { method: 'DELETE' }
+    ),
+  uploadActorThumb: (params: {
+    mediaType: 'movie' | 'tvshow' | 'episode';
+    mediaId: number;
+    actorName: string;
+    url?: string;
+    dataBase64?: string;
+  }) => req<{ thumbPath: string }>('/api/actors/thumb', { method: 'POST', body: JSON.stringify(params) }),
   updateEpisodeOrder: (
     showId: number,
     payload: {
@@ -193,6 +231,16 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ mediaType, mediaId, candidate }),
     }),
+  uploadSubtitle: (params: {
+    mediaType: 'movie' | 'episode';
+    mediaId: number;
+    fileName: string;
+    contentText?: string;
+    contentBase64?: string;
+    language?: string;
+    forced?: boolean;
+    sdh?: boolean;
+  }) => req<{ subtitle: SubtitleFileRecord }>('/api/subtitles/upload', { method: 'POST', body: JSON.stringify(params) }),
   batchMissingSubtitles: (params?: { languages?: string[]; movieIds?: number[]; episodeIds?: number[] }) =>
     req<{ downloaded: number }>('/api/subtitles/batch-missing', { method: 'POST', body: JSON.stringify(params ?? {}) }),
   previewSubtitle: (id: number) =>
@@ -250,6 +298,18 @@ export const api = {
   generateSmartPlaylist: (opts: Record<string, unknown>) =>
     req<{ xml: string }>('/api/export/smartplaylist', { method: 'POST', body: JSON.stringify(opts) }),
   getSourcesXml: () => req<{ xml: string }>('/api/export/sources-xml'),
+
+  // Background Batch Jobs
+  listJobs: () => req<{ jobs: BatchJob[]; scanJobs: SourceScanJob[] }>('/api/jobs'),
+  getJob: (jobId: string) => req<{ job: BatchJob }>(`/api/jobs/${encodeURIComponent(jobId)}`),
+  startBatchScrape: (scope: 'unscraped' | 'all' = 'unscraped') =>
+    req<{ job: BatchJob }>('/api/jobs/scrape', { method: 'POST', body: JSON.stringify({ scope }) }),
+  startBatchSubtitles: (languages?: string[]) =>
+    req<{ job: BatchJob }>('/api/jobs/subtitles', { method: 'POST', body: JSON.stringify({ languages }) }),
+  startBatchNfo: (scope: 'all' | 'missing' = 'all') =>
+    req<{ job: BatchJob }>('/api/jobs/nfo', { method: 'POST', body: JSON.stringify({ scope }) }),
+  cancelJob: (jobId: string) =>
+    req<{ job: BatchJob }>(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }),
 };
 
 export type { ActivityLogEntry };

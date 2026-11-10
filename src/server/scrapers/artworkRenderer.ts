@@ -286,3 +286,49 @@ export async function saveArtworkToDisk(
   fs.writeFileSync(targetPath, rendered);
   return targetPath;
 }
+
+export function decodeBase64Payload(dataBase64: string): Buffer {
+  const trimmed = dataBase64.trim();
+  const commaIdx = trimmed.indexOf(',');
+  const raw = trimmed.startsWith('data:') && commaIdx >= 0 ? trimmed.slice(commaIdx + 1) : trimmed;
+  return Buffer.from(raw, 'base64');
+}
+
+export function saveUploadedArtworkToDisk(targetPath: string, dataBase64: string): string {
+  const buf = decodeBase64Payload(dataBase64);
+  if (buf.length < 32) {
+    throw new Error('Uploaded artwork file is empty or invalid');
+  }
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.writeFileSync(targetPath, buf);
+  return targetPath;
+}
+
+export function actorSafeFileName(actorName: string): string {
+  const cleaned = actorName
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
+    .replace(/\s+/g, '_');
+  return `${cleaned || 'Actor'}.jpg`;
+}
+
+export async function saveActorThumbToDisk(
+  mediaFolderPath: string,
+  actorName: string,
+  opts: { url?: string; dataBase64?: string }
+): Promise<string> {
+  const actorsDir = path.join(mediaFolderPath, '.actors');
+  fs.mkdirSync(actorsDir, { recursive: true });
+  const targetPath = path.join(actorsDir, actorSafeFileName(actorName));
+
+  if (opts.dataBase64) {
+    return saveUploadedArtworkToDisk(targetPath, opts.dataBase64);
+  }
+
+  return saveArtworkToDisk(targetPath, opts.url, {
+    kind: 'thumb',
+    title: actorName,
+    subtitle: 'Cast Portrait',
+  });
+}
+

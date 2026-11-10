@@ -177,6 +177,23 @@ export interface MovieSetRecord {
   movies: MovieRecord[];
 }
 
+export interface GuideEpisodeEntry {
+  seasonNumber: number;
+  episodeNumber: number;
+  title: string;
+  aired: string | null;
+  plot: string;
+  runtimeMinutes: number | null;
+  thumbUrl?: string;
+}
+
+export interface MissingEpisodeRecord extends GuideEpisodeEntry {
+  showId: number;
+  showTitle: string;
+  seasonName: string;
+  code: string;
+}
+
 export interface TvShowRecord {
   id: number;
   sourceId: number;
@@ -201,6 +218,7 @@ export interface TvShowRecord {
   tags: string[];
   actors: ActorEntry[];
   episodeOrder: 'aired' | 'dvd' | 'absolute';
+  episodeGuide?: GuideEpisodeEntry[];
 
   uniqueIds: UniqueIds;
   ratings: RatingEntry[];
@@ -213,6 +231,7 @@ export interface TvShowRecord {
   watchedEpisodesCount: number;
   missingSubtitlesCount: number;
   missingNfoCount: number;
+  missingEpisodesCount?: number;
   updatedAt: string;
 }
 
@@ -489,6 +508,7 @@ export interface LibraryAuditReport {
     duplicateEpisodes: Array<{ key: string; showTitle: string; season: number; episode: number; items: Array<{ id: number; title: string; filePath: string }> }>;
     invalidNfoFiles: Array<{ mediaType: 'movie' | 'tvshow' | 'episode'; id: number; showId?: number; title: string; warnings: string[] }>;
     lowResolutionItems: Array<{ mediaType: 'movie' | 'episode'; id: number; title: string; resolution: string; filePath: string }>;
+    missingEpisodes?: MissingEpisodeRecord[];
   };
 }
 
@@ -579,6 +599,27 @@ export interface SourceScanJob {
   showsScanned: number;
   episodesScanned: number;
   steps: ScanStepProgress[];
+  error?: string;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export type BatchJobKind = 'scrape' | 'subtitles' | 'nfo' | 'scan';
+
+export interface BatchJob {
+  jobId: string;
+  kind: BatchJobKind;
+  label: string;
+  status: 'running' | 'completed' | 'cancelled' | 'failed';
+  overallPercent: number;
+  processedCount: number;
+  totalCount: number;
+  succeededCount: number;
+  skippedCount: number;
+  failedCount: number;
+  currentItem?: string;
+  detail?: string;
+  cancelRequested: boolean;
   error?: string;
   startedAt: string;
   finishedAt: string | null;

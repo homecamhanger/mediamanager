@@ -5,8 +5,10 @@ import type {
   ActivityLogEntry,
   AppPreferences,
   ArtworkKind,
+  GuideEpisodeEntry,
   KodiRpcConfig,
   MediaSource,
+  MissingEpisodeRecord,
   MovieRecord,
   MovieSetRecord,
   ParsedFilenameInfo,
@@ -326,6 +328,7 @@ export class MediaDatabase {
         tags_json TEXT NOT NULL DEFAULT '[]',
         actors_json TEXT NOT NULL DEFAULT '[]',
         episode_order TEXT NOT NULL DEFAULT 'aired',
+        episode_guide_json TEXT NOT NULL DEFAULT '[]',
 
         unique_ids_json TEXT NOT NULL DEFAULT '{}',
         ratings_json TEXT NOT NULL DEFAULT '[]',
@@ -425,6 +428,11 @@ export class MediaDatabase {
         created_at TEXT NOT NULL
       );
     `);
+
+    const tvCols = this.db.prepare('PRAGMA table_info(tv_shows)').all() as Array<{ name: string }>;
+    if (!tvCols.some((c) => c.name === 'episode_guide_json')) {
+      this.db.exec("ALTER TABLE tv_shows ADD COLUMN episode_guide_json TEXT NOT NULL DEFAULT '[]'");
+    }
   }
 
   private ensureDefaultSettings() {
@@ -1095,38 +1103,39 @@ export class MediaDatabase {
           `UPDATE tv_shows SET
             source_id = ?, nfo_path = ?, has_nfo = ?, nfo_valid = ?, nfo_warnings_json = ?, scraped = ?, scraped_source = ?,
             title = ?, original_title = ?, sort_title = ?, year = ?, premiered = ?, status = ?, plot = ?, mpaa = ?, studio = ?,
-            genres_json = ?, tags_json = ?, actors_json = ?, episode_order = ?, unique_ids_json = ?, ratings_json = ?,
-            user_rating = ?, artwork_json = ?, updated_at = ?
-          WHERE id = ?`
-        )
-        .run(
-          show.sourceId,
-          show.nfoPath,
-          show.hasNfo ? 1 : 0,
-          show.nfoValid ? 1 : 0,
-          JSON.stringify(show.nfoWarnings),
-          show.scraped ? 1 : 0,
-          show.scrapedSource,
-          show.title,
-          show.originalTitle,
-          show.sortTitle,
-          show.year,
-          show.premiered,
-          show.status,
-          show.plot,
-          show.mpaa,
-          show.studio,
-          JSON.stringify(show.genres),
-          JSON.stringify(show.tags),
-          JSON.stringify(show.actors),
-          show.episodeOrder,
-          JSON.stringify(show.uniqueIds),
-          JSON.stringify(show.ratings),
-          show.userRating,
-          JSON.stringify(show.artwork),
-          now,
-          existing.id
-        );
+          genres_json = ?, tags_json = ?, actors_json = ?, episode_order = ?, episode_guide_json = ?, unique_ids_json = ?, ratings_json = ?,
+          user_rating = ?, artwork_json = ?, updated_at = ?
+        WHERE id = ?`
+      )
+      .run(
+        show.sourceId,
+        show.nfoPath,
+        show.hasNfo ? 1 : 0,
+        show.nfoValid ? 1 : 0,
+        JSON.stringify(show.nfoWarnings),
+        show.scraped ? 1 : 0,
+        show.scrapedSource,
+        show.title,
+        show.originalTitle,
+        show.sortTitle,
+        show.year,
+        show.premiered,
+        show.status,
+        show.plot,
+        show.mpaa,
+        show.studio,
+        JSON.stringify(show.genres),
+        JSON.stringify(show.tags),
+        JSON.stringify(show.actors),
+        show.episodeOrder,
+        JSON.stringify(show.episodeGuide ?? []),
+        JSON.stringify(show.uniqueIds),
+        JSON.stringify(show.ratings),
+        show.userRating,
+        JSON.stringify(show.artwork),
+        now,
+        existing.id
+      );
       return this.getTvShow(existing.id)!;
     }
 
@@ -1135,9 +1144,9 @@ export class MediaDatabase {
         `INSERT INTO tv_shows (
           source_id, folder_path, nfo_path, has_nfo, nfo_valid, nfo_warnings_json, scraped, scraped_source,
           title, original_title, sort_title, year, premiered, status, plot, mpaa, studio,
-          genres_json, tags_json, actors_json, episode_order, unique_ids_json, ratings_json,
+          genres_json, tags_json, actors_json, episode_order, episode_guide_json, unique_ids_json, ratings_json,
           user_rating, date_added, artwork_json, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         show.sourceId,
@@ -1161,6 +1170,7 @@ export class MediaDatabase {
         JSON.stringify(show.tags),
         JSON.stringify(show.actors),
         show.episodeOrder,
+        JSON.stringify(show.episodeGuide ?? []),
         JSON.stringify(show.uniqueIds),
         JSON.stringify(show.ratings),
         show.userRating,
@@ -1180,6 +1190,7 @@ export class MediaDatabase {
       genres: patch.genres ?? cur.genres,
       tags: patch.tags ?? cur.tags,
       actors: patch.actors ?? cur.actors,
+      episodeGuide: patch.episodeGuide ?? cur.episodeGuide ?? [],
       uniqueIds: patch.uniqueIds ?? cur.uniqueIds,
       ratings: patch.ratings ?? cur.ratings,
       artwork: patch.artwork ?? cur.artwork,
@@ -1190,7 +1201,7 @@ export class MediaDatabase {
         `UPDATE tv_shows SET
           folder_path = ?, nfo_path = ?, has_nfo = ?, nfo_valid = ?, nfo_warnings_json = ?, scraped = ?, scraped_source = ?,
           title = ?, original_title = ?, sort_title = ?, year = ?, premiered = ?, status = ?, plot = ?, mpaa = ?, studio = ?,
-          genres_json = ?, tags_json = ?, actors_json = ?, episode_order = ?, unique_ids_json = ?, ratings_json = ?,
+          genres_json = ?, tags_json = ?, actors_json = ?, episode_order = ?, episode_guide_json = ?, unique_ids_json = ?, ratings_json = ?,
           user_rating = ?, artwork_json = ?, updated_at = ?
         WHERE id = ?`
       )
@@ -1215,6 +1226,7 @@ export class MediaDatabase {
         JSON.stringify(merged.tags),
         JSON.stringify(merged.actors),
         merged.episodeOrder,
+        JSON.stringify(merged.episodeGuide ?? []),
         JSON.stringify(merged.uniqueIds),
         JSON.stringify(merged.ratings),
         merged.userRating,
@@ -1256,6 +1268,32 @@ export class MediaDatabase {
     };
 
     const totalEps = Number(epStatsRow.total ?? 0);
+    const episodeGuide = safeJson<GuideEpisodeEntry[]>(row.episode_guide_json, []);
+    const epPresenceRows =
+      episodeGuide.length > 0
+        ? (this.db
+            .prepare(
+              'SELECT season_number, episode_number, display_season, display_episode, multi_episode_end FROM tv_episodes WHERE show_id = ?'
+            )
+            .all(id) as Array<Record<string, unknown>>)
+        : [];
+    const missingCount =
+      episodeGuide.length > 0
+        ? computeMissingEpisodesFromGuide(
+            id,
+            String(row.title),
+            episodeGuide,
+            epPresenceRows.map((e) => ({
+              seasonNumber: Number(e.season_number),
+              episodeNumber: Number(e.episode_number),
+              displaySeason: e.display_season != null ? Number(e.display_season) : null,
+              displayEpisode: e.display_episode != null ? Number(e.display_episode) : null,
+              multiEpisodeEnd: e.multi_episode_end != null ? Number(e.multi_episode_end) : null,
+            })),
+            []
+          ).length
+        : 0;
+
     return {
       id,
       sourceId: Number(row.source_id),
@@ -1279,6 +1317,7 @@ export class MediaDatabase {
       tags: safeJson(row.tags_json, []),
       actors: safeJson(row.actors_json, []),
       episodeOrder: (row.episode_order as TvShowRecord['episodeOrder']) || 'aired',
+      episodeGuide,
       uniqueIds: safeJson(row.unique_ids_json, {}),
       ratings: safeJson(row.ratings_json, []),
       userRating: row.user_rating != null ? Number(row.user_rating) : null,
@@ -1289,8 +1328,48 @@ export class MediaDatabase {
       watchedEpisodesCount: Number(epStatsRow.watched_c ?? 0),
       missingSubtitlesCount: Math.max(0, totalEps - Number(epsWithSubsRow.c ?? 0)),
       missingNfoCount: Number(epStatsRow.missing_nfo ?? 0),
+      missingEpisodesCount: missingCount,
       updatedAt: String(row.updated_at),
     };
+  }
+
+  getTvSeasonById(id: number): TvSeasonRecord | null {
+    const r = this.db.prepare('SELECT * FROM tv_seasons WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    if (!r) return null;
+    const showId = Number(r.show_id);
+    const sn = Number(r.season_number);
+    const countRow = this.db
+      .prepare('SELECT COUNT(*) AS c FROM tv_episodes WHERE show_id = ? AND season_number = ?')
+      .get(showId, sn) as { c: number };
+    return {
+      id: Number(r.id),
+      showId,
+      seasonNumber: sn,
+      name: String(r.name),
+      overview: String(r.overview ?? ''),
+      folderPath: r.folder_path ? String(r.folder_path) : null,
+      nfoPath: r.nfo_path ? String(r.nfo_path) : null,
+      hasNfo: Boolean(r.has_nfo),
+      posterPath: r.poster_path ? String(r.poster_path) : null,
+      bannerPath: r.banner_path ? String(r.banner_path) : null,
+      episodesCount: Number(countRow.c ?? 0),
+    };
+  }
+
+  updateTvSeasonArtwork(id: number, kind: 'poster' | 'banner', filePath: string): TvSeasonRecord | null {
+    const cur = this.getTvSeasonById(id);
+    if (!cur) return null;
+    if (kind === 'poster') {
+      this.db.prepare('UPDATE tv_seasons SET poster_path = ? WHERE id = ?').run(filePath, id);
+    } else {
+      this.db.prepare('UPDATE tv_seasons SET banner_path = ? WHERE id = ?').run(filePath, id);
+    }
+    return this.getTvSeasonById(id);
+  }
+
+  deleteTvEpisode(id: number) {
+    this.db.prepare("DELETE FROM subtitles WHERE media_type = 'episode' AND media_id = ?").run(id);
+    this.db.prepare('DELETE FROM tv_episodes WHERE id = ?').run(id);
   }
 
   upsertTvSeason(season: Omit<TvSeasonRecord, 'id' | 'episodesCount'>): TvSeasonRecord {
@@ -1651,3 +1730,58 @@ function safeJson<T>(val: unknown, fallback: T): T {
     return fallback;
   }
 }
+
+export interface EpisodePresenceSlice {
+  seasonNumber: number;
+  episodeNumber: number;
+  displaySeason?: number | null;
+  displayEpisode?: number | null;
+  multiEpisodeEnd?: number | null;
+}
+
+export function computeMissingEpisodesFromGuide(
+  showId: number,
+  showTitle: string,
+  episodeGuide: GuideEpisodeEntry[],
+  localEpisodes: EpisodePresenceSlice[],
+  seasons: TvSeasonRecord[] = [],
+  todayIso = new Date().toISOString().slice(0, 10)
+): MissingEpisodeRecord[] {
+  if (!episodeGuide || episodeGuide.length === 0) return [];
+
+  const presentKeys = new Set<string>();
+  for (const ep of localEpisodes) {
+    const end = ep.multiEpisodeEnd && ep.multiEpisodeEnd >= ep.episodeNumber ? ep.multiEpisodeEnd : ep.episodeNumber;
+    for (let num = ep.episodeNumber; num <= end; num++) {
+      presentKeys.add(`${ep.seasonNumber}:${num}`);
+    }
+    if (ep.displaySeason != null || ep.displayEpisode != null) {
+      const ds = ep.displaySeason ?? ep.seasonNumber;
+      const de = ep.displayEpisode ?? ep.episodeNumber;
+      presentKeys.add(`${ds}:${de}`);
+    }
+  }
+
+  const seasonNameMap = new Map<number, string>(seasons.map((s) => [s.seasonNumber, s.name]));
+  const seenGuideKeys = new Set<string>();
+  const missing: MissingEpisodeRecord[] = [];
+
+  for (const g of episodeGuide) {
+    if (g.seasonNumber <= 0 || g.episodeNumber <= 0) continue;
+    if (g.aired && g.aired > todayIso) continue;
+    const key = `${g.seasonNumber}:${g.episodeNumber}`;
+    if (seenGuideKeys.has(key) || presentKeys.has(key)) continue;
+    seenGuideKeys.add(key);
+
+    missing.push({
+      ...g,
+      showId,
+      showTitle,
+      seasonName: seasonNameMap.get(g.seasonNumber) ?? `Season ${g.seasonNumber}`,
+      code: `S${String(g.seasonNumber).padStart(2, '0')}E${String(g.episodeNumber).padStart(2, '0')}`,
+    });
+  }
+
+  return missing.sort((a, b) => a.seasonNumber - b.seasonNumber || a.episodeNumber - b.episodeNumber);
+}
+

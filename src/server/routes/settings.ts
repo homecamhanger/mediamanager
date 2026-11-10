@@ -9,11 +9,11 @@ import { LibraryScanner } from '../scanner/libraryScanner.js';
 import { ScanJobManager } from '../scanner/scanJobManager.js';
 import { resetAndSeedSampleLibrary } from '../scanner/sampleGenerator.js';
 
-export function createSettingsRouter(db: MediaDatabase): Router {
+export function createSettingsRouter(db: MediaDatabase, sharedScanJobs?: ScanJobManager): Router {
   const router = Router();
   const scanner = new LibraryScanner(db);
   const kodi = new KodiClient(db);
-  const scanJobs = new ScanJobManager();
+  const scanJobs = sharedScanJobs ?? new ScanJobManager();
 
   const startAsyncScan = (source: ReturnType<MediaDatabase['addSource']>) => {
     const job = scanJobs.createJob(source, true);
