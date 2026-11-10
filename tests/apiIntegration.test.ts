@@ -116,6 +116,9 @@ describe('KodiVault Full API Integration', () => {
     const auditRes = await request(app).get('/api/audit');
     expect(auditRes.status).toBe(200);
     expect(auditRes.body.summary.healthScore).toBeGreaterThan(0);
+    if (auditRes.body.issues.missingEpisodeNfo.length > 0) {
+      expect(auditRes.body.issues.missingEpisodeNfo[0].showId).toBeTypeOf('number');
+    }
 
     // 7. Hierarchical TV shows tree (Show -> Seasons -> Episodes)
     const treeRes = await request(app).get('/api/shows/tree');

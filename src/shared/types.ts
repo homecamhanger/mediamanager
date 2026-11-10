@@ -482,12 +482,12 @@ export interface LibraryAuditReport {
     unscrapedMovies: Array<{ id: number; title: string; filePath: string }>;
     unscrapedShows: Array<{ id: number; title: string; folderPath: string }>;
     missingMovieNfo: Array<{ id: number; title: string; filePath: string }>;
-    missingEpisodeNfo: Array<{ id: number; showTitle: string; code: string; title: string }>;
+    missingEpisodeNfo: Array<{ id: number; showId: number; showTitle: string; code: string; title: string }>;
     missingArtwork: Array<{ mediaType: 'movie' | 'tvshow'; id: number; title: string; missing: ArtworkKind[] }>;
-    missingSubtitles: Array<{ mediaType: 'movie' | 'episode'; id: number; title: string; missingLanguages: string[] }>;
+    missingSubtitles: Array<{ mediaType: 'movie' | 'episode'; id: number; showId?: number; title: string; missingLanguages: string[] }>;
     duplicateMovies: Array<{ key: string; reason: string; items: Array<{ id: number; title: string; year: number | null; filePath: string; resolution: string | null }> }>;
     duplicateEpisodes: Array<{ key: string; showTitle: string; season: number; episode: number; items: Array<{ id: number; title: string; filePath: string }> }>;
-    invalidNfoFiles: Array<{ mediaType: 'movie' | 'tvshow' | 'episode'; id: number; title: string; warnings: string[] }>;
+    invalidNfoFiles: Array<{ mediaType: 'movie' | 'tvshow' | 'episode'; id: number; showId?: number; title: string; warnings: string[] }>;
     lowResolutionItems: Array<{ mediaType: 'movie' | 'episode'; id: number; title: string; resolution: string; filePath: string }>;
   };
 }

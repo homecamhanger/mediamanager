@@ -2,12 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Copy, FileCode2, Languages, ShieldAlert, Sparkles } from 'lucide-react';
 import type { LibraryAuditReport } from '../../shared/types.js';
 import { api } from '../lib/api.js';
+import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 
 export const AuditPage: React.FC<{
   onRefresh: () => void;
-  onOpenMovie?: (movieId: number) => void;
-  onOpenShow?: (showId: number) => void;
-}> = ({ onRefresh, onOpenMovie, onOpenShow }) => {
+  onOpenMovie?: (movieId: number, focusTab?: InspectorFocusTab) => void;
+  onOpenShow?: (showId: number, focusTab?: InspectorFocusTab) => void;
+  onOpenEpisode?: (showId: number, episodeId: number, focusTab?: InspectorFocusTab) => void;
+}> = ({ onRefresh, onOpenMovie, onOpenShow, onOpenEpisode }) => {
   const [audit, setAudit] = useState<LibraryAuditReport | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -116,16 +118,20 @@ export const AuditPage: React.FC<{
           {issues.missingMovieNfo.map((m) => (
             <button
               key={`mn-${m.id}`}
-              onClick={() => onOpenMovie?.(m.id)}
+              onClick={() => onOpenMovie?.(m.id, 'nfo')}
               className="block w-full text-left text-xs text-slate-300 hover:text-sky-300 cursor-pointer"
             >
               Movie: {m.title}
             </button>
           ))}
           {issues.missingEpisodeNfo.map((e) => (
-            <div key={`en-${e.id}`} className="text-xs text-slate-300">
+            <button
+              key={`en-${e.id}`}
+              onClick={() => onOpenEpisode?.(e.showId, e.id, 'nfo')}
+              className="block w-full text-left text-xs text-slate-300 hover:text-sky-300 cursor-pointer"
+            >
               {e.showTitle} {e.code} — {e.title}
-            </div>
+            </button>
           ))}
         </AuditSection>
 
@@ -137,10 +143,17 @@ export const AuditPage: React.FC<{
           onAction={issues.missingSubtitles.length > 0 ? fixMissingSubs : undefined}
         >
           {issues.missingSubtitles.slice(0, 12).map((s, idx) => (
-            <div key={idx} className="text-xs text-slate-300 flex justify-between">
+            <button
+              key={idx}
+              onClick={() => {
+                if (s.mediaType === 'movie') onOpenMovie?.(s.id, 'subtitles');
+                else if (s.showId) onOpenEpisode?.(s.showId, s.id, 'subtitles');
+              }}
+              className="w-full text-left text-xs text-slate-300 hover:text-sky-300 flex justify-between cursor-pointer"
+            >
               <span>{s.title}</span>
               <span className="text-amber-300 font-mono uppercase">{s.missingLanguages.join(', ')}</span>
-            </div>
+            </button>
           ))}
         </AuditSection>
 
@@ -149,10 +162,17 @@ export const AuditPage: React.FC<{
           emptyText="All movies & shows have posters, fanart, and logos."
         >
           {issues.missingArtwork.map((a, i) => (
-            <div key={i} className="text-xs text-slate-300 flex justify-between gap-2">
+            <button
+              key={i}
+              onClick={() => {
+                if (a.mediaType === 'movie') onOpenMovie?.(a.id, 'artwork');
+                else onOpenShow?.(a.id, 'artwork');
+              }}
+              className="w-full text-left text-xs text-slate-300 hover:text-sky-300 flex justify-between gap-2 cursor-pointer"
+            >
               <span>{a.title}</span>
               <span className="text-rose-300 font-mono">{a.missing.join(', ')}</span>
-            </div>
+            </button>
           ))}
         </AuditSection>
 
@@ -166,9 +186,13 @@ export const AuditPage: React.FC<{
                 <Copy className="w-3.5 h-3.5" /> {d.reason}
               </div>
               {d.items.map((item) => (
-                <div key={item.id} className="text-[11px] font-mono text-slate-400 truncate">
+                <button
+                  key={item.id}
+                  onClick={() => onOpenMovie?.(item.id)}
+                  className="block w-full text-left text-[11px] font-mono text-slate-400 hover:text-sky-300 truncate cursor-pointer"
+                >
                   [{item.resolution}] {item.filePath}
-                </div>
+                </button>
               ))}
             </div>
           ))}
@@ -179,16 +203,28 @@ export const AuditPage: React.FC<{
           emptyText="All media meets 1080p+ quality and passes Kodi schema checks."
         >
           {issues.lowResolutionItems.map((l) => (
-            <div key={`lr-${l.id}`} className="text-xs text-slate-300 flex justify-between">
+            <button
+              key={`lr-${l.id}`}
+              onClick={() => onOpenMovie?.(l.id)}
+              className="w-full text-left text-xs text-slate-300 hover:text-sky-300 flex justify-between cursor-pointer"
+            >
               <span>{l.title}</span>
               <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 font-mono text-[10px]">{l.resolution}</span>
-            </div>
+            </button>
           ))}
           {issues.invalidNfoFiles.map((n) => (
-            <div key={`inv-${n.mediaType}-${n.id}`} className="text-xs text-amber-200 flex items-center gap-1.5">
+            <button
+              key={`inv-${n.mediaType}-${n.id}`}
+              onClick={() => {
+                if (n.mediaType === 'movie') onOpenMovie?.(n.id, 'nfo');
+                else if (n.mediaType === 'tvshow') onOpenShow?.(n.id, 'nfo');
+                else if (n.showId) onOpenEpisode?.(n.showId, n.id, 'nfo');
+              }}
+              className="w-full text-left text-xs text-amber-200 hover:text-sky-300 flex items-center gap-1.5 cursor-pointer"
+            >
               <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
               <span>{n.title}: {n.warnings.join('; ')}</span>
-            </div>
+            </button>
           ))}
         </AuditSection>
       </div>

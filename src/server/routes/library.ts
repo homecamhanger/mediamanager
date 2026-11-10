@@ -355,6 +355,7 @@ export function buildAuditReport(db: MediaDatabase): LibraryAuditReport {
     .filter((e) => !e.hasNfo)
     .map((e) => ({
       id: e.id,
+      showId: e.showId,
       showTitle: e.showTitle || 'Series',
       code: `S${String(e.seasonNumber).padStart(2, '0')}E${String(e.episodeNumber).padStart(2, '0')}`,
       title: e.title,
@@ -383,6 +384,7 @@ export function buildAuditReport(db: MediaDatabase): LibraryAuditReport {
       missingSubtitles.push({
         mediaType: 'episode',
         id: e.id,
+        showId: e.showId,
         title: `${e.showTitle || 'Series'} S${String(e.seasonNumber).padStart(2, '0')}E${String(e.episodeNumber).padStart(2, '0')}`,
         missingLanguages,
       });
@@ -435,13 +437,20 @@ export function buildAuditReport(db: MediaDatabase): LibraryAuditReport {
       mediaType: 'movie' as const,
       id: m.id,
       title: m.title,
-      warnings: m.nfoWarnings,
+      warnings: m.nfoWarnings.length > 0 ? m.nfoWarnings : ['Invalid NFO XML'],
     })),
     ...shows.filter((s) => s.hasNfo && (!s.nfoValid || s.nfoWarnings.length > 0)).map((s) => ({
       mediaType: 'tvshow' as const,
       id: s.id,
       title: s.title,
-      warnings: s.nfoWarnings,
+      warnings: s.nfoWarnings.length > 0 ? s.nfoWarnings : ['Invalid tvshow.nfo XML'],
+    })),
+    ...episodes.filter((e) => e.hasNfo && (!e.nfoValid || e.nfoWarnings.length > 0)).map((e) => ({
+      mediaType: 'episode' as const,
+      id: e.id,
+      showId: e.showId,
+      title: `${e.showTitle || 'Series'} S${String(e.seasonNumber).padStart(2, '0')}E${String(e.episodeNumber).padStart(2, '0')} — ${e.title}`,
+      warnings: e.nfoWarnings.length > 0 ? e.nfoWarnings : ['Invalid episode NFO XML'],
     })),
   ];
 

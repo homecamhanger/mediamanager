@@ -39,11 +39,12 @@ const ARTWORK_SLOTS: Array<{ kind: ArtworkKind; label: string; aspect: 'poster' 
 
 export const MovieDetailPanel: React.FC<{
   movieId: number;
+  initialTab?: DetailTab;
   onUpdated: () => void;
   onClose?: () => void;
-}> = ({ movieId, onUpdated, onClose }) => {
+}> = ({ movieId, initialTab, onUpdated, onClose }) => {
   const [movie, setMovie] = useState<MovieRecord | null>(null);
-  const [tab, setTab] = useState<DetailTab>('metadata');
+  const [tab, setTab] = useState<DetailTab>(initialTab ?? 'metadata');
   const [saving, setSaving] = useState(false);
   const [scrapeOpen, setScrapeOpen] = useState(false);
   const [subSearchOpen, setSubSearchOpen] = useState(false);
@@ -67,10 +68,10 @@ export const MovieDetailPanel: React.FC<{
   };
 
   useEffect(() => {
-    setTab('metadata');
+    setTab(initialTab ?? 'metadata');
     void loadMovie();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [movieId]);
+  }, [movieId, initialTab]);
 
   if (!movie) {
     return <div className="p-6 text-xs text-slate-400">Loading movie details...</div>;

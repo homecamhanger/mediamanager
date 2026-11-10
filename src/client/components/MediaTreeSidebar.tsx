@@ -21,8 +21,8 @@ import { api } from '../lib/api.js';
 import type { LeftLibraryTab, SelectedMedia, ShowTreeNode } from '../lib/workspaceTypes.js';
 import { PosterImage } from './PosterImage.js';
 
-type MovieFilter = 'all' | 'unscraped' | 'missing_nfo' | 'missing_subs' | '4k' | 'unwatched';
-type TvFilter = 'all' | 'unscraped' | 'missing_nfo';
+type MovieFilter = 'all' | 'unscraped' | 'missing_nfo' | 'nfo_warnings' | 'missing_subs' | '4k' | 'unwatched';
+type TvFilter = 'all' | 'unscraped' | 'missing_nfo' | 'nfo_warnings';
 
 interface MediaTreeSidebarProps {
   activeTab: LeftLibraryTab;
@@ -106,6 +106,7 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
       }
       if (movieFilter === 'unscraped' && m.scraped) return false;
       if (movieFilter === 'missing_nfo' && m.hasNfo) return false;
+      if (movieFilter === 'nfo_warnings' && !(m.hasNfo && (!m.nfoValid || m.nfoWarnings.length > 0))) return false;
       if (movieFilter === 'missing_subs' && m.subtitles.length > 0) return false;
       if (movieFilter === 'unwatched' && m.watched) return false;
       if (movieFilter === '4k' && m.parsedInfo.resolution !== '2160p' && (m.streamDetails.video[0]?.height ?? 0) < 2000) {
@@ -118,25 +119,41 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
   const filteredShowTree = useMemo(() => {
     return showTree
       .map((node) => {
+        const showHasNfoWarn = node.show.hasNfo && (!node.show.nfoValid || node.show.nfoWarnings.length > 0);
+        const epHasNfoWarn = (ep: ShowTreeNode['episodes'][number]) =>
+          ep.hasNfo && (!ep.nfoValid || ep.nfoWarnings.length > 0);
+
         const showMatchesFilter =
           tvFilter === 'all' ||
           (tvFilter === 'unscraped' && !node.show.scraped) ||
-          (tvFilter === 'missing_nfo' && (!node.show.hasNfo || node.show.missingNfoCount > 0));
+          (tvFilter === 'missing_nfo' && (!node.show.hasNfo || node.show.missingNfoCount > 0)) ||
+          (tvFilter === 'nfo_warnings' && (showHasNfoWarn || node.episodes.some(epHasNfoWarn)));
         if (!showMatchesFilter) return null;
 
-        if (!q) return node;
-        const showTitleMatch = `${node.show.title} ${node.show.year ?? ''} ${node.show.studio}`.toLowerCase().includes(q);
-        const matchingEps = node.episodes.filter((ep) => {
+        let scopedNode = node;
+        if (tvFilter === 'nfo_warnings' && !showHasNfoWarn) {
+          const warnEps = node.episodes.filter(epHasNfoWarn);
+          const seasonNums = new Set(warnEps.map((e) => e.seasonNumber));
+          scopedNode = {
+            show: node.show,
+            seasons: node.seasons.filter((s) => seasonNums.has(s.seasonNumber)),
+            episodes: warnEps,
+          };
+        }
+
+        if (!q) return scopedNode;
+        const showTitleMatch = `${scopedNode.show.title} ${scopedNode.show.year ?? ''} ${scopedNode.show.studio}`.toLowerCase().includes(q);
+        const matchingEps = scopedNode.episodes.filter((ep) => {
           const code = `s${String(ep.seasonNumber).padStart(2, '0')}e${String(ep.episodeNumber).padStart(2, '0')}`;
           return `${ep.title} ${code} ${ep.fileName}`.toLowerCase().includes(q);
         });
         if (!showTitleMatch && matchingEps.length === 0) return null;
 
-        if (showTitleMatch) return node;
+        if (showTitleMatch) return scopedNode;
         const seasonNums = new Set(matchingEps.map((e) => e.seasonNumber));
         return {
-          show: node.show,
-          seasons: node.seasons.filter((s) => seasonNums.has(s.seasonNumber)),
+          show: scopedNode.show,
+          seasons: scopedNode.seasons.filter((s) => seasonNums.has(s.seasonNumber)),
           episodes: matchingEps,
         };
       })
@@ -308,6 +325,7 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
               <option value="all">All Movies ({movies.length})</option>
               <option value="unscraped">Unscraped Only</option>
               <option value="missing_nfo">Missing NFO</option>
+              <option value="nfo_warnings">NFO Warnings</option>
               <option value="missing_subs">No Subtitles</option>
               <option value="4k">4K UHD Only</option>
               <option value="unwatched">Unwatched Only</option>
@@ -375,6 +393,7 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
               <option value="all">All Series ({showTree.length})</option>
               <option value="unscraped">Unscraped Series</option>
               <option value="missing_nfo">Missing NFOs</option>
+              <option value="nfo_warnings">NFO Warnings</option>
             </select>
             <button
               onClick={expandAllTv}
@@ -488,8 +507,20 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
                         <span
-                          title={m.hasNfo ? 'Has NFO' : 'Missing NFO'}
-                          className={`w-1.5 h-1.5 rounded-full ${m.hasNfo ? 'bg-emerald-400' : 'bg-rose-400/70'}`}
+                          title={
+                            !m.hasNfo
+                              ? 'Missing NFO'
+                              : !m.nfoValid || m.nfoWarnings.length > 0
+                                ? `NFO warnings (${m.nfoWarnings.length})`
+                                : 'Valid NFO'
+                          }
+                          className={`w-1.5 h-1.5 rounded-full ${
+                            !m.hasNfo
+                              ? 'bg-rose-400/80'
+                              : !m.nfoValid || m.nfoWarnings.length > 0
+                                ? 'bg-amber-400'
+                                : 'bg-emerald-400'
+                          }`}
                         />
                         <span
                           title={m.subtitles.length > 0 ? `${m.subtitles.length} subtitle(s)` : 'No subtitles'}
@@ -562,8 +593,20 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                         </div>
                         <div className="flex items-center gap-1">
                           <span
-                            title={show.hasNfo ? 'tvshow.nfo present' : 'Missing tvshow.nfo'}
-                            className={`w-1.5 h-1.5 rounded-full ${show.hasNfo ? 'bg-emerald-400' : 'bg-rose-400/70'}`}
+                            title={
+                              !show.hasNfo
+                                ? 'Missing tvshow.nfo'
+                                : !show.nfoValid || show.nfoWarnings.length > 0
+                                  ? `tvshow.nfo warnings (${show.nfoWarnings.length})`
+                                  : 'Valid tvshow.nfo'
+                            }
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              !show.hasNfo
+                                ? 'bg-rose-400/80'
+                                : !show.nfoValid || show.nfoWarnings.length > 0
+                                  ? 'bg-amber-400'
+                                  : 'bg-emerald-400'
+                            }`}
                           />
                           <span className="text-[9px] text-slate-500">
                             {show.watchedEpisodesCount}/{show.episodesCount}
@@ -648,9 +691,19 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                                         <span className="text-[11px] truncate flex-1">{ep.title}</span>
                                         <div className="flex items-center gap-1 shrink-0">
                                           <span
-                                            title={ep.hasNfo ? 'Has episode NFO' : 'Missing episode NFO'}
+                                            title={
+                                              !ep.hasNfo
+                                                ? 'Missing episode NFO'
+                                                : !ep.nfoValid || ep.nfoWarnings.length > 0
+                                                  ? `Episode NFO warnings (${ep.nfoWarnings.length})`
+                                                  : 'Valid episode NFO'
+                                            }
                                             className={`w-1.5 h-1.5 rounded-full ${
-                                              ep.hasNfo ? 'bg-emerald-400' : 'bg-rose-400/70'
+                                              !ep.hasNfo
+                                                ? 'bg-rose-400/80'
+                                                : !ep.nfoValid || ep.nfoWarnings.length > 0
+                                                  ? 'bg-amber-400'
+                                                  : 'bg-emerald-400'
                                             }`}
                                           />
                                           <span

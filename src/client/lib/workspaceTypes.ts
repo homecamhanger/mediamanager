@@ -6,15 +6,16 @@ export type RibbonTool =
   | 'overview'
   | 'renamer'
   | 'subtitles'
-  | 'nfo'
   | 'audit'
   | 'scrapers'
   | 'settings';
 
+export type InspectorFocusTab = 'nfo' | 'subtitles' | 'artwork';
+
 export type SelectedMedia =
-  | { kind: 'movie'; movieId: number }
-  | { kind: 'show'; showId: number; seasonNumber?: number | null }
-  | { kind: 'episode'; showId: number; episodeId: number }
+  | { kind: 'movie'; movieId: number; focusTab?: InspectorFocusTab }
+  | { kind: 'show'; showId: number; seasonNumber?: number | null; focusTab?: InspectorFocusTab }
+  | { kind: 'episode'; showId: number; episodeId: number; focusTab?: InspectorFocusTab }
   | { kind: 'set'; setId: number }
   | null;
 

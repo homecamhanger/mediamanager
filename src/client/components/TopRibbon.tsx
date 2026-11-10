@@ -2,7 +2,6 @@ import React from 'react';
 import {
   Activity,
   ArrowLeft,
-  Code2,
   FileCode2,
   FolderSync,
   Languages,
@@ -210,7 +209,6 @@ export const TopRibbon: React.FC<TopRibbonProps> = ({
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mr-0.5">Tools</span>
             {toolBtn('renamer', 'Renamer', <FolderSync className="w-3.5 h-3.5 text-emerald-400" />)}
             {toolBtn('subtitles', 'Subtitles', <Subtitles className="w-3.5 h-3.5 text-sky-400" />, counts.subtitles, 'sky')}
-            {toolBtn('nfo', 'NFO Inspector', <Code2 className="w-3.5 h-3.5 text-indigo-400" />)}
             {toolBtn('audit', 'Library Audit', <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />, counts.issues, 'amber')}
           </div>
 

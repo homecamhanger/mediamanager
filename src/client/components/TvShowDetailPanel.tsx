@@ -27,16 +27,17 @@ type TvTab = 'episodes' | 'metadata' | 'artwork' | 'nfo';
 export const TvShowDetailPanel: React.FC<{
   showId: number;
   selectedSeason?: number | null;
+  initialTab?: TvTab;
   onSelectSeason?: (seasonNumber: number | null) => void;
   onSelectEpisode?: (episodeId: number) => void;
   onUpdated: () => void;
   onClose?: () => void;
-}> = ({ showId, selectedSeason = null, onSelectSeason, onSelectEpisode, onUpdated, onClose }) => {
+}> = ({ showId, selectedSeason = null, initialTab, onSelectSeason, onSelectEpisode, onUpdated, onClose }) => {
   const [show, setShow] = useState<TvShowRecord | null>(null);
   const [seasons, setSeasons] = useState<TvSeasonRecord[]>([]);
   const [episodes, setEpisodes] = useState<TvEpisodeRecord[]>([]);
   const [activeSeason, setActiveSeason] = useState<number | 'all'>(selectedSeason ?? 'all');
-  const [tab, setTab] = useState<TvTab>('episodes');
+  const [tab, setTab] = useState<TvTab>(initialTab ?? 'episodes');
   const [form, setForm] = useState<Partial<TvShowRecord>>({});
   const [nfoXml, setNfoXml] = useState('');
   const [nfoVal, setNfoVal] = useState<NfoValidationReport | null>(null);
@@ -57,9 +58,10 @@ export const TvShowDetailPanel: React.FC<{
   };
 
   useEffect(() => {
+    setTab(initialTab ?? 'episodes');
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showId]);
+  }, [showId, initialTab]);
 
   useEffect(() => {
     setActiveSeason(selectedSeason ?? 'all');

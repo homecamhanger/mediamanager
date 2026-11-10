@@ -10,7 +10,6 @@ import { api } from './lib/api.js';
 import type { LeftLibraryTab, RibbonTool, SelectedMedia, ShowTreeNode } from './lib/workspaceTypes.js';
 import { AuditPage } from './pages/AuditPage.js';
 import { DashboardPage } from './pages/DashboardPage.js';
-import { NfoInspectorPage } from './pages/NfoInspectorPage.js';
 import { RenamerPage } from './pages/RenamerPage.js';
 import { ScrapersPage } from './pages/ScrapersPage.js';
 import { SettingsPage } from './pages/SettingsPage.js';
@@ -253,23 +252,36 @@ export const App: React.FC = () => {
               )}
               {activeTool === 'renamer' && <RenamerPage onRefresh={refreshAll} />}
               {activeTool === 'subtitles' && <SubtitlesPage movies={movies} onRefresh={refreshAll} />}
-              {activeTool === 'nfo' && <NfoInspectorPage onRefresh={refreshAll} />}
               {activeTool === 'audit' && (
                 <AuditPage
                   onRefresh={refreshAll}
-                  onOpenMovie={(movieId) => handleSelectMedia({ kind: 'movie', movieId })}
-                  onOpenShow={(showId) => handleSelectMedia({ kind: 'show', showId, seasonNumber: null })}
+                  onOpenMovie={(movieId, focusTab) => handleSelectMedia({ kind: 'movie', movieId, focusTab })}
+                  onOpenShow={(showId, focusTab) =>
+                    handleSelectMedia({ kind: 'show', showId, seasonNumber: null, focusTab })
+                  }
+                  onOpenEpisode={(showId, episodeId, focusTab) =>
+                    handleSelectMedia({ kind: 'episode', showId, episodeId, focusTab })
+                  }
                 />
               )}
               {activeTool === 'scrapers' && <ScrapersPage onRefresh={refreshAll} />}
               {activeTool === 'settings' && <SettingsPage onRefresh={refreshAll} />}
             </div>
           ) : selected?.kind === 'movie' ? (
-            <MovieDetailPanel movieId={selected.movieId} onUpdated={refreshAll} />
+            <MovieDetailPanel
+              movieId={selected.movieId}
+              initialTab={selected.focusTab}
+              onUpdated={refreshAll}
+            />
           ) : selected?.kind === 'show' ? (
             <TvShowDetailPanel
               showId={selected.showId}
               selectedSeason={selected.seasonNumber ?? null}
+              initialTab={
+                selected.focusTab === 'nfo' || selected.focusTab === 'artwork'
+                  ? selected.focusTab
+                  : undefined
+              }
               onSelectSeason={(seasonNumber) =>
                 setSelected({ kind: 'show', showId: selected.showId, seasonNumber })
               }
@@ -282,6 +294,11 @@ export const App: React.FC = () => {
             <EpisodeDetailPanel
               showId={selected.showId}
               episodeId={selected.episodeId}
+              initialTab={
+                selected.focusTab === 'nfo' || selected.focusTab === 'subtitles'
+                  ? selected.focusTab
+                  : undefined
+              }
               onSelectShow={(showId, seasonNumber) =>
                 setSelected({ kind: 'show', showId, seasonNumber: seasonNumber ?? null })
               }

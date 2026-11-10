@@ -25,13 +25,14 @@ type EpisodeTab = 'metadata' | 'subtitles' | 'nfo' | 'mediainfo';
 export const EpisodeDetailPanel: React.FC<{
   showId: number;
   episodeId: number;
+  initialTab?: EpisodeTab;
   onSelectShow: (showId: number, seasonNumber?: number | null) => void;
   onUpdated: () => void;
-}> = ({ showId, episodeId, onSelectShow, onUpdated }) => {
+}> = ({ showId, episodeId, initialTab, onSelectShow, onUpdated }) => {
   const [show, setShow] = useState<TvShowRecord | null>(null);
   const [episode, setEpisode] = useState<TvEpisodeRecord | null>(null);
   const [form, setForm] = useState<Partial<TvEpisodeRecord>>({});
-  const [tab, setTab] = useState<EpisodeTab>('metadata');
+  const [tab, setTab] = useState<EpisodeTab>(initialTab ?? 'metadata');
   const [nfoXml, setNfoXml] = useState('');
   const [nfoVal, setNfoVal] = useState<NfoValidationReport | null>(null);
   const [subSearchOpen, setSubSearchOpen] = useState(false);
@@ -53,10 +54,10 @@ export const EpisodeDetailPanel: React.FC<{
   };
 
   useEffect(() => {
-    setTab('metadata');
+    setTab(initialTab ?? 'metadata');
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showId, episodeId]);
+  }, [showId, episodeId, initialTab]);
 
   if (!show || !episode) {
     return <div className="p-6 text-xs text-slate-400">Loading episode details...</div>;
