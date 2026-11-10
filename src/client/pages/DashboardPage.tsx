@@ -13,7 +13,7 @@ import {
   Tv,
 } from 'lucide-react';
 import type { DashboardSummary } from '../../shared/types.js';
-import type { NavTab } from '../components/Sidebar.js';
+import type { LeftLibraryTab, RibbonTool } from '../lib/workspaceTypes.js';
 
 interface DashboardPageProps {
   summary: DashboardSummary | null;
@@ -21,7 +21,8 @@ interface DashboardPageProps {
   onAutoScrapeAll: () => void;
   onDownloadMissingSubs: () => void;
   onRegenerateNfos: () => void;
-  onNavigate: (tab: NavTab) => void;
+  onOpenTool: (tool: RibbonTool) => void;
+  onOpenLibraryTab: (tab: LeftLibraryTab) => void;
 }
 
 export const DashboardPage: React.FC<DashboardPageProps> = ({
@@ -30,7 +31,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   onAutoScrapeAll,
   onDownloadMissingSubs,
   onRegenerateNfos,
-  onNavigate,
+  onOpenTool,
+  onOpenLibraryTab,
 }) => {
   if (!summary) {
     return <div className="p-8 text-sm text-slate-400">Loading library telemetry...</div>;
@@ -75,7 +77,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             {busyAction === 'nfo' ? 'Writing NFOs...' : 'Sync All NFOs'}
           </button>
           <button
-            onClick={() => onNavigate('renamer')}
+            onClick={() => onOpenTool('renamer')}
             className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
           >
             <FolderSync className="w-4 h-4 text-amber-400" />
@@ -91,35 +93,35 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           value={counts.movies}
           sub={`${counts.scrapedMovies}/${counts.movies} scraped • ${counts.moviesWithNfo} NFO`}
           icon={<Clapperboard className="w-5 h-5 text-sky-400" />}
-          onClick={() => onNavigate('movies')}
+          onClick={() => onOpenLibraryTab('movies')}
         />
         <StatCard
           title="TV Shows"
           value={counts.shows}
           sub={`${counts.episodes} episodes • ${counts.scrapedShows}/${counts.shows} scraped`}
           icon={<Tv className="w-5 h-5 text-indigo-400" />}
-          onClick={() => onNavigate('tvshows')}
+          onClick={() => onOpenLibraryTab('tvshows')}
         />
         <StatCard
           title="Movie Sets"
           value={counts.sets}
           sub="Kodi <set> collections"
           icon={<Layers className="w-5 h-5 text-amber-400" />}
-          onClick={() => onNavigate('sets')}
+          onClick={() => onOpenLibraryTab('sets')}
         />
         <StatCard
           title="Subtitles"
           value={counts.subtitles}
           sub="Sidecar SRT/ASS/VTT files"
           icon={<Subtitles className="w-5 h-5 text-emerald-400" />}
-          onClick={() => onNavigate('subtitles')}
+          onClick={() => onOpenTool('subtitles')}
         />
         <StatCard
           title="Health Score"
           value={`${healthScore}%`}
           sub={healthScore >= 85 ? 'Kodi Ready' : 'Items need attention'}
           icon={<ShieldCheck className={`w-5 h-5 ${healthScore >= 80 ? 'text-emerald-400' : 'text-amber-400'}`} />}
-          onClick={() => onNavigate('audit')}
+          onClick={() => onOpenTool('audit')}
         />
       </div>
 
@@ -167,7 +169,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         <div className="p-5 rounded-2xl bg-[#111827] border border-slate-800 space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-100">Active Scraper Sources</h3>
-            <button onClick={() => onNavigate('scrapers')} className="text-xs text-sky-400 hover:underline cursor-pointer">
+            <button onClick={() => onOpenTool('scrapers')} className="text-xs text-sky-400 hover:underline cursor-pointer">
               Configure
             </button>
           </div>

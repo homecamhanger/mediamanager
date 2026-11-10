@@ -93,6 +93,8 @@ export const api = {
 
   // TV Shows & Episodes
   listShows: () => req<{ shows: TvShowRecord[] }>('/api/shows'),
+  getShowsTree: () =>
+    req<{ tree: Array<{ show: TvShowRecord; seasons: TvSeasonRecord[]; episodes: TvEpisodeRecord[] }> }>('/api/shows/tree'),
   getShow: (id: number) => req<{ show: TvShowRecord; seasons: TvSeasonRecord[]; episodes: TvEpisodeRecord[] }>(`/api/shows/${id}`),
   updateShow: (id: number, patch: Partial<TvShowRecord> & { writeNfo?: boolean }) =>
     req<{ show: TvShowRecord }>(`/api/shows/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),

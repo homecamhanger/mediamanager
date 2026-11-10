@@ -210,6 +210,16 @@ export function createLibraryRouter(db: MediaDatabase): Router {
   });
 
   // ---- TV Shows & Episodes ----
+  router.get('/shows/tree', (_req, res) => {
+    const shows = db.listTvShows();
+    const tree = shows.map((show) => ({
+      show,
+      seasons: db.listSeasonsForShow(show.id),
+      episodes: db.listEpisodesForShow(show.id),
+    }));
+    res.json({ tree });
+  });
+
   router.get('/shows', (_req, res) => {
     res.json({ shows: db.listTvShows() });
   });

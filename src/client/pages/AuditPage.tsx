@@ -3,7 +3,11 @@ import { AlertTriangle, CheckCircle2, Copy, FileCode2, Languages, ShieldAlert, S
 import type { LibraryAuditReport } from '../../shared/types.js';
 import { api } from '../lib/api.js';
 
-export const AuditPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh }) => {
+export const AuditPage: React.FC<{
+  onRefresh: () => void;
+  onOpenMovie?: (movieId: number) => void;
+  onOpenShow?: (showId: number) => void;
+}> = ({ onRefresh, onOpenMovie, onOpenShow }) => {
   const [audit, setAudit] = useState<LibraryAuditReport | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -81,16 +85,24 @@ export const AuditPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh }) =>
           onAction={issues.unscrapedMovies.length + issues.unscrapedShows.length > 0 ? fixUnscraped : undefined}
         >
           {issues.unscrapedMovies.map((m) => (
-            <div key={`m-${m.id}`} className="text-xs text-slate-300 flex justify-between gap-2">
+            <button
+              key={`m-${m.id}`}
+              onClick={() => onOpenMovie?.(m.id)}
+              className="w-full text-left text-xs text-slate-300 hover:text-sky-300 flex justify-between gap-2 cursor-pointer"
+            >
               <span className="font-semibold text-white">Movie: {m.title}</span>
               <span className="font-mono text-[11px] text-slate-500 truncate max-w-xs">{m.filePath}</span>
-            </div>
+            </button>
           ))}
           {issues.unscrapedShows.map((s) => (
-            <div key={`s-${s.id}`} className="text-xs text-slate-300 flex justify-between gap-2">
+            <button
+              key={`s-${s.id}`}
+              onClick={() => onOpenShow?.(s.id)}
+              className="w-full text-left text-xs text-slate-300 hover:text-sky-300 flex justify-between gap-2 cursor-pointer"
+            >
               <span className="font-semibold text-white">TV Show: {s.title}</span>
               <span className="font-mono text-[11px] text-slate-500 truncate max-w-xs">{s.folderPath}</span>
-            </div>
+            </button>
           ))}
         </AuditSection>
 
@@ -102,7 +114,13 @@ export const AuditPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh }) =>
           onAction={issues.missingMovieNfo.length + issues.missingEpisodeNfo.length > 0 ? fixMissingNfos : undefined}
         >
           {issues.missingMovieNfo.map((m) => (
-            <div key={`mn-${m.id}`} className="text-xs text-slate-300">Movie: {m.title}</div>
+            <button
+              key={`mn-${m.id}`}
+              onClick={() => onOpenMovie?.(m.id)}
+              className="block w-full text-left text-xs text-slate-300 hover:text-sky-300 cursor-pointer"
+            >
+              Movie: {m.title}
+            </button>
           ))}
           {issues.missingEpisodeNfo.map((e) => (
             <div key={`en-${e.id}`} className="text-xs text-slate-300">

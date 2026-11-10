@@ -117,6 +117,14 @@ describe('KodiVault Full API Integration', () => {
     expect(auditRes.status).toBe(200);
     expect(auditRes.body.summary.healthScore).toBeGreaterThan(0);
 
+    // 7. Hierarchical TV shows tree (Show -> Seasons -> Episodes)
+    const treeRes = await request(app).get('/api/shows/tree');
+    expect(treeRes.status).toBe(200);
+    expect(treeRes.body.tree.length).toBeGreaterThanOrEqual(3);
+    expect(treeRes.body.tree[0].show.title).toBeTruthy();
+    expect(treeRes.body.tree[0].seasons.length).toBeGreaterThan(0);
+    expect(treeRes.body.tree[0].episodes.length).toBeGreaterThan(0);
+
     db.close();
   }, 20000);
 });
