@@ -380,12 +380,12 @@ export const TvShowDetailPanel: React.FC<{
                       </button>
                       <button
                         onClick={(e) => toggleEpisodeWatched(ep, e)}
-                        className={`p-1.5 rounded border cursor-pointer ${
+                        className={`p-1.5 rounded border cursor-pointer transition ${
                           ep.watched
-                            ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                            ? 'bg-purple-500/20 border-purple-500/40 text-purple-300 hover:bg-purple-500/30'
                             : 'bg-slate-800 border-slate-700 text-slate-400'
                         }`}
-                        title="Toggle watched"
+                        title={ep.watched ? 'Watched (click to mark unwatched)' : 'Unwatched (click to mark watched)'}
                       >
                         {ep.watched ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
                       </button>

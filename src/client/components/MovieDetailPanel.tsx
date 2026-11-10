@@ -106,8 +106,6 @@ export const MovieDetailPanel: React.FC<{
         setName: form.setName ?? null,
         uniqueIds: form.uniqueIds,
         userRating: form.userRating ? Number(form.userRating) : null,
-        watched: form.watched,
-        playCount: form.watched ? Math.max(1, form.playCount ?? 1) : 0,
         writeNfo: true,
       });
       await loadMovie();
@@ -225,9 +223,9 @@ export const MovieDetailPanel: React.FC<{
           <div className="flex items-center gap-1.5 flex-wrap shrink-0">
             <button
               onClick={handleQuickToggleWatched}
-              className={`px-2.5 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1 cursor-pointer ${
+              className={`px-2.5 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1 cursor-pointer transition ${
                 movie.watched
-                  ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                  ? 'bg-purple-500/20 border-purple-500/40 text-purple-300 hover:bg-purple-500/30'
                   : 'bg-slate-800/90 border-slate-700 text-slate-300 hover:text-white'
               }`}
             >
@@ -355,31 +353,17 @@ export const MovieDetailPanel: React.FC<{
               </div>
 
               <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setForm({ ...form, watched: !form.watched })}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold border flex items-center gap-1.5 cursor-pointer ${
-                      form.watched
-                        ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
-                        : 'bg-slate-900 border-slate-700 text-slate-400'
-                    }`}
-                  >
-                    {form.watched ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                    {form.watched ? 'Watched' : 'Unwatched'}
-                  </button>
-                  <div className="flex items-center gap-1.5">
-                    <Star className="w-3.5 h-3.5 text-amber-400" />
-                    <span className="text-xs text-slate-400">User Rating:</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={10}
-                      value={form.userRating ?? ''}
-                      onChange={(e) => setForm({ ...form, userRating: e.target.value ? Number(e.target.value) : null })}
-                      className="w-14 bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-slate-100"
-                    />
-                  </div>
+                <div className="flex items-center gap-1.5">
+                  <Star className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="text-xs text-slate-400">User Rating:</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={form.userRating ?? ''}
+                    onChange={(e) => setForm({ ...form, userRating: e.target.value ? Number(e.target.value) : null })}
+                    className="w-14 bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-slate-100"
+                  />
                 </div>
 
                 <button

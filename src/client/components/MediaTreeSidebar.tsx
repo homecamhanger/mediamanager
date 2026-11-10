@@ -384,9 +384,9 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
               <button
                 disabled={batchBusy}
                 onClick={() => runMovieBatch('watched')}
-                className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-semibold cursor-pointer"
+                className="px-1.5 py-0.5 rounded bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 text-purple-200 text-[10px] font-semibold cursor-pointer"
               >
-                Seen
+                Watched
               </button>
             </div>
           </div>
@@ -539,7 +539,7 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                         />
                         <span
                           title={m.watched ? 'Watched' : 'Unwatched'}
-                          className={`w-1.5 h-1.5 rounded-full ${m.watched ? 'bg-indigo-400' : 'bg-slate-700'}`}
+                          className={`w-1.5 h-1.5 rounded-full ${m.watched ? 'bg-purple-400' : 'bg-slate-700'}`}
                         />
                       </div>
                     </div>
@@ -726,7 +726,7 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                                           <span
                                             title={ep.watched ? 'Watched' : 'Unwatched'}
                                             className={`w-1.5 h-1.5 rounded-full ${
-                                              ep.watched ? 'bg-indigo-400' : 'bg-slate-700'
+                                              ep.watched ? 'bg-purple-400' : 'bg-slate-700'
                                             }`}
                                           />
                                         </div>
@@ -831,7 +831,7 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
             <Subtitles className="w-2.5 h-2.5 text-sky-400" /> Subs
           </span>
           <span className="inline-flex items-center gap-1">
-            <Eye className="w-2.5 h-2.5 text-indigo-400" /> Seen
+            <Eye className="w-2.5 h-2.5 text-purple-400" /> Watched
           </span>
         </span>
         <span className="inline-flex items-center gap-1 text-slate-400">

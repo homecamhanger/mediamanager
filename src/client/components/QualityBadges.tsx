@@ -71,7 +71,7 @@ export const CompletenessPills: React.FC<{
         {subtitles.length > 0 ? subtitles.map((s) => s.language.toUpperCase()).slice(0, 2).join(',') : 'SUB'}
       </span>
       {watched && (
-        <span title="Watched" className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-500/20 text-indigo-300">
+        <span title="Watched" className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-500/20 text-purple-300">
           <Eye className="w-3 h-3" />
           <Check className="w-2.5 h-2.5" />
         </span>
