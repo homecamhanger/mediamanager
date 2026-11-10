@@ -1,0 +1,7 @@
+node_modules/
+dist/
+data/
+sample-library/
+*.log
+.DS_Store
+coverage/
