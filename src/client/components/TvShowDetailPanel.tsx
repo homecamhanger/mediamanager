@@ -36,6 +36,7 @@ import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 import { ArtworkPickerModal, ArtworkPickerTarget, ClickableArtCard } from './ArtworkPickerModal.js';
 import { CastListColumn } from './CastListColumn.js';
 import { ChipInput } from './ChipInput.js';
+import { FormField as Field } from './FormField.js';
 import { PosterImage } from './PosterImage.js';
 import { TechBadges } from './QualityBadges.js';
 import { RatingBadges } from './RatingBadges.js';
@@ -1169,20 +1170,3 @@ export const TvShowDetailPanel: React.FC<{
     </div>
   );
 };
-
-const Field: React.FC<{
-  label: string;
-  value: string;
-  onChange: (val: string) => void;
-  type?: string;
-}> = ({ label, value, onChange, type = 'text' }) => (
-  <div>
-    <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-0.5">{label}</label>
-    <input
-      type={type}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-slate-100"
-    />
-  </div>
-);

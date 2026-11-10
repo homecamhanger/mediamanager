@@ -8,16 +8,16 @@ A full-featured, browser-based media manager built specifically for **Kodi** lib
   - Supports **TMDb**, **OMDb (IMDb, Rotten Tomatoes, Metacritic)**, **TheTVDB v4**, **Fanart.tv**, **Trakt.tv**, keyless public scrapers (**TVmaze**, **Jikan / MyAnimeList**, **Apple iTunes Search**, **Wikipedia / Wikidata**), and a built-in **Kodi Reference Catalog** fallback for offline/demo operation. Keyless scrapers always run when enabled regardless of API key configuration or demo mode.
   - Aggregates ratings across IMDb, TMDb, Rotten Tomatoes, Metacritic, Trakt, TVmaze, and MAL into Kodi's `<ratings>` XML schema.
   - Configure per-field source priority (`Title`, `Plot`, `Ratings`, `Cast`, `Genres`, `Certification`, `Artwork`, `Episode Guide`).
-  - Interactive match picker with candidate confidence, multi-provider diff preview, and artwork selector (`poster`, `fanart`, `clearlogo`, `clearart`, `disc`, `banner`, `landscape`).
+  - Interactive match picker with candidate confidence, multi-provider diff preview, and a clickable artwork picker modal (`poster`, `fanart`, `clearlogo`, `clearart`, `disc`, `banner`, `landscape`, season posters, and episode stills) supporting scraped options, image URLs, and local drag-and-drop uploads (including `.actors/` portraits).
 
 - **Kodi NFO Reader, Writer & Validator**
-  - Parses and writes Kodi-compliant `movie.nfo`, `<filename>.nfo`, `tvshow.nfo`, `season.nfo`, and `<episode>.nfo` (including multi-episode `<episodedetails>` files).
+  - Parses and writes Kodi-compliant `movie.nfo`, `<filename>.nfo`, `tvshow.nfo`, `season.nfo`, and `<episode>.nfo` (including multi-episode `<episodedetails>` and `<displayseason>` / `<displayepisode>` custom ordering).
   - Preserves `<uniqueid type="..." default="true">`, `<ratings>`, `<set>`, `<actor>`, `<playcount>`, `<watched>`, `<userrating>`, and `<fileinfo><streamdetails>`.
   - Built-in NFO XML Editor and Kodi v21 Omega schema validator with batch regeneration.
 
 - **Subtitle Downloader & Sync Studio**
   - Computes official 64-bit **OpenSubtitles `moviehash`** on video files.
-  - Searches **OpenSubtitles.com REST API v1**, **SubDL**, and the built-in local sync fallback engine.
+  - Searches **OpenSubtitles.com REST API v1**, **SubDL**, and the built-in local sync fallback engine, or accepts direct local `.srt` / `.vtt` / `.ass` / `.ssa` / `.sub` uploads.
   - Saves sidecar subtitles using Kodi naming conventions (`.en.srt`, `.en.forced.srt`, `.es.sdh.srt`).
   - Built-in SRT cue viewer, timestamp shifter (`+/- ms`), FPS rescaler (`23.976 ↔ 25.000`), Hearing-Impaired tag stripper, and Forced/SDH flag toggles.
 
@@ -25,9 +25,18 @@ A full-featured, browser-based media manager built specifically for **Kodi** lib
   - Customizable Movie Folder, Movie File, TV Show Folder, Season Folder, and Episode File templates with conditional blocks (e.g. `{ [imdbid-{imdb_id}]}`, `{ - {edition}}`).
   - Automatically moves and renames matching `.nfo`, subtitle, artwork, and trailer sidecar files, cleans empty directories, detects conflicts, and provides **1-click Undo / Rollback**.
 
-- **Library Health Audit, Movie Sets & Kodi Integration**
-  - Detects unscraped items, missing NFOs, missing artwork, missing preferred-language subtitles, duplicate movies/episodes, NFO schema warnings, and sub-1080p items.
+- **Split-Pane Workspace, Library Health Audit & Background Batch Jobs**
+  - Split-pane media tree sidebar (with clickable cast/crew filtering) paired with dense inspector panels for Movies, TV Shows (with season episode ordering), Episodes, and Movie Sets, plus inline cast, genre, tag, and credit editors.
+  - Detects unscraped items, missing NFOs, missing artwork, missing preferred-language subtitles, missing aired TV episodes from scraped guides, duplicate movies/episodes (with edition tagging & two-step DB-only vs. disk deletion), NFO schema warnings, and sub-1080p items.
+  - Cancellable background batch jobs (`Auto-Scrape`, `Fetch Subs`, `Sync NFOs`) with live progress indicator in the top ribbon.
   - Movie Sets (`<set>`) manager, technical media stream probe (`ffprobe` + pure-JS MP4 container inspector), **Kodi JSON-RPC** bridge (`Scan`, `Clean`, connection test), and **Smart Playlist (`.xsp`)**, `sources.xml`, CSV, and JSON exports.
+
+## Project Structure
+
+- `src/client/` — React + TypeScript + Tailwind CSS UI (`App.tsx`, `components/`, `pages/`, `lib/`)
+- `src/server/` — Express API server (`app.ts`, `index.ts`, `db/`, `audit/`, `routes/`, `scanner/`, `scrapers/`, `nfo/`, `subtitles/`, `renamer/`, `kodi/`)
+- `src/shared/` — Shared TypeScript domain & API contract types (`types.ts`)
+- `tests/` — Vitest unit and Supertest API integration suites
 
 ## Getting Started
 

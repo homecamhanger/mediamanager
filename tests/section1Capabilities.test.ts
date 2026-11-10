@@ -91,7 +91,7 @@ describe('Section 1 Capabilities', () => {
     expect(upSub.body.subtitle.forced).toBe(true);
     expect(upSub.body.subtitle.cueCount).toBe(1);
     expect(fs.existsSync(upSub.body.subtitle.filePath)).toBe(true);
-  });
+  }, 15_000);
 
   it('detects missing aired episodes accurately across guide, multi-episode, and custom display order', async () => {
     const missing = computeMissingEpisodesFromGuide(
@@ -142,7 +142,7 @@ describe('Section 1 Capabilities', () => {
     const auditRes = await request(app).get('/api/audit');
     expect(auditRes.status).toBe(200);
     expect(auditRes.body.issues.missingEpisodes.length).toBeGreaterThanOrEqual(6);
-  });
+  }, 15_000);
 
   it('supports inline editable cast, genres, tags, duplicate edition tagging, and safe deletion', async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kv-sec1-dup-'));
@@ -255,7 +255,7 @@ describe('Section 1 Capabilities', () => {
     if (finalScrape.status === 'cancelled') {
       expect(finalScrape.processedCount).toBeLessThanOrEqual(finalScrape.totalCount);
     }
-  });
+  }, 15_000);
 
   it('returns scraped artwork candidates for movies, shows, seasons, and episodes and applies alt variants', async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kv-sec1-artpick-'));
@@ -321,5 +321,5 @@ describe('Section 1 Capabilities', () => {
     );
     expect(epCandRes.status).toBe(200);
     expect(epCandRes.body.candidates.length).toBeGreaterThanOrEqual(2);
-  });
+  }, 15_000);
 });

@@ -102,7 +102,6 @@ export const api = {
   deleteSet: (id: number) => req<{ ok: boolean }>(`/api/sets/${id}`, { method: 'DELETE' }),
 
   // TV Shows & Episodes
-  listShows: () => req<{ shows: TvShowRecord[] }>('/api/shows'),
   getShowsTree: () =>
     req<{
       tree: Array<{
@@ -200,18 +199,6 @@ export const api = {
     }),
 
   // NFO
-  listNfos: () =>
-    req<{
-      items: Array<{
-        mediaType: 'movie' | 'tvshow' | 'episode';
-        mediaId: number;
-        title: string;
-        nfoPath: string | null;
-        hasNfo: boolean;
-        nfoValid: boolean;
-        warnings: string[];
-      }>;
-    }>('/api/nfo/list'),
   readNfo: (mediaType: 'movie' | 'tvshow' | 'episode', mediaId: number) =>
     req<{ nfoPath: string; existsOnDisk: boolean; xml: string; validation: NfoValidationReport }>(
       `/api/nfo/read?mediaType=${mediaType}&mediaId=${mediaId}`
@@ -227,7 +214,6 @@ export const api = {
     req<{ written: number }>('/api/nfo/regenerate', { method: 'POST', body: JSON.stringify(params) }),
 
   // Subtitles
-  listSubtitles: () => req<{ subtitles: Array<SubtitleFileRecord & { mediaTitle: string }> }>('/api/subtitles'),
   getSubtitleConfig: () =>
     req<{ openSubtitlesApiKey: string; openSubtitlesUsername: string; openSubtitlesPassword: string; subdlApiKey: string; useDemoFallback: boolean }>(
       '/api/subtitles/config'
@@ -311,7 +297,6 @@ export const api = {
 
   // Background Batch Jobs
   listJobs: () => req<{ jobs: BatchJob[]; scanJobs: SourceScanJob[] }>('/api/jobs'),
-  getJob: (jobId: string) => req<{ job: BatchJob }>(`/api/jobs/${encodeURIComponent(jobId)}`),
   startBatchScrape: (scope: 'unscraped' | 'all' = 'unscraped') =>
     req<{ job: BatchJob }>('/api/jobs/scrape', { method: 'POST', body: JSON.stringify({ scope }) }),
   startBatchSubtitles: (languages?: string[]) =>
