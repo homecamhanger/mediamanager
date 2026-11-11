@@ -10,6 +10,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
+  ListMusic,
   SearchCheck,
   Settings,
   ShieldCheck,
@@ -223,6 +224,7 @@ export const TopRibbon: React.FC<TopRibbonProps> = ({
           <div className="flex items-center gap-1.5 shrink-0">
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mr-0.5">Tools</span>
             {toolBtn('renamer', 'Renamer', <FolderSync className="w-3.5 h-3.5 text-emerald-400" />)}
+            {toolBtn('playlists', 'Playlists', <ListMusic className="w-3.5 h-3.5 text-amber-400" />)}
           </div>
 
           <div className="h-5 w-px bg-slate-800 shrink-0" />

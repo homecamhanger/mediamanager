@@ -694,3 +694,151 @@ export interface BatchJob {
   finishedAt: string | null;
 }
 
+/* ------------------------------------------------------------------ *
+ * Smart playlists (Kodi .xsp)
+ * ------------------------------------------------------------------ */
+
+export type SmartPlaylistType = 'movies' | 'episodes' | 'tvshows';
+
+/** Fields we can both evaluate locally (for previews) and emit as Kodi <rule>s. */
+export type SmartPlaylistField =
+  | 'title'
+  | 'genre'
+  | 'tag'
+  | 'studio'
+  | 'year'
+  | 'rating'
+  | 'userrating'
+  | 'playcount'
+  | 'videoresolution'
+  | 'videocodec'
+  | 'hdr'
+  | 'audiocodec'
+  | 'audiochannels'
+  | 'subtitlelanguage'
+  | 'runtime'
+  | 'dateadded'
+  | 'set'
+  | 'director'
+  | 'writer'
+  | 'actor'
+  | 'mpaa'
+  | 'country'
+  | 'season'
+  | 'episode'
+  | 'tvshowtitle'
+  | 'status';
+
+export type SmartPlaylistOperator =
+  | 'is'
+  | 'isnot'
+  | 'contains'
+  | 'doesnotcontain'
+  | 'startswith'
+  | 'endswith'
+  | 'greaterthan'
+  | 'lessthan'
+  | 'in'
+  | 'notin'
+  | 'inthelast'
+  | 'notinthelast';
+
+/** How comparison values are typed for a given field (drives the UI control). */
+export type SmartPlaylistFieldKind = 'text' | 'number' | 'list' | 'date-days' | 'enum' | 'boolean';
+
+export interface SmartPlaylistFieldDef {
+  field: SmartPlaylistField;
+  label: string;
+  kind: SmartPlaylistFieldKind;
+  operators: SmartPlaylistOperator[];
+  supports: SmartPlaylistType[];
+  unit?: string;
+  hint?: string;
+  choices?: Array<{ value: string; label: string }>;
+}
+
+export interface SmartPlaylistRule {
+  id: string;
+  field: SmartPlaylistField;
+  operator: SmartPlaylistOperator;
+  value: string;
+  /** Optional second value, used by between-range style rules (year/runtime). */
+  value2?: string;
+}
+
+export interface SmartPlaylistOrder {
+  by: 'title' | 'rating' | 'year' | 'dateadded' | 'runtime' | 'playcount' | 'episode' | 'random';
+  direction: 'ascending' | 'descending';
+}
+
+export interface SmartPlaylistDefinition {
+  name: string;
+  type: SmartPlaylistType;
+  match: 'all' | 'one';
+  rules: SmartPlaylistRule[];
+  order: SmartPlaylistOrder;
+  limit?: number | null;
+}
+
+export interface SmartPlaylistPreviewItem {
+  mediaType: 'movie' | 'episode' | 'tvshow';
+  id: number;
+  title: string;
+  subtitle: string;
+  year: number | null;
+  rating: number | null;
+  resolution: string | null;
+  watched: boolean;
+}
+
+export interface SmartPlaylistRuleDiagnostic {
+  ruleId: string;
+  label: string;
+  matchedCount: number;
+  /** True when this rule is the reason a whole `match=all` playlist is empty. */
+  blocking: boolean;
+}
+
+export interface SmartPlaylistPreview {
+  totalCount: number;
+  libraryCount: number;
+  items: SmartPlaylistPreviewItem[];
+  rules: SmartPlaylistRuleDiagnostic[];
+  warnings: string[];
+  /** Kodi file name that will be written when pushed, without the .xsp extension. */
+  kodiFileName: string;
+  xml: string;
+}
+
+export interface SmartPlaylistRecord extends SmartPlaylistDefinition {
+  id: number;
+  createdAt: string;
+  updatedAt: string;
+  lastExportedAt: string | null;
+  lastExportedHash: string | null;
+  /** True when the definition has changed since the last export/push. */
+  stale: boolean;
+  /** Last preview count, cached so the list view can show sizes without re-evaluating. */
+  lastKnownCount: number | null;
+}
+
+export interface SmartPlaylistExportResult {
+  ok: boolean;
+  method: 'json-rpc' | 'local-file';
+  targetPath?: string;
+  error?: string;
+  xml: string;
+}
+
+/** Preset templates surfaced in the builder. */
+export type SmartPlaylistPresetId =
+  | 'top-rated'
+  | 'unwatched-4k'
+  | 'recently-added'
+  | 'in-progress'
+  | 'missing-subtitles'
+  | 'unwatched-episodes'
+  | 'kids-animation'
+  | 'short-films'
+  | 'continuing-shows'
+  | 'blank';

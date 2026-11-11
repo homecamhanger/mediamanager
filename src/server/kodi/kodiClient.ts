@@ -5,10 +5,12 @@ import type {
   KodiRpcConfig,
   KodiSyncResult,
   MovieRecord,
+  SmartPlaylistRule,
   TvEpisodeRecord,
 } from '../../shared/types.js';
 import { DEFAULT_KODI_RPC, MediaDatabase } from '../db/database.js';
 import { serializeEpisodeNfo, serializeMovieNfo, validateKodiNfoXml } from '../nfo/kodiNfo.js';
+import { newRuleId, serializeSmartPlaylist } from '../playlists/smartPlaylistEngine.js';
 
 interface KodiVideoMovieItem {
   movieid: number;
@@ -511,6 +513,11 @@ export class KodiClient {
     return { ok: refRes.ok, error: refRes.error, kodiItemId: match.episodeid };
   }
 
+  /**
+   * Legacy helper kept for backwards compatibility: it maps the original flat
+   * option bag onto a full smart-playlist definition and serialises that, so
+   * every caller (and the XSP test that pins `type="movies"`) keeps working.
+   */
   generateSmartPlaylistXml(opts: {
     name: string;
     type: 'movies' | 'episodes' | 'tvshows';
@@ -522,31 +529,70 @@ export class KodiClient {
     direction?: 'ascending' | 'descending';
     limit?: number;
   }): string {
-    const rules: string[] = [];
-    if (opts.genre) {
-      rules.push(`  <rule field="genre" operator="contains">\n    <value>${escapeXml(opts.genre)}</value>\n  </rule>`);
-    }
-    if (opts.minRating && opts.minRating > 0) {
-      rules.push(`  <rule field="rating" operator="greaterthan">\n    <value>${opts.minRating}</value>\n  </rule>`);
-    }
-    if (opts.unwatchedOnly) {
-      rules.push(`  <rule field="playcount" operator="is">\n    <value>0</value>\n  </rule>`);
-    }
-    if (opts.resolution === '2160p') {
-      rules.push(`  <rule field="videoresolution" operator="greaterthan">\n    <value>1080</value>\n  </rule>`);
-    }
+    const rules: SmartPlaylistRule[] = [];
+    const push = (field: SmartPlaylistRule['field'], operator: SmartPlaylistRule['operator'], value: string) =>
+      rules.push({ id: newRuleId(), field, operator, value });
+    if (opts.genre) push('genre', 'contains', opts.genre);
+    if (opts.minRating && opts.minRating > 0) push('rating', 'greaterthan', String(opts.minRating));
+    if (opts.unwatchedOnly) push('playcount', 'is', '0');
+    if (opts.resolution === '2160p') push('videoresolution', 'greaterthan', '1080');
+    return serializeSmartPlaylist({
+      name: opts.name,
+      type: opts.type,
+      match: 'all',
+      rules,
+      order: { by: opts.orderBy ?? 'rating', direction: opts.direction ?? 'descending' },
+      limit: opts.limit ?? null,
+    });
+  }
 
-    const lines = [
-      '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>',
-      `<smartplaylist type="${opts.type}">`,
-      `  <name>${escapeXml(opts.name)}</name>`,
-      '  <match>all</match>',
-      ...rules,
-      `  <order direction="${opts.direction ?? 'descending'}">${opts.orderBy ?? 'rating'}</order>`,
-    ];
-    if (opts.limit && opts.limit > 0) lines.push(`  <limit>${opts.limit}</limit>`);
-    lines.push('</smartplaylist>');
-    return lines.join('\n') + '\n';
+  /**
+   * Write an .xsp straight into Kodi's userdata via JSON-RPC.
+   * Kodi resolves `special://profile/` to its userdata folder, so the playlist
+   * shows up in the UI immediately without a restart.
+   */
+  async writeSmartPlaylistToKodi(
+    xml: string,
+    fileName: string
+  ): Promise<{ ok: boolean; path?: string; error?: string }> {
+    const cfg = this.getConfig();
+    const safeName = fileName.replace(/[\\/:*?"<>|]/g, ' ').trim() || 'Smart Playlist';
+    const target = `special://profile/playlists/video/${safeName}.xsp`;
+    const res = await this.rpcCall<{ file?: string }>('Files.WriteFile', {
+      file: target,
+      content: xml,
+    });
+    this.db.logActivity(
+      'kodi',
+      'Push Smart Playlist',
+      res.ok ? `Wrote ${safeName}.xsp to ${cfg.host} (${target})` : `Failed to write ${safeName}.xsp: ${res.error}`,
+      res.ok ? 'success' : 'warning'
+    );
+    return res.ok ? { ok: true, path: res.result?.file ?? target } : { ok: false, error: res.error };
+  }
+
+  /**
+   * Fallback for offline setups: mirror the playlist into the local Kodi
+   * profile when the userdata path is mapped, otherwise just report the target.
+   */
+  writeSmartPlaylistToLocalProfile(xml: string, fileName: string): { ok: boolean; path: string } {
+    const cfg = this.getConfig();
+    const safeName = fileName.replace(/[\\/:*?"<>|]/g, ' ').trim() || 'Smart Playlist';
+    const mapping = (cfg.pathMappings ?? []).find(
+      (m) => normalizeSlashes(m.kodiPrefix).toLowerCase() === 'special://profile'
+    );
+    if (!mapping) {
+      return { ok: false, path: `special://profile/playlists/video/${safeName}.xsp` };
+    }
+    const dir = path.join(mapping.localPrefix, 'playlists', 'video');
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, `${safeName}.xsp`);
+      fs.writeFileSync(file, xml, 'utf8');
+      return { ok: true, path: file };
+    } catch (err) {
+      return { ok: false, path: (err as Error).message };
+    }
   }
 
   generateSourcesXml(): string {

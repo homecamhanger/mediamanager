@@ -5,6 +5,7 @@ export type LeftLibraryTab = 'movies' | 'tvshows' | 'sets';
 export type RibbonTool =
   | 'overview'
   | 'renamer'
+  | 'playlists'
   | 'audit'
   | 'scrapers'
   | 'settings';

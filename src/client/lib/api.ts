@@ -23,6 +23,12 @@ import type {
   ScraperProviderConfig,
   ScraperProviderId,
   ScraperSearchResult,
+  SmartPlaylistDefinition,
+  SmartPlaylistExportResult,
+  SmartPlaylistFieldDef,
+  SmartPlaylistPreview,
+  SmartPlaylistPresetId,
+  SmartPlaylistRecord,
   SourceScanJob,
   SubtitleCue,
   SubtitleFileRecord,
@@ -367,6 +373,41 @@ export const api = {
   resetSampleLibrary: () => req<{ ok: boolean }>('/api/settings/sample/reset', { method: 'POST' }),
   generateSmartPlaylist: (opts: Record<string, unknown>) =>
     req<{ xml: string }>('/api/export/smartplaylist', { method: 'POST', body: JSON.stringify(opts) }),
+
+  // Smart Playlists
+  getPlaylistFields: () => req<{ fields: SmartPlaylistFieldDef[] }>('/api/playlists/fields'),
+  getPlaylistPresets: () =>
+    req<{ presets: Array<{ id: SmartPlaylistPresetId; label: string; description: string; type: string; ruleCount: number }> }>(
+      '/api/playlists/presets'
+    ),
+  getPlaylistPreset: (id: SmartPlaylistPresetId) =>
+    req<{ definition: SmartPlaylistDefinition }>(`/api/playlists/presets/${id}`),
+  previewPlaylistDraft: (definition: SmartPlaylistDefinition) =>
+    req<{ definition: SmartPlaylistDefinition; validationWarnings: string[]; preview: SmartPlaylistPreview; matchedCount: number }>(
+      '/api/playlists/preview',
+      { method: 'POST', body: JSON.stringify({ definition }) }
+    ),
+  listPlaylists: () => req<{ playlists: SmartPlaylistRecord[] }>('/api/playlists'),
+  getPlaylist: (id: number) => req<{ playlist: SmartPlaylistRecord }>(`/api/playlists/${id}`),
+  createPlaylist: (definition: SmartPlaylistDefinition) =>
+    req<{ playlist: SmartPlaylistRecord; validationWarnings: string[] }>('/api/playlists', {
+      method: 'POST',
+      body: JSON.stringify({ definition }),
+    }),
+  updatePlaylist: (id: number, definition: SmartPlaylistDefinition) =>
+    req<{ playlist: SmartPlaylistRecord; validationWarnings: string[] }>(`/api/playlists/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ definition }),
+    }),
+  deletePlaylist: (id: number) => req<{ ok: boolean }>(`/api/playlists/${id}`, { method: 'DELETE' }),
+  duplicatePlaylist: (id: number) =>
+    req<{ playlist: SmartPlaylistRecord }>(`/api/playlists/${id}/duplicate`, { method: 'POST' }),
+  previewPlaylist: (id: number, definition?: SmartPlaylistDefinition) =>
+    req<{ preview: SmartPlaylistPreview; matchedCount: number; validationWarnings: string[] }>(
+      `/api/playlists/${id}/preview`,
+      { method: 'POST', body: JSON.stringify(definition ? { definition } : {}) }
+    ),
+  pushPlaylistToKodi: (id: number) => req<SmartPlaylistExportResult>(`/api/playlists/${id}/push`, { method: 'POST' }),
   getSourcesXml: () => req<{ xml: string }>('/api/export/sources-xml'),
 
   // Background Batch Jobs

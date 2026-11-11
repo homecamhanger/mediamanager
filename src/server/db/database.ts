@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { hashPlaylistDefinition } from '../playlists/smartPlaylistEngine.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import type {
@@ -16,6 +17,9 @@ import type {
   RenamePatternsConfig,
   ScraperFieldMapping,
   ScraperProviderConfig,
+  SmartPlaylistDefinition,
+  SmartPlaylistRecord,
+  SmartPlaylistType,
   StreamDetails,
   SubtitleFileRecord,
   TvEpisodeRecord,
@@ -430,6 +434,21 @@ export class MediaDatabase {
         status TEXT NOT NULL,
         message TEXT NOT NULL,
         created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS smart_playlists (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL CHECK(type IN ('movies', 'episodes', 'tvshows')),
+        match_mode TEXT NOT NULL DEFAULT 'all',
+        rules_json TEXT NOT NULL DEFAULT '[]',
+        order_json TEXT NOT NULL DEFAULT '{}',
+        limit_count INTEGER,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_exported_at TEXT,
+        last_exported_hash TEXT,
+        last_known_count INTEGER
       );
     `);
 
@@ -1710,6 +1729,114 @@ export class MediaDatabase {
     this.db
       .prepare('INSERT INTO rename_history (id, created_at, media_type, item_count, reverted, moves_json) VALUES (?, ?, ?, ?, ?, ?)')
       .run(batch.id, batch.createdAt, batch.mediaType, batch.itemCount, batch.reverted ? 1 : 0, JSON.stringify(batch.moves));
+  }
+
+  // ---- Smart Playlists ----
+  private mapSmartPlaylistRow(row: Record<string, unknown>): SmartPlaylistRecord {
+    const rules = JSON.parse(String(row.rules_json ?? '[]')) as SmartPlaylistRecord['rules'];
+    const order = JSON.parse(String(row.order_json ?? '{}')) as SmartPlaylistRecord['order'];
+    const definition: SmartPlaylistDefinition = {
+      name: String(row.name),
+      type: row.type as SmartPlaylistType,
+      match: (row.match_mode as 'all' | 'one') ?? 'all',
+      rules,
+      order: { by: order?.by ?? 'title', direction: order?.direction ?? 'descending' },
+      limit: row.limit_count == null ? null : Number(row.limit_count),
+    };
+    // A playlist is stale when its rules no longer hash to what was last pushed to Kodi.
+    const stale = row.last_exported_hash
+      ? hashPlaylistDefinition(definition) !== String(row.last_exported_hash)
+      : false;
+    return {
+      ...definition,
+      id: Number(row.id),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+      lastExportedAt: row.last_exported_at ? String(row.last_exported_at) : null,
+      lastExportedHash: row.last_exported_hash ? String(row.last_exported_hash) : null,
+      stale,
+      lastKnownCount: row.last_known_count == null ? null : Number(row.last_known_count),
+    };
+  }
+
+  listSmartPlaylists(): SmartPlaylistRecord[] {
+    const rows = this.db
+      .prepare('SELECT * FROM smart_playlists ORDER BY updated_at DESC, id DESC')
+      .all() as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapSmartPlaylistRow(r));
+  }
+
+  getSmartPlaylist(id: number): SmartPlaylistRecord | null {
+    const row = this.db.prepare('SELECT * FROM smart_playlists WHERE id = ?').get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? this.mapSmartPlaylistRow(row) : null;
+  }
+
+  createSmartPlaylist(definition: SmartPlaylistDefinition): SmartPlaylistRecord {
+    const now = new Date().toISOString();
+    const res = this.db
+      .prepare(
+        `INSERT INTO smart_playlists (name, type, match_mode, rules_json, order_json, limit_count, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        definition.name,
+        definition.type,
+        definition.match,
+        JSON.stringify(definition.rules),
+        JSON.stringify(definition.order),
+        definition.limit ?? null,
+        now,
+        now
+      );
+    return this.getSmartPlaylist(Number(res.lastInsertRowid))!;
+  }
+
+  updateSmartPlaylist(id: number, definition: SmartPlaylistDefinition): SmartPlaylistRecord | null {
+    const existing = this.getSmartPlaylist(id);
+    if (!existing) return null;
+    this.db
+      .prepare(
+        `UPDATE smart_playlists
+            SET name = ?, type = ?, match_mode = ?, rules_json = ?, order_json = ?, limit_count = ?, updated_at = ?
+          WHERE id = ?`
+      )
+      .run(
+        definition.name,
+        definition.type,
+        definition.match,
+        JSON.stringify(definition.rules),
+        JSON.stringify(definition.order),
+        definition.limit ?? null,
+        new Date().toISOString(),
+        id
+      );
+    return this.getSmartPlaylist(id);
+  }
+
+  deleteSmartPlaylist(id: number): boolean {
+    const res = this.db.prepare('DELETE FROM smart_playlists WHERE id = ?').run(id);
+    return Number(res.changes) > 0;
+  }
+
+  /**
+   * Record that a playlist was exported. The hash is derived from the stored
+   * definition so callers can never desynchronise it (and re-ordering rules in
+   * memory can't produce a spurious "stale" badge).
+   */
+  markSmartPlaylistExported(id: number, count: number | null): void {
+    const existing = this.getSmartPlaylist(id);
+    if (!existing) return;
+    this.db
+      .prepare(
+        'UPDATE smart_playlists SET last_exported_at = ?, last_exported_hash = ?, last_known_count = ? WHERE id = ?'
+      )
+      .run(new Date().toISOString(), hashPlaylistDefinition(existing), count, id);
+  }
+
+  recordSmartPlaylistCount(id: number, count: number): void {
+    this.db.prepare('UPDATE smart_playlists SET last_known_count = ? WHERE id = ?').run(count, id);
   }
 
   listRenameHistory(limit = 25): RenameHistoryBatch[] {

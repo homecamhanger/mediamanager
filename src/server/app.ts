@@ -4,6 +4,7 @@ import { createJobsRouter } from './routes/jobs.js';
 import { createLibraryRouter } from './routes/library.js';
 import { createMediaRouter } from './routes/media.js';
 import { createNfoRouter } from './routes/nfo.js';
+import { createPlaylistsRouter } from './routes/playlists.js';
 import { createRenamerRouter } from './routes/renamer.js';
 import { createScrapersRouter } from './routes/scrapers.js';
 import { createSettingsRouter } from './routes/settings.js';
@@ -30,6 +31,7 @@ export function createApiApp(db: MediaDatabase) {
   app.use('/api/subtitles', createSubtitlesRouter(db));
   app.use('/api/renamer', createRenamerRouter(db));
   app.use('/api/settings', createSettingsRouter(db, scanJobs));
+  app.use('/api/playlists', createPlaylistsRouter(db));
 
   return app;
 }

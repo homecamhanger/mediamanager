@@ -30,7 +30,10 @@ import { api } from '../lib/api.js';
 
 const ALL_ARTWORK_KINDS: ArtworkKind[] = ['poster', 'fanart', 'clearlogo', 'clearart', 'disc', 'banner', 'landscape'];
 
-export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh }) => {
+export const SettingsPage: React.FC<{ onRefresh: () => void; onOpenPlaylists?: () => void }> = ({
+  onRefresh,
+  onOpenPlaylists,
+}) => {
   const [sources, setSources] = useState<MediaSource[]>([]);
   const [prefs, setPrefs] = useState<AppPreferences | null>(null);
   const [kodi, setKodi] = useState<KodiRpcConfig | null>(null);
@@ -56,10 +59,6 @@ export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
   onRefreshRef.current = onRefresh;
 
   // Smart playlist & sources XML
-  const [playlistName, setPlaylistName] = useState('Top Rated 4K Movies');
-  const [playlistGenre, setPlaylistGenre] = useState('');
-  const [playlistMinRating, setPlaylistMinRating] = useState('8.0');
-  const [playlist4k, setPlaylist4k] = useState(true);
   const [generatedXml, setGeneratedXml] = useState('');
 
   const [msg, setMsg] = useState<string | null>(null);
@@ -278,18 +277,6 @@ export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
     });
     setNewMapLocal('');
     setNewMapKodi('');
-  };
-
-  const handleGeneratePlaylist = async () => {
-    const res = await api.generateSmartPlaylist({
-      name: playlistName,
-      type: 'movies',
-      genre: playlistGenre || undefined,
-      minRating: playlistMinRating ? Number(playlistMinRating) : undefined,
-      resolution: playlist4k ? '2160p' : undefined,
-      orderBy: 'rating',
-    });
-    setGeneratedXml(res.xml);
   };
 
   return (
@@ -961,44 +948,25 @@ export const SettingsPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-2.5 items-end">
-          <div className="md:col-span-2">
-            <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Playlist Name</label>
-            <input
-              value={playlistName}
-              onChange={(e) => setPlaylistName(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-slate-100"
-            />
+        <div className="p-3.5 rounded-xl bg-slate-900/70 border border-slate-800 flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="font-semibold text-slate-200">Smart playlists now have their own workspace</div>
+            <p className="text-slate-400 mt-0.5">
+              Rule builder, presets, live match preview, saved playlists and one-click push into Kodi's userdata live in{' '}
+              <span className="font-semibold text-slate-200">Tools → Playlists</span>.
+            </p>
           </div>
-          <div>
-            <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Genre Filter</label>
-            <input
-              value={playlistGenre}
-              onChange={(e) => setPlaylistGenre(e.target.value)}
-              placeholder="e.g. Science Fiction"
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-slate-100"
-            />
-          </div>
-          <div>
-            <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Min Rating</label>
-            <input
-              value={playlistMinRating}
-              onChange={(e) => setPlaylistMinRating(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-slate-100"
-            />
-          </div>
-          <button
-            onClick={handleGeneratePlaylist}
-            className="px-3 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white font-bold cursor-pointer"
+          <a
+            href="#playlists"
+            onClick={(e) => {
+              e.preventDefault();
+              onOpenPlaylists?.();
+            }}
+            className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold flex items-center gap-1.5 shrink-0"
           >
-            Generate .xsp XML
-          </button>
+            <ListMusic className="w-3.5 h-3.5" /> Open Playlists
+          </a>
         </div>
-
-        <label className="flex items-center gap-2 text-slate-300 cursor-pointer">
-          <input type="checkbox" checked={playlist4k} onChange={(e) => setPlaylist4k(e.target.checked)} />
-          4K UHD (&gt;1080p) Only
-        </label>
 
         {generatedXml && (
           <pre className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-[11px] font-mono text-emerald-200 overflow-x-auto">

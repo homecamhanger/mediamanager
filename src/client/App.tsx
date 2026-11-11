@@ -11,6 +11,7 @@ import { EpisodeDetailPanel } from './components/EpisodeDetailPanel.js';
 import { MediaTreeSidebar } from './components/MediaTreeSidebar.js';
 import { MovieDetailPanel } from './components/MovieDetailPanel.js';
 import { SetDetailPanel } from './components/SetDetailPanel.js';
+import { PlaylistsPage } from './pages/PlaylistsPage.js';
 import { TopRibbon } from './components/TopRibbon.js';
 import { TvShowDetailPanel } from './components/TvShowDetailPanel.js';
 import { api } from './lib/api.js';
@@ -379,6 +380,7 @@ export const App: React.FC = () => {
                 />
               )}
               {activeTool === 'renamer' && <RenamerPage onRefresh={refreshAll} />}
+              {activeTool === 'playlists' && <PlaylistsPage onRefresh={refreshAll} />}
               {activeTool === 'audit' && (
                 <AuditPage
                   onRefresh={refreshAll}
@@ -392,7 +394,9 @@ export const App: React.FC = () => {
                 />
               )}
               {activeTool === 'scrapers' && <ScrapersPage onRefresh={refreshAll} />}
-              {activeTool === 'settings' && <SettingsPage onRefresh={refreshAll} />}
+              {activeTool === 'settings' && (
+                <SettingsPage onRefresh={refreshAll} onOpenPlaylists={() => setActiveTool('playlists')} />
+              )}
             </div>
           ) : selected?.kind === 'movie' ? (
             <MovieDetailPanel
