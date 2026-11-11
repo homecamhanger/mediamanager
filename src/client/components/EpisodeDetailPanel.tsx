@@ -490,8 +490,8 @@ export const EpisodeDetailPanel: React.FC<{
         {tab === 'metadata' && (
           <div className="space-y-6">
             {/* Top Row: Season/Series Poster in Top-Left + Episode Metadata Fields */}
-            <div className="grid grid-cols-1 @2xl:grid-cols-[128px_minmax(0,1fr)] @5xl:grid-cols-[152px_minmax(0,1fr)] gap-4 @2xl:gap-5 items-start">
-              <div className="w-28 @2xl:w-full shrink-0 mx-auto @2xl:mx-0 @2xl:sticky @2xl:top-0">
+            <div className="flex flex-wrap items-start gap-3 @md:gap-5">
+              <div className="w-24 @md:w-32 @3xl:w-40 shrink-0 @md:sticky @md:top-0">
                 <ClickableArtCard
                   label={matchingSeason?.posterPath ? `Season ${effSeason} Poster` : 'Series Poster'}
                   filePath={seasonOrShowPoster}
@@ -524,7 +524,7 @@ export const EpisodeDetailPanel: React.FC<{
                 />
               </div>
 
-              <div className="min-w-0 space-y-3">
+              <div className="min-w-[15rem] flex-1 basis-60 space-y-3 @container">
                 {/* Multi-Episode Range & Part Switcher */}
                 <div className="p-3 rounded-xl bg-slate-900/75 border border-slate-800 space-y-2.5">
                   <div className="flex flex-wrap items-end justify-between gap-2">

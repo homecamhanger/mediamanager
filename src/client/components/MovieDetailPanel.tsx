@@ -353,8 +353,8 @@ export const MovieDetailPanel: React.FC<{
             {/* Top Row: Compact poster rail + metadata fields. The rail is fixed-width
                 (and only re-centres itself) so it never scales with the pane and
                 dominates the form on narrow inspectors. */}
-            <div className="grid grid-cols-1 @2xl:grid-cols-[168px_minmax(0,1fr)] @5xl:grid-cols-[196px_minmax(0,1fr)] gap-4 @2xl:gap-5 items-start">
-              <div className="w-32 @2xl:w-full shrink-0 space-y-2 mx-auto @2xl:mx-0 @2xl:sticky @2xl:top-0">
+            <div className="flex flex-wrap items-start gap-3 @md:gap-5">
+              <div className="w-28 @md:w-36 @3xl:w-44 shrink-0 space-y-2 @md:sticky @md:top-0">
                 <ClickableArtCard
                   label="Poster (2:3)"
                   filePath={movie.artwork.poster}
@@ -364,8 +364,9 @@ export const MovieDetailPanel: React.FC<{
                 />
               </div>
 
-              {/* Right Metadata Form Column */}
-              <div className="min-w-0 space-y-3">
+              {/* Right Metadata Form Column — flex-1/min-w-0 so it fills every pixel
+                  beside the poster and only wraps below it when narrower than its floor. */}
+              <div className="min-w-[15rem] flex-1 basis-60 space-y-3 @container">
                 <div className="grid grid-cols-1 @lg:grid-cols-2 @3xl:grid-cols-3 gap-2.5">
                   <Field label="Title" value={form.title ?? ''} onChange={(v) => setForm({ ...form, title: v })} />
                   <Field label="Original Title" value={form.originalTitle ?? ''} onChange={(v) => setForm({ ...form, originalTitle: v })} />
