@@ -1,4 +1,10 @@
-import type { MissingEpisodeRecord, TvEpisodeRecord, TvSeasonRecord, TvShowRecord } from '../../shared/types.js';
+import type {
+  MissingEpisodeRecord,
+  TvEpisodeRecord,
+  TvSeasonRecord,
+  TvShowRecord,
+  UnmatchedVideoFile,
+} from '../../shared/types.js';
 
 export type LeftLibraryTab = 'movies' | 'tvshows' | 'sets';
 
@@ -24,4 +30,6 @@ export interface ShowTreeNode {
   seasons: TvSeasonRecord[];
   episodes: TvEpisodeRecord[];
   missingEpisodes?: MissingEpisodeRecord[];
+  /** Video files in the series folder that could not be identified as episodes. */
+  unmatchedFiles?: UnmatchedVideoFile[];
 }

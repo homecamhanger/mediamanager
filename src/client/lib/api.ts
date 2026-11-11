@@ -12,6 +12,7 @@ import type {
   LibraryVocabulary,
   MediaSource,
   MissingEpisodeRecord,
+  UnmatchedVideoFile,
   MovieRecord,
   MovieSetRecord,
   NfoValidationReport,
@@ -128,6 +129,7 @@ export const api = {
       seasons: TvSeasonRecord[];
       episodes: TvEpisodeRecord[];
       missingEpisodes?: MissingEpisodeRecord[];
+      unmatchedFiles?: UnmatchedVideoFile[];
     }>(`/api/shows/${id}`),
   updateShow: (id: number, patch: Partial<TvShowRecord> & { writeNfo?: boolean }) =>
     req<{ show: TvShowRecord }>(`/api/shows/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),

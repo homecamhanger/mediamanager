@@ -134,7 +134,7 @@ describe('Episode placement rules', () => {
 });
 
 describe('Scanning a series folder with Extras and ScreenShots', () => {
-  it('indexes only real episodes and reports the skipped files', async () => {
+  it('indexes only real episodes and keeps the rest flagged, not dropped', async () => {
     const root = made();
     const tvRoot = path.join(root, 'TV');
     const show = path.join(tvRoot, 'Firefly (2002)');
@@ -169,6 +169,104 @@ describe('Scanning a series folder with Extras and ScreenShots', () => {
     expect(warning).toBeTruthy();
     expect(warning!.status).toBe('warning');
     expect(warning!.message).toContain('4 files');
+
+    // ...and the files themselves are kept, flagged against this show.
+    const flagged = db.listUnmatchedVideoFilesForShow(showRecord.id);
+    expect(flagged).toHaveLength(4);
+    expect(flagged.map((f) => f.fileName).sort()).toEqual([
+      "01_Here's How It Was_Making Of Firefly.mp4",
+      'disk1_1.mp4',
+      'disk3_2.mp4',
+      'disk3_4.mp4',
+    ]);
+    expect(flagged.every((f) => f.reason === 'non-episode-folder')).toBe(true);
+    expect(flagged.every((f) => f.fileSizeBytes > 0)).toBe(true);
+  });
+
+  it('flags a top-level file with no episode marker', async () => {
+    const root = made();
+    const tvRoot = path.join(root, 'TV');
+    const show = path.join(tvRoot, 'Firefly (2002)');
+    video(path.join(show, 'Firefly - S01E01 - Serenity.mkv'));
+    video(path.join(show, 'Firefly - Deleted Scenes Reel.mkv'));
+
+    const db = new MediaDatabase(path.join(root, 'test.db'));
+    const source = db.addSource({ name: 'TV', path: tvRoot, mediaKind: 'tvshow' });
+    await new LibraryScanner(db).scanSource(source);
+
+    const flagged = db.listUnmatchedVideoFiles();
+    expect(flagged).toHaveLength(1);
+    expect(flagged[0].fileName).toBe('Firefly - Deleted Scenes Reel.mkv');
+    expect(flagged[0].reason).toBe('no-episode-marker');
+  });
+
+  it('keeps sample/extra-named files so they can be flagged instead of vanishing', async () => {
+    const root = made();
+    const tvRoot = path.join(root, 'TV');
+    const show = path.join(tvRoot, 'Firefly (2002)');
+    video(path.join(show, 'Season 1', 'Firefly - S01E01 - Serenity.mkv'));
+    // isSampleOrExtraFile() used to drop these before the classifier ever saw them.
+    video(path.join(show, 'Season 1', 'Firefly - S01E02 - Featurette.mkv'));
+    video(path.join(show, 'Extras', 'Trailer.mp4'));
+
+    const db = new MediaDatabase(path.join(root, 'test.db'));
+    const source = db.addSource({ name: 'TV', path: tvRoot, mediaKind: 'tvshow' });
+    await new LibraryScanner(db).scanSource(source);
+
+    const showRecord = db.listTvShows()[0];
+    // An explicit SxxExx marker is an assertion of intent and beats a keyword match.
+    expect(db.listEpisodesForShow(showRecord.id).map((e) => e.fileName).sort()).toEqual([
+      'Firefly - S01E01 - Serenity.mkv',
+      'Firefly - S01E02 - Featurette.mkv',
+    ]);
+    // The truly unidentifiable one is still reported.
+    expect(db.listUnmatchedVideoFiles().map((f) => f.fileName)).toEqual(['Trailer.mp4']);
+  });
+
+  it('scans a show whose own title contains an extras keyword', async () => {
+    // Regression: every episode of "Extras" was filtered out by isSampleOrExtraFile,
+    // making the whole series unscannable.
+    const root = made();
+    const tvRoot = path.join(root, 'TV');
+    const show = path.join(tvRoot, 'Extras (2005)');
+    video(path.join(show, 'Season 1', 'Extras - S01E01 - Ben Stiller.mkv'));
+    video(path.join(show, 'Season 1', 'Extras - S01E02 - Ross Kemp.mkv'));
+
+    const db = new MediaDatabase(path.join(root, 'test.db'));
+    const source = db.addSource({ name: 'TV', path: tvRoot, mediaKind: 'tvshow' });
+    await new LibraryScanner(db).scanSource(source);
+
+    expect(db.listTvShows()).toHaveLength(1);
+    expect(db.listEpisodesForShow(db.listTvShows()[0].id)).toHaveLength(2);
+    expect(db.listUnmatchedVideoFiles()).toHaveLength(0);
+  });
+
+  it('clears flags for files that were renamed to valid episodes, and keeps the rest', async () => {
+    const root = made();
+    const tvRoot = path.join(root, 'TV');
+    const show = path.join(tvRoot, 'Firefly (2002)');
+    video(path.join(show, 'Extras', 'disk3_2.mp4'));
+    video(path.join(show, 'Extras', 'disk3_4.mp4'));
+
+    const db = new MediaDatabase(path.join(root, 'test.db'));
+    const source = db.addSource({ name: 'TV', path: tvRoot, mediaKind: 'tvshow' });
+    const scanner = new LibraryScanner(db);
+    await scanner.scanSource(source);
+    expect(db.listUnmatchedVideoFiles()).toHaveLength(2);
+
+    // Rename one so it parses, then rescan.
+    fs.mkdirSync(path.join(show, 'Season 1'), { recursive: true });
+    fs.renameSync(
+      path.join(show, 'Extras', 'disk3_2.mp4'),
+      path.join(show, 'Season 1', 'Firefly - S01E01 - Serenity.mp4')
+    );
+    await scanner.scanSource(source);
+
+    const showRecord = db.listTvShows()[0];
+    expect(db.listEpisodesForShow(showRecord.id)).toHaveLength(1);
+    const remaining = db.listUnmatchedVideoFiles();
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].fileName).toBe('disk3_4.mp4');
   });
 
   it('keeps seasons correct for bare-numbered files in a season folder', async () => {

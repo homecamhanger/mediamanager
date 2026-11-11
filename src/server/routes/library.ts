@@ -323,6 +323,7 @@ export function createLibraryRouter(db: MediaDatabase): Router {
         seasons,
         episodes,
         missingEpisodes,
+        unmatchedFiles: db.listUnmatchedVideoFilesForShow(show.id),
       };
     });
     res.json({ tree });
@@ -345,7 +346,13 @@ export function createLibraryRouter(db: MediaDatabase): Router {
       episodes,
       seasons
     );
-    res.json({ show, seasons, episodes, missingEpisodes });
+    res.json({
+      show,
+      seasons,
+      episodes,
+      missingEpisodes,
+      unmatchedFiles: db.listUnmatchedVideoFilesForShow(showId),
+    });
   });
 
   router.patch('/shows/:id', (req, res) => {

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowDownWideNarrow,
   ArrowUpNarrowWide,
   CheckSquare,
@@ -1029,6 +1030,15 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                         </span>
                         {show.year && <span className="text-[10px] text-slate-400 shrink-0">{show.year}</span>}
                       </div>
+                      {(node.unmatchedFiles?.length ?? 0) > 0 && (
+                        <div
+                          className="text-[10px] text-rose-400/90 truncate flex items-center gap-1"
+                          title={`${node.unmatchedFiles!.length} video file(s) in this folder could not be identified as episodes`}
+                        >
+                          <AlertTriangle className="w-2.5 h-2.5 shrink-0" />
+                          {node.unmatchedFiles!.length} unmatched
+                        </div>
+                      )}
                       {actorNeedle && (showActorMatch || hasEpisodeActorMatches) && (
                         <div className="text-[10px] text-sky-300 truncate">
                           {showActorMatch

@@ -392,7 +392,7 @@ export class LibraryScanner {
 
     for (const showDirEntry of entries) {
       const showFolder = path.join(source.path, showDirEntry.name);
-      const walked = walkVideoFiles(showFolder).map((filePath) => {
+      const walked = walkVideoFiles(showFolder, { keepSampleAndExtras: true }).map((filePath) => {
         const parsed = parseMediaFilename(filePath, 'tvshow');
         return {
           filePath,
@@ -727,6 +727,27 @@ export class LibraryScanner {
       // episodes (they may have been indexed by the old S01E01 fallback).
       this.db.pruneTvEpisodesForShow(showRecord.id, indexedFiles);
 
+      // Keep the files we could not identify, flagged against this show, so the
+      // user can see them instead of wondering where they went.
+      const showUnmatched = unmatchedByShow.find((u) => u.showFolder === showFolder)?.unmatched ?? [];
+      for (const file of showUnmatched) {
+        let size = 0;
+        try {
+          size = fs.statSync(file.filePath).size;
+        } catch {
+          size = 0;
+        }
+        this.db.upsertUnmatchedVideoFile({
+          sourceId: source.id,
+          showId: showRecord.id,
+          filePath: file.filePath,
+          fileName: file.fileName,
+          folderPath: path.dirname(file.filePath),
+          reason: file.reason,
+          fileSizeBytes: size,
+        });
+      }
+
       if (epItems.length === 0) {
         onProgress?.({
           overallPercent: 60 + Math.round((showsCount / Math.max(1, totalSidecarUnits)) * 34),
@@ -748,6 +769,10 @@ export class LibraryScanner {
 
     // Surface files that were not identifiable as episodes. Silently dropping them
     // was the old failure mode's mirror image; the user needs to know either way.
+    // Forget flags for files that have since been renamed, deleted or now parse.
+    const seenUnmatched = new Set(unmatchedByShow.flatMap((u) => u.unmatched.map((f) => f.filePath)));
+    this.db.pruneUnmatchedVideoFiles(source.id, seenUnmatched);
+
     const skippedTotal = unmatchedByShow.reduce((n, u) => n + u.unmatched.length, 0);
     if (skippedTotal > 0) {
       const sample = unmatchedByShow
@@ -777,7 +802,7 @@ export class LibraryScanner {
   }
 }
 
-function walkVideoFiles(dir: string): string[] {
+function walkVideoFiles(dir: string, opts: { keepSampleAndExtras?: boolean } = {}): string[] {
   const out: string[] = [];
   if (!fs.existsSync(dir)) return out;
   const items = fs.readdirSync(dir, { withFileTypes: true });
@@ -786,8 +811,12 @@ function walkVideoFiles(dir: string): string[] {
     const full = path.join(dir, item.name);
     if (item.isDirectory()) {
       if (['extrafanart', 'extrathumbs', '.actors', 'subs', 'subtitles'].includes(item.name.toLowerCase())) continue;
-      out.push(...walkVideoFiles(full));
-    } else if (item.isFile() && isVideoFile(full) && !isSampleOrExtraFile(full)) {
+      out.push(...walkVideoFiles(full, opts));
+    } else if (item.isFile() && isVideoFile(full)) {
+      // Movies drop sample/trailer/featurette files outright so they are never
+      // scraped as films. TV keeps them, because a series folder's extras are
+      // exactly what we want to *flag* rather than silently ignore.
+      if (!opts.keepSampleAndExtras && isSampleOrExtraFile(full)) continue;
       out.push(full);
     }
   }
