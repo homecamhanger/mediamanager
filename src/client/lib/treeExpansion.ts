@@ -7,8 +7,8 @@ import type { ShowTreeNode } from './workspaceTypes.js';
  *
  *  - single click selects a series and only fills the data pane — it never opens
  *    or closes anything;
- *  - double click opens a series (`pinShow`), and it stays open as you navigate;
- *  - the caret toggles open/closed (`togglePin`);
+ *  - double click toggles a series open/closed and it stays open as you navigate;
+ *  - the caret does the same thing (`togglePin`);
  *  - selecting an *episode* from elsewhere (e.g. search) reveals its season via
  *    `revealedShowId`, which holds at most one show and is replaced as you move.
  *
@@ -72,8 +72,9 @@ export function visibleSeasonKeys(expansion: TreeExpansion): Set<string> {
 }
 
 /**
- * Toggle a show's caret. Closing also drops a reveal for the same show, otherwise
- * the row would stay open via the union and the caret would appear dead.
+ * Toggle a show open/closed by an explicit gesture (caret press or double click).
+ * Closing also drops a reveal for the same show, otherwise the row would stay open
+ * via the union and the gesture would appear to do nothing.
  */
 export function togglePin(expansion: TreeExpansion, showId: number): TreeExpansion {
   const pinnedShows = new Set(expansion.pinnedShows);
@@ -89,21 +90,6 @@ export function togglePin(expansion: TreeExpansion, showId: number): TreeExpansi
   }
   pinnedShows.add(showId);
   return { ...expansion, pinnedShows };
-}
-
-/**
- * Open a show explicitly (double click). Idempotent — double-clicking an already
- * open series must not close it the way a toggle would.
- */
-export function pinShow(expansion: TreeExpansion, showId: number): TreeExpansion {
-  if (expansion.pinnedShows.has(showId)) return expansion;
-  const pinnedShows = new Set(expansion.pinnedShows);
-  pinnedShows.add(showId);
-  return {
-    ...expansion,
-    pinnedShows,
-    revealedShowId: expansion.revealedShowId === showId ? null : expansion.revealedShowId,
-  };
 }
 
 /** Reveal a show because one of its episodes was selected. Replaces any previous reveal. */

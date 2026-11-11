@@ -7,7 +7,6 @@ import {
   isSeasonExpanded,
   isShowExpanded,
   parseSeasonKey,
-  pinShow,
   revealShow,
   seasonKey,
   seasonToReveal,
@@ -44,34 +43,34 @@ describe('Tree expansion', () => {
   });
 
   it('opens on double click and stays open while navigating', () => {
-    const e = pinShow(expansion(), 1);
+    const e = togglePin(expansion(), 1); // double click == togglePin
     expect(isShowExpanded(e, 1)).toBe(true);
     // Selection is not part of the model, so clicking elsewhere leaves it open.
     expect(effectiveExpandedShows(e)).toEqual(new Set([1]));
   });
 
-  it('double-clicking an already open series is idempotent, not a toggle', () => {
-    const once = pinShow(expansion(), 1);
-    const twice = pinShow(once, 1);
-    expect(isShowExpanded(twice, 1)).toBe(true);
-    expect(twice).toBe(once); // no state churn
+  it('double-clicking an open series closes it (same gesture both ways)', () => {
+    const opened = togglePin(expansion(), 1);
+    const closed = togglePin(opened, 1);
+    expect(isShowExpanded(closed, 1)).toBe(false);
+    expect(effectiveExpandedShows(closed)).toEqual(new Set());
   });
 
   it('keeps other open series open when a second is double-clicked', () => {
-    const e = pinShow(pinShow(expansion(), 1), 2);
+    const e = togglePin(togglePin(expansion(), 1), 2);
     expect(effectiveExpandedShows(e)).toEqual(new Set([1, 2]));
   });
 
-  it('caret toggles a series closed and open again', () => {
-    let e = togglePin(expansion(), 1);
-    expect(isShowExpanded(e, 1)).toBe(true);
-    e = togglePin(e, 1);
-    expect(isShowExpanded(e, 1)).toBe(false);
-    expect(effectiveExpandedShows(e)).toEqual(new Set());
+  it('closing one series leaves the others untouched', () => {
+    const both = togglePin(togglePin(expansion(), 1), 2);
+    const onlyTwo = togglePin(both, 1);
+    expect(effectiveExpandedShows(onlyTwo)).toEqual(new Set([2]));
   });
 
-  it('caret closes a row that was opened by double click', () => {
-    const opened = pinShow(expansion(), 1);
+  it('caret and double click share the same toggle behaviour', () => {
+    // The component routes both gestures to togglePin, so a caret press on a
+    // double-click-opened row must close it.
+    const opened = togglePin(expansion(), 1);
     const closed = togglePin(opened, 1);
     expect(isShowExpanded(closed, 1)).toBe(false);
   });
@@ -92,9 +91,15 @@ describe('Tree expansion', () => {
     expect(effectiveExpandedShows(second)).toEqual(new Set([2]));
   });
 
-  it('reveal does not disturb double-click-pinned series', () => {
-    const e = revealShow(pinShow(expansion(), 1), 2);
+  it('reveal does not disturb a manually opened series', () => {
+    const e = revealShow(togglePin(expansion(), 1), 2);
     expect(effectiveExpandedShows(e)).toEqual(new Set([1, 2]));
+  });
+
+  it('double click closes a row that was revealed by episode selection', () => {
+    const revealed = revealShow(expansion(), 1);
+    expect(isShowExpanded(revealed, 1)).toBe(true);
+    expect(isShowExpanded(togglePin(revealed, 1), 1)).toBe(false);
   });
 
   it('drops a reveal once selection moves to another series', () => {
@@ -103,14 +108,14 @@ describe('Tree expansion', () => {
     // Still selected -> keep it open.
     expect(clearStaleReveal(revealed, 1).revealedShowId).toBe(1);
     // Pinned rows are unaffected by navigation.
-    const mixed = revealShow(pinShow(expansion(), 5), 1);
+    const mixed = revealShow(togglePin(expansion(), 5), 1);
     const moved = clearStaleReveal(mixed, 2);
     expect(moved.revealedShowId).toBeNull();
     expect(effectiveExpandedShows(moved)).toEqual(new Set([5]));
   });
 
   it('no reveal -> clearing is a no-op', () => {
-    const e = pinShow(expansion(), 1);
+    const e = togglePin(expansion(), 1);
     expect(clearStaleReveal(e, 2)).toBe(e);
   });
 
@@ -188,9 +193,10 @@ describe('Tree expansion', () => {
     const e = expansion({ pinnedShows: new Set([1]) });
     togglePin(e, 2);
     toggleSeason(e, 1, 1);
-    pinShow(e, 3);
+    togglePin(e, 3);
     revealShow(e, 4);
     expect(e.pinnedShows.has(2)).toBe(false);
+    // togglePin(e, 3) opened it, but e itself must be untouched.
     expect(e.pinnedShows.has(3)).toBe(false);
     expect(e.revealedShowId).toBeNull();
     expect(e.expandedSeasons.size).toBe(0);

@@ -418,7 +418,11 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
     }
   };
 
-  const toggleShowExpand = (showId: number, e?: React.MouseEvent) => {
+  /**
+   * The one explicit open/close gesture, shared by the caret and by double click on
+   * the row. Closing also clears a reveal, so the gesture never looks dead.
+   */
+  const toggleShowOpen = (showId: number, e?: React.MouseEvent) => {
     e?.stopPropagation();
     const isOpen = pinnedShows.has(showId) || revealedShowId === showId;
     setPinnedShows((prev) => {
@@ -427,12 +431,6 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
       else next.add(showId);
       return next;
     });
-    setRevealedShowId((prev) => (prev === showId ? null : prev));
-  };
-
-  /** Double click a series row: open it (never close — that is the caret's job). */
-  const openShow = (showId: number) => {
-    setPinnedShows((prev) => (prev.has(showId) ? prev : new Set([...prev, showId])));
     setRevealedShowId((prev) => (prev === showId ? null : prev));
   };
 
@@ -988,8 +986,8 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                       if (isShowSelected) return;
                       onSelectMedia({ kind: 'show', showId: show.id, seasonNumber: null });
                     }}
-                    onDoubleClick={() => openShow(show.id)}
-                    title="Click to open the data pane, double-click to expand episodes"
+                    onDoubleClick={() => toggleShowOpen(show.id)}
+                    title="Click to open the data pane, double-click to expand or collapse episodes"
                     className={`px-2 py-1.5 flex items-center gap-1.5 cursor-pointer transition ${
                       isShowSelected
                         ? 'bg-sky-500/15 border-l-2 border-l-sky-400'
@@ -1012,7 +1010,8 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                     </button>
 
                     <button
-                      onClick={(e) => toggleShowExpand(show.id, e)}
+                      onClick={(e) => toggleShowOpen(show.id, e)}
+                      onDoubleClick={(e) => e.stopPropagation()}
                       className="p-0.5 rounded hover:bg-slate-700/70 text-slate-400 shrink-0 cursor-pointer"
                       aria-label={isShowExpanded ? 'Collapse show' : 'Expand show'}
                     >
