@@ -22,7 +22,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import type { MovieRecord, MovieSetRecord } from '../../shared/types.js';
+import type { MovieListEntry, MovieSetRecord } from '../../shared/types.js';
 import { api } from '../lib/api.js';
 import {
   filterMoviesByActorAndQuery,
@@ -52,12 +52,13 @@ import {
   visibleSeasonKeys,
   type TreeExpansion,
 } from '../lib/treeExpansion.js';
+import { episodeFilePath } from '../lib/episodeDisplay.js';
 import { PosterImage } from './PosterImage.js';
 
 interface MediaTreeSidebarProps {
   activeTab: LeftLibraryTab;
   onTabChange: (tab: LeftLibraryTab) => void;
-  movies: MovieRecord[];
+  movies: MovieListEntry[];
   showTree: ShowTreeNode[];
   sets: MovieSetRecord[];
   selected: SelectedMedia;
@@ -864,13 +865,7 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
             filteredMovies.map((m) => {
               const isSelected = selected?.kind === 'movie' && selected.movieId === m.id;
               const isChecked = checkedMovieIds.has(m.id);
-              const resLabel =
-                m.parsedInfo.resolution?.toUpperCase() ||
-                (m.streamDetails.video[0]?.height >= 2000
-                  ? '4K'
-                  : m.streamDetails.video[0]?.height >= 1000
-                    ? '1080p'
-                    : '');
+              const resLabel = m.resolution?.toUpperCase() || '';
               return (
                 <div
                   key={m.id}
@@ -890,7 +885,7 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                   </button>
 
                   <div className="w-6 h-9 shrink-0 overflow-hidden rounded">
-                    <PosterImage filePath={m.artwork.poster} alt={m.title} compact className="rounded" />
+                    <PosterImage filePath={m.poster} alt={m.title} compact className="rounded" />
                   </div>
 
                   <div className="min-w-0 flex-1">
@@ -928,21 +923,21 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                           title={
                             !m.hasNfo
                               ? 'Missing NFO'
-                              : !m.nfoValid || m.nfoWarnings.length > 0
-                                ? `NFO warnings (${m.nfoWarnings.length})`
+                              : !m.nfoValid || m.nfoWarningCount > 0
+                                ? `NFO warnings (${m.nfoWarningCount})`
                                 : 'Valid NFO'
                           }
                           className={`w-1.5 h-1.5 rounded-full ${
                             !m.hasNfo
                               ? 'bg-rose-400/80'
-                              : !m.nfoValid || m.nfoWarnings.length > 0
+                              : !m.nfoValid || m.nfoWarningCount > 0
                                 ? 'bg-amber-400'
                                 : 'bg-emerald-400'
                           }`}
                         />
                         <span
-                          title={m.subtitles.length > 0 ? `${m.subtitles.length} subtitle(s)` : 'No subtitles'}
-                          className={`w-1.5 h-1.5 rounded-full ${m.subtitles.length > 0 ? 'bg-sky-400' : 'bg-slate-700'}`}
+                          title={m.subtitleCount > 0 ? `${m.subtitleCount} subtitle(s)` : 'No subtitles'}
+                          className={`w-1.5 h-1.5 rounded-full ${m.subtitleCount > 0 ? 'bg-sky-400' : 'bg-slate-700'}`}
                         />
                         <span
                           title={m.watched ? 'Watched' : 'Unwatched'}
@@ -1216,7 +1211,14 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                                           {code}
                                         </span>
                                         <div className="min-w-0 flex-1">
-                                          <div className="text-[11px] truncate">{ep.title}</div>
+                                          <div className="text-[11px] truncate">{ep.title || ep.fileName}</div>
+                                          {/* File name stays visible so a mis-named file is spottable here too. */}
+                                          <div
+                                            title={episodeFilePath(ep)}
+                                            className="text-[9px] font-mono truncate text-slate-500"
+                                          >
+                                            {ep.fileName}
+                                          </div>
                                           {actorNeedle && (() => {
                                             const epActorMatch = findActorMatch(ep.actors, actorNeedle);
                                             if (!epActorMatch) return null;

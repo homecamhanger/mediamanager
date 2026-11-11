@@ -9,6 +9,7 @@ import type {
   TvShowRecord,
 } from '../../shared/types.js';
 import { api } from '../lib/api.js';
+import { fileOperations } from '../lib/fileOperations.js';
 import { useEscapeKey } from '../lib/useEscapeKey.js';
 
 interface Props {
@@ -35,7 +36,6 @@ export const EpisodeScrapeModal: React.FC<Props> = ({ open, show, episode, onClo
   const [selectedShowHit, setSelectedShowHit] = useState<{ provider: ScraperProviderId; externalId: string; title: string } | null>(null);
 
   const [loading, setLoading] = useState(false);
-  const [applying, setApplying] = useState(false);
   const [preview, setPreview] = useState<EpisodeScrapePreview | null>(null);
   const [parts, setParts] = useState<ScrapedEpisodePart[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -118,27 +118,32 @@ export const EpisodeScrapeModal: React.FC<Props> = ({ open, show, episode, onClo
     }
   };
 
-  const handleApply = async () => {
+  const handleApply = () => {
     if (parts.length === 0) return;
-    setApplying(true);
+    const endParsed = multiEpisodeEnd.trim() ? Number(multiEpisodeEnd) : null;
+    const payload = {
+      parts,
+      showUniqueIds: preview?.showUniqueIds,
+      seasonNumber,
+      episodeNumber,
+      multiEpisodeEnd: endParsed && endParsed > episodeNumber ? endParsed : null,
+      writeNfo: true,
+    };
+
+    // Close immediately and let the write continue in the background. NFO writes
+    // on a network share can take seconds, and blocking the dialog on them left
+    // "Cancel" as the only affordance.
     setError(null);
-    try {
-      const endParsed = multiEpisodeEnd.trim() ? Number(multiEpisodeEnd) : null;
-      const res = await api.applyEpisodeScrape(episode.id, {
-        parts,
-        showUniqueIds: preview?.showUniqueIds,
-        seasonNumber,
-        episodeNumber,
-        multiEpisodeEnd: endParsed && endParsed > episodeNumber ? endParsed : null,
-        writeNfo: true,
-      });
-      onApplied(res.episode);
-      onClose();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setApplying(false);
-    }
+    onClose();
+    const code = `S${String(seasonNumber).padStart(2, '0')}E${String(episodeNumber).padStart(2, '0')}`;
+    fileOperations.enqueue({
+      label: `Write NFO · ${episode.showTitle || 'Episode'} ${code}`,
+      run: async () => {
+        const res = await api.applyEpisodeScrape(episode.id, payload);
+        onApplied(res.episode);
+        return 'Episode metadata & NFO saved';
+      },
+    });
   };
 
   const updatePartField = <K extends keyof ScrapedEpisodePart>(index: number, key: K, value: ScrapedEpisodePart[K]) => {
@@ -455,10 +460,10 @@ export const EpisodeScrapeModal: React.FC<Props> = ({ open, show, episode, onClo
             <button
               type="button"
               onClick={handleApply}
-              disabled={applying || loading || parts.length === 0}
+              disabled={loading || parts.length === 0}
               className="px-4 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
-              {applying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+              <CheckCircle2 className="w-3.5 h-3.5" />
               Apply &amp; Write NFO
             </button>
           </div>

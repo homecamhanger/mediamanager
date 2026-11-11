@@ -12,6 +12,7 @@ import type {
   LibraryVocabulary,
   MediaSource,
   MissingEpisodeRecord,
+  MovieListEntry,
   UnmatchedVideoFile,
   MovieRecord,
   MovieSetRecord,
@@ -43,7 +44,10 @@ import type {
 
 export function getArtworkUrl(filePath: string | null | undefined, cacheBust?: string | number): string | null {
   if (!filePath) return null;
-  if (/^https?:\/\//i.test(filePath) || filePath.startsWith('/api/')) return filePath;
+  // Already a URL — remote artwork, an API route, or an optimistic inline
+  // preview (`data:`/`blob:`) shown before the disk write finishes. Passing an
+  // inline preview through the proxy would request a filesystem path and 404.
+  if (/^(https?:|data:|blob:)/i.test(filePath) || filePath.startsWith('/api/')) return filePath;
   const qs = new URLSearchParams({ path: filePath });
   if (cacheBust !== undefined) qs.set('v', String(cacheBust));
   return `/api/artwork/file?${qs.toString()}`;
@@ -89,7 +93,13 @@ export const api = {
   getAudit: () => req<LibraryAuditReport>('/api/audit'),
 
   // Movies
+  /** Slim list for the sidebar — see shared/movieListEntry.ts for the projection. */
+  listMovieEntries: () => req<{ movies: MovieListEntry[] }>('/api/movies/list'),
   listMovies: () => req<{ movies: MovieRecord[] }>('/api/movies'),
+  getLibraryCounts: () =>
+    req<{
+      counts: { movies: number; shows: number; episodes: number; sets: number; unscrapedMovies: number; unscrapedShows: number };
+    }>('/api/counts'),
   getMovie: (id: number) => req<{ movie: MovieRecord }>(`/api/movies/${id}`),
   updateMovie: (id: number, patch: Partial<MovieRecord> & { writeNfo?: boolean; setName?: string | null }) =>
     req<{ movie: MovieRecord }>(`/api/movies/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),

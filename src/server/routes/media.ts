@@ -24,7 +24,9 @@ export function createMediaRouter(db: MediaDatabase): Router {
     if (!fs.existsSync(resolved)) {
       return res.status(404).send('Not found');
     }
-    res.setHeader('Cache-Control', 'no-cache');
+    // Artwork changes rarely and is always referenced through a version query
+    // (`?v=`) after an edit, so it can be cached hard and revalidated by ETag.
+    res.setHeader('Cache-Control', 'public, max-age=86400');
     return res.sendFile(resolved, { dotfiles: 'allow' });
   });
 

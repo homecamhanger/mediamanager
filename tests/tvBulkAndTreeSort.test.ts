@@ -15,6 +15,7 @@ import type {
 import { createApiApp } from '../src/server/app.js';
 import { MediaDatabase } from '../src/server/db/database.js';
 import { resetAndSeedSampleLibrary } from '../src/server/scanner/sampleGenerator.js';
+import { toMovieListEntry, toSetMovieRef } from '../src/shared/movieListEntry.js';
 import {
   filterShowTreeNodes,
   movieMatchesFilter,
@@ -318,7 +319,8 @@ describe('TV Bulk Actions & Multi-Criteria Tree Sorting / Filtering', () => {
       artwork: { ...EMPTY_ARTWORK, poster: '/p.jpg', fanart: null },
     });
 
-    const movies = [mGamma, mAlpha, mBeta];
+    // These fixtures are full records; project them the way the app does.
+    const movies = [mGamma, mAlpha, mBeta].map(toMovieListEntry);
     expect(sortMovies(movies, 'title', 'asc').map((m) => m.title)).toEqual(['Alpha', 'Beta', 'Gamma']);
     expect(sortMovies(movies, 'title', 'desc').map((m) => m.title)).toEqual(['Gamma', 'Beta', 'Alpha']);
     expect(sortMovies(movies, 'year', 'desc').map((m) => m.title)).toEqual(['Beta', 'Gamma', 'Alpha']);
@@ -373,8 +375,8 @@ describe('TV Bulk Actions & Multi-Criteria Tree Sorting / Filtering', () => {
     expect(unwatchedOnly[0].episodes.map((e) => e.id)).toEqual([11]);
 
     const sets: MovieSetRecord[] = [
-      { id: 1, name: 'Set Alpha', overview: '', posterPath: null, fanartPath: null, clearlogoPath: null, movies: [mAlpha] },
-      { id: 2, name: 'Set Beta', overview: '', posterPath: null, fanartPath: null, clearlogoPath: null, movies: [mBeta, mGamma] },
+      { id: 1, name: 'Set Alpha', overview: '', posterPath: null, fanartPath: null, clearlogoPath: null, movies: [toSetMovieRef(mAlpha)] },
+      { id: 2, name: 'Set Beta', overview: '', posterPath: null, fanartPath: null, clearlogoPath: null, movies: [toSetMovieRef(mBeta), toSetMovieRef(mGamma)] },
     ];
     expect(sortSets(sets, 'rating', 'desc').map((s) => s.name)).toEqual(['Set Beta', 'Set Alpha']);
     expect(sortSets(sets, 'runtime', 'asc').map((s) => s.name)).toEqual(['Set Alpha', 'Set Beta']);

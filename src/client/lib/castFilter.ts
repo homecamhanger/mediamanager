@@ -1,23 +1,29 @@
-import type { ActorEntry, MovieRecord, MovieSetRecord } from '../../shared/types.js';
+import type { ActorEntry, ListableMovie, MovieSetRecord } from '../../shared/types.js';
 import type { ShowTreeNode } from './workspaceTypes.js';
 
-export function findActorMatch(actors: ActorEntry[], needle: string): ActorEntry | null {
+/** The minimum a cast entry needs for matching — full `ActorEntry` or a list projection. */
+export interface CastMatchable {
+  name: string;
+  role: string;
+}
+
+export function findActorMatch<T extends CastMatchable>(actors: T[], needle: string): T | null {
   const norm = needle.trim().toLowerCase();
   if (!norm) return null;
   return actors.find((a) => a.name.trim().toLowerCase() === norm) ?? null;
 }
 
-export function actorsMatchText(actors: ActorEntry[], textNeedle: string): boolean {
+export function actorsMatchText(actors: CastMatchable[], textNeedle: string): boolean {
   const norm = textNeedle.trim().toLowerCase();
   if (!norm) return true;
   return actors.some((a) => `${a.name} ${a.role}`.toLowerCase().includes(norm));
 }
 
 export function filterMoviesByActorAndQuery(
-  movies: MovieRecord[],
+  movies: ListableMovie[],
   actorFilter: string | null,
   rawQuery: string
-): MovieRecord[] {
+): ListableMovie[] {
   const actorNeedle = actorFilter?.trim().toLowerCase() || '';
   const q = rawQuery.trim().toLowerCase();
   const isActorPrefix = q.startsWith('actor:');

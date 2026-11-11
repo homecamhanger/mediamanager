@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type {
   ArtworkKind,
+  ListableMovie,
   MovieRecord,
   MovieSetRecord,
   ParsedFilenameInfo,
@@ -15,6 +16,7 @@ import {
   findActorMatch,
 } from '../src/client/lib/castFilter.js';
 import type { ShowTreeNode } from '../src/client/lib/workspaceTypes.js';
+import { toMovieListEntry } from '../src/shared/movieListEntry.js';
 
 const EMPTY_ARTWORK: Record<ArtworkKind, string | null> = {
   poster: null,
@@ -201,16 +203,20 @@ function makeShowNode(
 }
 
 describe('castFilter cross-library cast & role filtering', () => {
-  const movies: MovieRecord[] = [
-    makeMovie(1, 'Dune', [
-      { name: 'Timothee Chalamet', role: 'Paul Atreides' },
-      { name: 'Rebecca Ferguson', role: 'Lady Jessica' },
-    ]),
-    makeMovie(2, 'Mission Impossible: Fallout', [
-      { name: 'Tom Cruise', role: 'Ethan Hunt' },
-      { name: 'Rebecca Ferguson', role: 'Ilsa Faust' },
-    ]),
-    makeMovie(3, 'Blade Runner 2049', [{ name: 'Ryan Gosling', role: 'K' }]),
+  const movies: ListableMovie[] = [
+    toMovieListEntry(
+      makeMovie(1, 'Dune', [
+        { name: 'Timothee Chalamet', role: 'Paul Atreides' },
+        { name: 'Rebecca Ferguson', role: 'Lady Jessica' },
+      ])
+    ),
+    toMovieListEntry(
+      makeMovie(2, 'Mission Impossible: Fallout', [
+        { name: 'Tom Cruise', role: 'Ethan Hunt' },
+        { name: 'Rebecca Ferguson', role: 'Ilsa Faust' },
+      ])
+    ),
+    toMovieListEntry(makeMovie(3, 'Blade Runner 2049', [{ name: 'Ryan Gosling', role: 'K' }])),
   ];
 
   const showTree: ShowTreeNode[] = [

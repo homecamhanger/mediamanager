@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Check,
@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import type { ActorEntry, ArtworkKind, MovieRecord, NfoValidationReport } from '../../shared/types.js';
 import { api, formatBytes, getArtworkUrl } from '../lib/api.js';
+import { fileOperations } from '../lib/fileOperations.js';
 import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 import { ArtworkPickerModal, ArtworkPickerTarget, ClickableArtCard } from './ArtworkPickerModal.js';
 import { CastListColumn } from './CastListColumn.js';
@@ -64,7 +65,6 @@ export const MovieDetailPanel: React.FC<{
 }> = ({ movieId, initialTab, activeActor, onSelectActor, onUpdated, onDeleted, onClose }) => {
   const [movie, setMovie] = useState<MovieRecord | null>(null);
   const [tab, setTab] = useState<DetailTab>(resolveMovieTab(initialTab));
-  const [saving, setSaving] = useState(false);
   const [scrapeOpen, setScrapeOpen] = useState(false);
   const [subSearchOpen, setSubSearchOpen] = useState(false);
   const [editSubId, setEditSubId] = useState<number | null>(null);
@@ -78,11 +78,21 @@ export const MovieDetailPanel: React.FC<{
   const [editionDraft, setEditionDraft] = useState('');
   const [confirmDeleteMode, setConfirmDeleteMode] = useState<'db' | 'files' | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  // Queued file writes outlive the panel; only touch state while it is mounted.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const vocabulary = useLibraryVocabulary();
 
   const loadMovie = async () => {
     const res = await api.getMovie(movieId);
+    // A queued write can finish after the panel is closed; skip state updates then.
+    if (!mountedRef.current) return;
     setMovie(res.movie);
     setForm(res.movie);
     setEditionDraft(res.movie.parsedInfo.edition ?? '');
@@ -123,60 +133,74 @@ export const MovieDetailPanel: React.FC<{
     setTimeout(() => setToast(null), 2800);
   };
 
-  const handleSaveMetadata = async () => {
-    setSaving(true);
-    try {
-      await api.updateMovie(movie.id, {
-        title: form.title,
-        originalTitle: form.originalTitle,
-        sortTitle: form.sortTitle,
-        year: form.year ? Number(form.year) : null,
-        premiered: form.premiered || null,
-        tagline: form.tagline,
-        plot: form.plot,
-        outline: form.outline,
-        runtimeMinutes: form.runtimeMinutes ? Number(form.runtimeMinutes) : null,
-        mpaa: form.mpaa,
-        country: form.country,
-        trailerUrl: form.trailerUrl,
-        genres: form.genres,
-        tags: form.tags,
-        directors: form.directors,
-        writers: form.writers,
-        studios: form.studios,
-        setName: form.setName ?? null,
-        uniqueIds: form.uniqueIds,
-        userRating: form.userRating ? Number(form.userRating) : null,
-        writeNfo: true,
-      });
-      await loadMovie();
-      onUpdated();
-      notify('Metadata saved & Kodi NFO updated');
-    } finally {
-      setSaving(false);
-    }
+  const handleSaveMetadata = () => {
+    const payload = {
+      title: form.title,
+      originalTitle: form.originalTitle,
+      sortTitle: form.sortTitle,
+      year: form.year ? Number(form.year) : null,
+      premiered: form.premiered || null,
+      tagline: form.tagline,
+      plot: form.plot,
+      outline: form.outline,
+      runtimeMinutes: form.runtimeMinutes ? Number(form.runtimeMinutes) : null,
+      mpaa: form.mpaa,
+      country: form.country,
+      trailerUrl: form.trailerUrl,
+      genres: form.genres,
+      tags: form.tags,
+      directors: form.directors,
+      writers: form.writers,
+      studios: form.studios,
+      setName: form.setName ?? null,
+      uniqueIds: form.uniqueIds,
+      userRating: form.userRating ? Number(form.userRating) : null,
+      writeNfo: true,
+    };
+    // The NFO write can block for seconds on a network share. Take the click as
+    // committed, keep the form in sync, and let the write drain in the queue.
+    fileOperations.enqueue({
+      label: `Write NFO · ${payload.title || form.title || 'Movie'}`,
+      run: async () => {
+        await api.updateMovie(movie.id, payload);
+        await loadMovie();
+        onUpdated();
+        return 'Metadata & NFO saved';
+      },
+    });
   };
 
-  const handleSaveNfo = async () => {
-    setSaving(true);
-    try {
-      const res = await api.saveNfo('movie', movie.id, nfoXml);
-      setNfoVal(res.validation);
-      await loadMovie();
-      onUpdated();
-      notify('NFO XML validated and written to disk');
-    } catch (e) {
-      notify(`Validation error: ${(e as Error).message}`);
-    } finally {
-      setSaving(false);
-    }
+  const handleSaveNfo = () => {
+    // Raw NFO writes are the slowest operation of the lot; queue rather than block.
+    fileOperations.enqueue({
+      label: `Write NFO · ${movie?.title ?? 'Movie'} (edited XML)`,
+      run: async () => {
+        const res = await api.saveNfo('movie', movie.id, nfoXml);
+        if (mountedRef.current) setNfoVal(res.validation);
+        await loadMovie();
+        onUpdated();
+        return 'NFO XML validated and written to disk';
+      },
+    });
   };
 
   const handlePickArtwork = async (kind: ArtworkKind, url?: string, dataBase64?: string) => {
-    await api.setMovieArtwork(movie.id, kind, url, dataBase64);
-    await loadMovie();
-    onUpdated();
-    notify(`Updated ${kind} artwork`);
+    if (!movie) return;
+    // Swap the visible art right away; the file write continues in the background.
+    const optimistic = url ?? (dataBase64 ? `data:image/jpeg;base64,${dataBase64}` : null);
+    if (optimistic) {
+      setMovie((prev) => (prev ? { ...prev, artwork: { ...prev.artwork, [kind]: optimistic } } : prev));
+      setArtCacheKey((k) => k + 1);
+    }
+    fileOperations.enqueue({
+      label: `Artwork · ${movie.title} ${kind}`,
+      run: async () => {
+        await api.setMovieArtwork(movie.id, kind, url, dataBase64);
+        await loadMovie();
+        onUpdated();
+        return `${kind} saved`;
+      },
+    });
   };
 
   const handleSaveActors = async (actors: ActorEntry[]) => {
@@ -482,11 +506,10 @@ export const MovieDetailPanel: React.FC<{
 
                   <button
                     onClick={handleSaveMetadata}
-                    disabled={saving}
-                    className="px-3.5 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    className="px-3.5 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                   >
                     <Save className="w-3.5 h-3.5" />
-                    {saving ? 'Saving...' : 'Save & Write NFO'}
+                    Save & Write NFO
                   </button>
                 </div>
               </div>
@@ -547,7 +570,6 @@ export const MovieDetailPanel: React.FC<{
                 </button>
                 <button
                   onClick={handleSaveNfo}
-                  disabled={saving}
                   className="px-3 py-1 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                 >
                   <Check className="w-3.5 h-3.5" /> Save NFO to Disk

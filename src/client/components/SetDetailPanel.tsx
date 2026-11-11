@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { Clapperboard, Layers, Plus, Save, Trash2, X } from 'lucide-react';
-import type { MovieRecord, MovieSetRecord } from '../../shared/types.js';
+import type { MovieListEntry, MovieSetRecord } from '../../shared/types.js';
 import { api, getArtworkUrl } from '../lib/api.js';
 import { PosterImage } from './PosterImage.js';
 
 export const SetDetailPanel: React.FC<{
   setRecord: MovieSetRecord;
-  allMovies: MovieRecord[];
+  allMovies: MovieListEntry[];
   onSelectMovie: (movieId: number) => void;
   onUpdated: () => Promise<void> | void;
   onDeleted: () => void;
@@ -64,8 +64,8 @@ export const SetDetailPanel: React.FC<{
     onDeleted();
   };
 
-  const setPoster = setRecord.posterPath ?? setRecord.movies.find((m) => m.artwork.poster)?.artwork.poster ?? null;
-  const setFanart = setRecord.fanartPath ?? setRecord.movies.find((m) => m.artwork.fanart)?.artwork.fanart ?? null;
+  const setPoster = setRecord.posterPath ?? setRecord.movies.find((m) => m.poster)?.poster ?? null;
+  const setFanart = setRecord.fanartPath ?? setRecord.movies.find((m) => m.fanart)?.fanart ?? null;
   const setFanartUrl = getArtworkUrl(setFanart);
 
   return (
@@ -205,7 +205,7 @@ export const SetDetailPanel: React.FC<{
                   >
                     <X className="w-3 h-3" />
                   </button>
-                  <PosterImage filePath={m.artwork.poster} alt={m.title} />
+                  <PosterImage filePath={m.poster} alt={m.title} />
                   <div className="p-2">
                     <div className="text-xs font-bold text-slate-100 truncate">{m.title}</div>
                     <div className="text-[11px] text-slate-400 flex items-center justify-between mt-0.5">
