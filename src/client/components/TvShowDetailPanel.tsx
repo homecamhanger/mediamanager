@@ -2,14 +2,18 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   ArrowDown,
+  AlertTriangle,
   ArrowUp,
   ArrowUpDown,
   CalendarClock,
   Check,
+  ChevronDown,
+  ChevronUp,
   Code2,
   Eye,
   EyeOff,
   FileCode2,
+  FileWarning,
   FolderSync,
   GripVertical,
   Image as ImageIcon,
@@ -25,6 +29,7 @@ import type {
   ActorEntry,
   ArtworkKind,
   MissingEpisodeRecord,
+  UnmatchedVideoFile,
   NfoValidationReport,
   TvEpisodeRecord,
   TvSeasonRecord,
@@ -91,6 +96,8 @@ export const TvShowDetailPanel: React.FC<{
   const [seasons, setSeasons] = useState<TvSeasonRecord[]>([]);
   const [episodes, setEpisodes] = useState<TvEpisodeRecord[]>([]);
   const [missingEpisodes, setMissingEpisodes] = useState<MissingEpisodeRecord[]>([]);
+  const [unmatchedFiles, setUnmatchedFiles] = useState<UnmatchedVideoFile[]>([]);
+  const [showUnmatched, setShowUnmatched] = useState(false);
   const [showMissingOnly, setShowMissingOnly] = useState(false);
   const [activeSeason, setActiveSeason] = useState<number | 'all'>(selectedSeason ?? 'all');
   const [tab, setTab] = useState<TvTab>(resolveTvTab(initialTab));
@@ -120,6 +127,7 @@ export const TvShowDetailPanel: React.FC<{
     setSeasons(res.seasons);
     setEpisodes(res.episodes);
     setMissingEpisodes(res.missingEpisodes ?? []);
+    setUnmatchedFiles(res.unmatchedFiles ?? []);
     setArtCacheKey((k) => k + 1);
     const nfo = await api.readNfo('tvshow', showId);
     setNfoXml(nfo.xml);
@@ -469,6 +477,15 @@ export const TvShowDetailPanel: React.FC<{
                 <AlertCircle className="w-3 h-3" /> {missingEpisodes.length} Missing Aired
               </span>
             )}
+            {unmatchedFiles.length > 0 && (
+              <button
+                onClick={() => setShowUnmatched(true)}
+                title="Video files in this series folder that could not be identified as episodes"
+                className="px-2 py-0.5 rounded bg-rose-500/15 border border-rose-500/35 text-rose-300 text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer hover:bg-rose-500/25"
+              >
+                <AlertTriangle className="w-3 h-3" /> {unmatchedFiles.length} Unmatched File{unmatchedFiles.length === 1 ? '' : 's'}
+              </button>
+            )}
           </>
         }
         actions={
@@ -693,6 +710,44 @@ export const TvShowDetailPanel: React.FC<{
                   </div>
                 );
               })}
+              </div>
+            )}
+
+            {/* Unmatched video files — kept and flagged rather than silently ignored */}
+            {unmatchedFiles.length > 0 && (
+              <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 overflow-hidden">
+                <button
+                  onClick={() => setShowUnmatched((v) => !v)}
+                  className="w-full px-3 py-2 flex items-center justify-between gap-2 cursor-pointer hover:bg-rose-500/10"
+                >
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-rose-300 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5" /> {unmatchedFiles.length} Unmatched Video File
+                    {unmatchedFiles.length === 1 ? '' : 's'}
+                  </span>
+                  {showUnmatched ? <ChevronUp className="w-3.5 h-3.5 text-rose-300" /> : <ChevronDown className="w-3.5 h-3.5 text-rose-300" />}
+                </button>
+                {showUnmatched && (
+                  <div className="border-t border-rose-500/20 divide-y divide-rose-500/10">
+                    <p className="px-3 py-2 text-[11px] text-slate-400 leading-relaxed">
+                      These videos live in this series folder but carry no <code className="text-slate-300">SxxExx</code> marker,
+                      or sit in an extras/screenshot folder, so they were not imported as episodes. Rename one to
+                      <code className="text-slate-300"> S01E05 - Title</code> and rescan to bring it in.
+                    </p>
+                    {unmatchedFiles.map((f) => (
+                      <div key={f.id} className="px-3 py-1.5 flex items-center gap-2">
+                        <FileWarning className="w-3.5 h-3.5 text-rose-400/80 shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[11px] font-semibold text-slate-200 truncate">{f.fileName}</div>
+                          <div className="text-[10px] text-slate-500 truncate">
+                            {f.reason === 'non-episode-folder' ? 'In a non-episode folder' : 'No episode marker'}
+                            {' · '}
+                            {f.folderPath.replace(/^.*[\\/]/, '')}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 

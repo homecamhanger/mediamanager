@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowDownWideNarrow,
   ArrowUpNarrowWide,
   CheckSquare,
@@ -42,6 +43,15 @@ import {
   type TvFilter,
 } from '../lib/treeSort.js';
 import type { LeftLibraryTab, SelectedMedia, ShowTreeNode } from '../lib/workspaceTypes.js';
+import {
+  collapseAll,
+  effectiveExpandedShows,
+  expandAll,
+  seasonKey,
+  seasonToReveal,
+  visibleSeasonKeys,
+  type TreeExpansion,
+} from '../lib/treeExpansion.js';
 import { PosterImage } from './PosterImage.js';
 
 interface MediaTreeSidebarProps {
@@ -83,20 +93,23 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
   const [tvTagInput, setTvTagInput] = useState('');
   const [batchBusy, setBatchBusy] = useState(false);
 
-  const [expandedShows, setExpandedShows] = useState<Set<number>>(new Set());
+  // Opening a series is an explicit act: double click the row, or press the caret.
+  // A single click only selects (fills the data pane) and never opens or closes
+  // anything. See lib/treeExpansion.ts.
+  const [pinnedShows, setPinnedShows] = useState<Set<number>>(new Set());
+  const [revealedShowId, setRevealedShowId] = useState<number | null>(null);
   const [expandedSeasons, setExpandedSeasons] = useState<Set<string>>(new Set());
   const [expandedSets, setExpandedSets] = useState<Set<number>>(new Set());
 
-  // Automatically expand the first Show -> Season once tree loads, and ensure selected show/season/set stays expanded
-  useEffect(() => {
-    if (showTree.length > 0 && expandedShows.size === 0) {
-      const first = showTree[0];
-      setExpandedShows(new Set([first.show.id]));
-      if (first.seasons[0]) {
-        setExpandedSeasons(new Set([`${first.show.id}:${first.seasons[0].seasonNumber}`]));
-      }
-    }
-  }, [showTree, expandedShows.size]);
+  const selectedShowId =
+    selected?.kind === 'show' || selected?.kind === 'episode' ? selected.showId : null;
+  const selectedEpisodeId = selected?.kind === 'episode' ? selected.episodeId : null;
+
+  const expansion: TreeExpansion = useMemo(
+    () => ({ pinnedShows, revealedShowId, expandedSeasons }),
+    [pinnedShows, revealedShowId, expandedSeasons]
+  );
+  const expandedShows = useMemo(() => effectiveExpandedShows(expansion), [expansion]);
 
   useEffect(() => {
     if (sets.length > 0 && expandedSets.size === 0) {
@@ -104,24 +117,35 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
     }
   }, [sets, expandedSets.size]);
 
+  // Selecting an episode (from the tree or from search) reveals its season so the
+  // row is not open onto an empty list. Selecting the series itself does not open it.
   useEffect(() => {
-    if (selected?.kind === 'show') {
-      setExpandedShows((prev) => (prev.has(selected.showId) ? prev : new Set([...prev, selected.showId])));
-      if (selected.seasonNumber != null) {
-        const key = `${selected.showId}:${selected.seasonNumber}`;
-        setExpandedSeasons((prev) => (prev.has(key) ? prev : new Set([...prev, key])));
-      }
-    } else if (selected?.kind === 'episode') {
-      setExpandedShows((prev) => (prev.has(selected.showId) ? prev : new Set([...prev, selected.showId])));
-      const node = showTree.find((n) => n.show.id === selected.showId);
-      const ep = node?.episodes.find((e) => e.id === selected.episodeId);
-      if (ep) {
-        const effSeason = ep.displaySeason ?? ep.seasonNumber;
-        const key = `${selected.showId}:${effSeason}`;
-        setExpandedSeasons((prev) => (prev.has(key) ? prev : new Set([...prev, key])));
-      }
-    }
-  }, [selected, showTree]);
+    if (selectedEpisodeId == null || selectedShowId == null) return;
+    setRevealedShowId((prev) => (prev === selectedShowId ? prev : selectedShowId));
+  }, [selectedEpisodeId, selectedShowId]);
+
+  // Navigating to another series releases a reveal — only caret/double-click opens
+  // are meant to persist. Pins are untouched, so they stay open as asked.
+  useEffect(() => {
+    setRevealedShowId((prev) => (prev != null && prev !== selectedShowId ? null : prev));
+  }, [selectedShowId]);
+
+  useEffect(() => {
+    const seasonNumber = seasonToReveal(showTree, selectedShowId, selectedEpisodeId);
+    if (selectedShowId == null || seasonNumber == null) return;
+    if (!expandedShows.has(selectedShowId)) return;
+    const key = seasonKey(selectedShowId, seasonNumber);
+    setExpandedSeasons((prev) => (prev.has(key) ? prev : new Set([...prev, key])));
+  }, [selectedShowId, selectedEpisodeId, showTree, expandedShows]);
+
+  // Drop seasons belonging to shows that are no longer open, so re-opening a show
+  // later doesn't resurrect stale season rows.
+  useEffect(() => {
+    setExpandedSeasons((prev) => {
+      const next = visibleSeasonKeys({ pinnedShows, revealedShowId, expandedSeasons: prev });
+      return next.size === prev.size ? prev : next;
+    });
+  }, [pinnedShows, revealedShowId]);
 
   // Quick Set creation inside Sets tab
   const [newSetOpen, setNewSetOpen] = useState(false);
@@ -395,19 +419,25 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
     }
   };
 
-  const toggleShowExpand = (showId: number, e?: React.MouseEvent) => {
+  /**
+   * The one explicit open/close gesture, shared by the caret and by double click on
+   * the row. Closing also clears a reveal, so the gesture never looks dead.
+   */
+  const toggleShowOpen = (showId: number, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    setExpandedShows((prev) => {
+    const isOpen = pinnedShows.has(showId) || revealedShowId === showId;
+    setPinnedShows((prev) => {
       const next = new Set(prev);
-      if (next.has(showId)) next.delete(showId);
+      if (isOpen) next.delete(showId);
       else next.add(showId);
       return next;
     });
+    setRevealedShowId((prev) => (prev === showId ? null : prev));
   };
 
   const toggleSeasonExpand = (showId: number, seasonNumber: number, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    const key = `${showId}:${seasonNumber}`;
+    const key = seasonKey(showId, seasonNumber);
     setExpandedSeasons((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -417,18 +447,16 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
   };
 
   const expandAllTv = () => {
-    setExpandedShows(new Set(showTree.map((n) => n.show.id)));
-    const allSeasonKeys: string[] = [];
-    for (const n of showTree) {
-      for (const s of n.seasons) {
-        allSeasonKeys.push(`${n.show.id}:${s.seasonNumber}`);
-      }
-    }
-    setExpandedSeasons(new Set(allSeasonKeys));
+    const next = expandAll(showTree);
+    setPinnedShows(new Set(next.pinnedShows));
+    setRevealedShowId(null);
+    setExpandedSeasons(new Set(next.expandedSeasons));
   };
 
   const collapseAllTv = () => {
-    setExpandedShows(new Set());
+    const cleared = collapseAll();
+    setPinnedShows(new Set(cleared.pinnedShows));
+    setRevealedShowId(null);
     setExpandedSeasons(new Set());
   };
 
@@ -952,9 +980,15 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                   {/* Level 1: Show Row */}
                   <div
                     onClick={() => {
-                      setExpandedShows((prev) => new Set([...prev, show.id]));
+                      // Single click only selects — it fills the data pane and leaves
+                      // every row's open/closed state untouched. Skip the redundant
+                      // update when it is already selected, which also stops a
+                      // double-click (two clicks + one dblclick) re-fetching twice.
+                      if (isShowSelected) return;
                       onSelectMedia({ kind: 'show', showId: show.id, seasonNumber: null });
                     }}
+                    onDoubleClick={() => toggleShowOpen(show.id)}
+                    title="Click to open the data pane, double-click to expand or collapse episodes"
                     className={`px-2 py-1.5 flex items-center gap-1.5 cursor-pointer transition ${
                       isShowSelected
                         ? 'bg-sky-500/15 border-l-2 border-l-sky-400'
@@ -977,7 +1011,8 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                     </button>
 
                     <button
-                      onClick={(e) => toggleShowExpand(show.id, e)}
+                      onClick={(e) => toggleShowOpen(show.id, e)}
+                      onDoubleClick={(e) => e.stopPropagation()}
                       className="p-0.5 rounded hover:bg-slate-700/70 text-slate-400 shrink-0 cursor-pointer"
                       aria-label={isShowExpanded ? 'Collapse show' : 'Expand show'}
                     >
@@ -995,6 +1030,15 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                         </span>
                         {show.year && <span className="text-[10px] text-slate-400 shrink-0">{show.year}</span>}
                       </div>
+                      {(node.unmatchedFiles?.length ?? 0) > 0 && (
+                        <div
+                          className="text-[10px] text-rose-400/90 truncate flex items-center gap-1"
+                          title={`${node.unmatchedFiles!.length} video file(s) in this folder could not be identified as episodes`}
+                        >
+                          <AlertTriangle className="w-2.5 h-2.5 shrink-0" />
+                          {node.unmatchedFiles!.length} unmatched
+                        </div>
+                      )}
                       {actorNeedle && (showActorMatch || hasEpisodeActorMatches) && (
                         <div className="text-[10px] text-sky-300 truncate">
                           {showActorMatch

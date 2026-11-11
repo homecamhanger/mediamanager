@@ -194,6 +194,25 @@ export interface MissingEpisodeRecord extends GuideEpisodeEntry {
   code: string;
 }
 
+/**
+ * A video file found inside a series folder that could not be identified as a
+ * specific episode (no `SxxExx` marker, or it lives in an Extras/ScreenShots-style
+ * folder). These are kept and surfaced for the user instead of being guessed at or
+ * silently dropped.
+ */
+export interface UnmatchedVideoFile {
+  id: number;
+  sourceId: number;
+  showId: number | null;
+  filePath: string;
+  fileName: string;
+  folderPath: string;
+  reason: 'no-episode-marker' | 'non-episode-folder';
+  fileSizeBytes: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+}
+
 export interface TvShowRecord {
   id: number;
   sourceId: number;

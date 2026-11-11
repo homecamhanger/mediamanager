@@ -26,6 +26,7 @@ import type {
   TvEpisodeSubEntry,
   TvSeasonRecord,
   TvShowRecord,
+  UnmatchedVideoFile,
 } from '../../shared/types.js';
 
 export const DEFAULT_SCRAPER_PROVIDERS: ScraperProviderConfig[] = [
@@ -248,6 +249,19 @@ export class MediaDatabase {
         auto_scan INTEGER NOT NULL DEFAULT 1,
         last_scanned_at TEXT,
         created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS unmatched_video_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_id INTEGER NOT NULL REFERENCES media_sources(id) ON DELETE CASCADE,
+        show_id INTEGER REFERENCES tv_shows(id) ON DELETE CASCADE,
+        file_path TEXT NOT NULL UNIQUE,
+        file_name TEXT NOT NULL,
+        folder_path TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        file_size_bytes INTEGER NOT NULL DEFAULT 0,
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS movie_sets (
@@ -1401,6 +1415,102 @@ export class MediaDatabase {
       this.db.prepare('UPDATE tv_seasons SET banner_path = ? WHERE id = ?').run(filePath, id);
     }
     return this.getTvSeasonById(id);
+  }
+
+  /** Record (or refresh) a video file that could not be identified as an episode. */
+  upsertUnmatchedVideoFile(input: {
+    sourceId: number;
+    showId: number | null;
+    filePath: string;
+    fileName: string;
+    folderPath: string;
+    reason: 'no-episode-marker' | 'non-episode-folder';
+    fileSizeBytes: number;
+  }): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO unmatched_video_files
+           (source_id, show_id, file_path, file_name, folder_path, reason, file_size_bytes, first_seen_at, last_seen_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(file_path) DO UPDATE SET
+           source_id = excluded.source_id,
+           show_id = excluded.show_id,
+           file_name = excluded.file_name,
+           folder_path = excluded.folder_path,
+           reason = excluded.reason,
+           file_size_bytes = excluded.file_size_bytes,
+           last_seen_at = excluded.last_seen_at`
+      )
+      .run(
+        input.sourceId,
+        input.showId,
+        input.filePath,
+        input.fileName,
+        input.folderPath,
+        input.reason,
+        input.fileSizeBytes,
+        now,
+        now
+      );
+  }
+
+  /** Forget unmatched files for a source that were not seen during this scan. */
+  pruneUnmatchedVideoFiles(sourceId: number, seenFilePaths: ReadonlySet<string>): number {
+    const rows = this.db
+      .prepare('SELECT id, file_path FROM unmatched_video_files WHERE source_id = ?')
+      .all(sourceId) as Array<{ id: number; file_path: string }>;
+    let removed = 0;
+    for (const row of rows) {
+      if (seenFilePaths.has(row.file_path)) continue;
+      this.db.prepare('DELETE FROM unmatched_video_files WHERE id = ?').run(Number(row.id));
+      removed++;
+    }
+    return removed;
+  }
+
+  listUnmatchedVideoFiles(sourceId?: number): UnmatchedVideoFile[] {
+    const rows = (
+      sourceId == null
+        ? this.db.prepare('SELECT * FROM unmatched_video_files ORDER BY folder_path ASC, file_name ASC').all()
+        : this.db
+            .prepare('SELECT * FROM unmatched_video_files WHERE source_id = ? ORDER BY folder_path ASC, file_name ASC')
+            .all(sourceId)
+    ) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      id: Number(r.id),
+      sourceId: Number(r.source_id),
+      showId: r.show_id == null ? null : Number(r.show_id),
+      filePath: String(r.file_path),
+      fileName: String(r.file_name),
+      folderPath: String(r.folder_path),
+      reason: String(r.reason) as UnmatchedVideoFile['reason'],
+      fileSizeBytes: Number(r.file_size_bytes ?? 0),
+      firstSeenAt: String(r.first_seen_at),
+      lastSeenAt: String(r.last_seen_at),
+    }));
+  }
+
+  listUnmatchedVideoFilesForShow(showId: number): UnmatchedVideoFile[] {
+    return this.listUnmatchedVideoFiles().filter((f) => f.showId === showId);
+  }
+
+  /**
+   * Remove episode rows for a show whose video files are no longer present on disk
+   * — or that are no longer identifiable as episodes. Without this, records created
+   * by the old "guess S01E01" fallback would linger forever after a rescan.
+   */
+  pruneTvEpisodesForShow(showId: number, keepFilePaths: ReadonlySet<string>): number {
+    const existing = this.db
+      .prepare('SELECT id, file_path FROM tv_episodes WHERE show_id = ?')
+      .all(showId) as Array<{ id: number; file_path: string }>;
+    let removed = 0;
+    for (const row of existing) {
+      if (keepFilePaths.has(row.file_path)) continue;
+      this.deleteTvEpisode(Number(row.id));
+      removed++;
+    }
+    return removed;
   }
 
   deleteTvEpisode(id: number) {
