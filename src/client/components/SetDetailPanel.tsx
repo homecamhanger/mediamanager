@@ -108,18 +108,18 @@ export const SetDetailPanel: React.FC<{
         </div>
       </div>
 
-      <div className="p-5 space-y-5">
+      <div className="p-4 @xl:p-5 space-y-5 @container">
         {/* Top Row: Collection Poster + Edit Name & Overview */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-          <div className="lg:col-span-3">
+        <div className="grid grid-cols-1 @2xl:grid-cols-[168px_minmax(0,1fr)] gap-4 items-start">
+          <div className="w-32 @2xl:w-full shrink-0 mx-auto @2xl:mx-0">
             <div className="p-2.5 rounded-xl bg-slate-900/75 border border-slate-800 space-y-1.5">
               <div className="text-[11px] font-bold text-slate-300">Collection Poster</div>
               <PosterImage filePath={setPoster} alt={setRecord.name} aspect="poster" className="w-full" />
             </div>
           </div>
 
-          <form onSubmit={handleSave} className="lg:col-span-9 p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-3">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <form onSubmit={handleSave} className="min-w-0 p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-3">
+            <div className="grid grid-cols-1 @3xl:grid-cols-3 gap-3">
               <div>
                 <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
                   Collection Name
@@ -130,7 +130,7 @@ export const SetDetailPanel: React.FC<{
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-100"
                 />
               </div>
-              <div className="lg:col-span-2">
+              <div className="@3xl:col-span-2">
                 <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
                   Kodi Set Overview
                 </label>
@@ -188,7 +188,7 @@ export const SetDetailPanel: React.FC<{
             No movies assigned to this set yet. Use the dropdown above to assign movies.
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 @xl:grid-cols-3 @3xl:grid-cols-4 @5xl:grid-cols-5 gap-3">
             {setRecord.movies
               .slice()
               .sort((a, b) => (a.year ?? 0) - (b.year ?? 0))

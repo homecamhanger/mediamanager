@@ -34,6 +34,7 @@ import { api, formatBytes, getArtworkUrl } from '../lib/api.js';
 import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 import { ArtworkPickerModal, ArtworkPickerTarget, ClickableArtCard } from './ArtworkPickerModal.js';
 import { CastListColumn } from './CastListColumn.js';
+import { DetailHero, HeroChip, HeroTab, HeroTitle } from './DetailHero.js';
 import { ChipInput } from './ChipInput.js';
 import { EpisodeScrapeModal } from './EpisodeScrapeModal.js';
 import { FileDropZone } from './FileDropZone.js';
@@ -371,13 +372,10 @@ export const EpisodeDetailPanel: React.FC<{
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      {/* Breadcrumb + Episode Hero */}
-      <div className="relative border-b border-slate-800 bg-[#0e1524] shrink-0">
-        {fanartUrl && (
-          <div className="absolute inset-0 bg-cover bg-center opacity-20" style={{ backgroundImage: `url("${fanartUrl}")` }} />
-        )}
-        <div className="relative bg-gradient-to-r from-[#0b0f17]/95 via-[#0f1522]/85 to-[#0f1522]/80">
-          <div className="px-5 pt-2.5 pb-1 flex items-center gap-2 text-[11px] text-slate-400">
+      <DetailHero
+        fanartUrl={fanartUrl}
+        breadcrumb={
+          <>
             <button
               onClick={() => onSelectShow(show.id, null)}
               className="text-sky-300 hover:text-sky-200 font-semibold flex items-center gap-1 cursor-pointer"
@@ -385,139 +383,115 @@ export const EpisodeDetailPanel: React.FC<{
               <ArrowLeft className="w-3 h-3" /> {show.title}
             </button>
             <span>/</span>
-            <button
-              onClick={() => onSelectShow(show.id, effSeason)}
-              className="hover:text-slate-200 cursor-pointer"
-            >
+            <button onClick={() => onSelectShow(show.id, effSeason)} className="hover:text-slate-200 cursor-pointer">
               Season {effSeason}
             </button>
             <span>/</span>
             <span className="font-mono text-slate-200">{epCode}</span>
             {hasCustomOrder && (
-              <span className="px-1.5 py-0.2 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 font-mono text-[10px]">
+              <span className="px-1.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 font-mono text-[10px]">
                 File: {fileCode}
               </span>
             )}
-          </div>
-
-          <div className="px-5 py-3 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3.5 min-w-0 flex-1">
-              {tab !== 'metadata' && (
-                <div className="w-24 shrink-0">
-                  <PosterImage
-                    filePath={episode.thumbPath ?? show.artwork.fanart}
-                    alt={episode.title}
-                    aspect="fanart"
-                    compact
-                  />
-                </div>
-              )}
-              {clearlogoUrl && (
-                <img
-                  src={clearlogoUrl}
-                  alt={`${show.title} logo`}
-                  className="hidden sm:block h-8 max-w-[130px] object-contain shrink-0 drop-shadow"
-                />
-              )}
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="px-2 py-0.5 rounded bg-sky-500/20 border border-sky-500/40 text-sky-300 font-mono text-xs font-bold">
-                    {epCode}
-                  </span>
-                  {totalPartCount > 1 && (
-                    <span className="px-2 py-0.5 rounded bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 text-[11px] font-semibold flex items-center gap-1">
-                      <Layers className="w-3 h-3" /> {totalPartCount}-Part Multi-Episode
-                    </span>
-                  )}
-                  <h2 className="text-lg font-bold text-white truncate">{episode.title}</h2>
-                </div>
-                <div className="mt-1.5 flex flex-wrap items-center gap-3 text-xs text-slate-400">
-                  {episode.aired && <span>Aired: {episode.aired}</span>}
-                  {episode.runtimeMinutes && <span>{episode.runtimeMinutes} min</span>}
-                  <TechBadges parsed={episode.parsedInfo} streamDetails={episode.streamDetails} />
-                </div>
+          </>
+        }
+        leading={
+          <>
+            {tab !== 'metadata' && (
+              <div className="w-20 shrink-0">
+                <PosterImage filePath={episode.thumbPath ?? show.artwork.fanart} alt={episode.title} aspect="fanart" compact />
               </div>
-            </div>
-
-            <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
-              <button
-                onClick={() => setScrapeOpen(true)}
-                className="px-2.5 py-1.5 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-              >
-                <Sparkles className="w-3.5 h-3.5" /> Scrape Episode
-              </button>
-              <button
-                onClick={handleToggleWatched}
-                className={`px-2.5 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
-                  episode.watched
-                    ? 'bg-purple-500/20 border-purple-500/40 text-purple-300 hover:bg-purple-500/30'
-                    : 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
-                }`}
-              >
-                {episode.watched ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                {episode.watched ? 'Watched' : 'Unwatched'}
-              </button>
-              <button
-                onClick={() => setSubSearchOpen(true)}
-                className="px-2.5 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-              >
-                <Languages className="w-3.5 h-3.5" /> Subtitles
-              </button>
-              <button
-                onClick={handleQuickRename}
-                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-              >
-                <FolderSync className="w-3.5 h-3.5 text-emerald-400" /> Auto-Rename
-              </button>
-              <button
-                onClick={handleRefreshInKodi}
-                title="Reload this episode's NFO & artwork in Kodi via JSON-RPC"
-                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-              >
-                <Tv className="w-3.5 h-3.5 text-sky-400" /> Kodi Refresh
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Sub-Tabs */}
-        <div className="relative px-5 bg-[#0b0f17]/85 flex items-center gap-1 overflow-x-auto border-t border-slate-800/80">
-          {[
-            { id: 'metadata' as const, label: 'Metadata & Art', icon: <Info className="w-3.5 h-3.5" /> },
-            { id: 'cast' as const, label: `Cast (${epActors.length})`, icon: <Users className="w-3.5 h-3.5" /> },
-            { id: 'nfo' as const, label: 'Episode NFO XML', icon: <Code2 className="w-3.5 h-3.5" /> },
-            {
-              id: 'mediainfo' as const,
-              label: `MediaInfo & Paths (${episode.subtitles.length} sub${episode.subtitles.length === 1 ? '' : 's'})`,
-              icon: <FileCode2 className="w-3.5 h-3.5" />,
-            },
-          ].map((t) => (
+            )}
+            {clearlogoUrl && (
+              <img
+                src={clearlogoUrl}
+                alt={`${show.title} logo`}
+                className="hidden @lg:block h-8 max-w-[120px] object-contain shrink-0 drop-shadow"
+              />
+            )}
+          </>
+        }
+        titleArea={
+          <HeroTitle>
+            <span className="mr-1.5 font-mono text-sky-300">{epCode}</span>
+            {episode.title}
+            {totalPartCount > 1 && (
+              <HeroChip tone="indigo">
+                <Layers className="w-3 h-3 inline -mt-px mr-1" />
+                {totalPartCount}-Part Multi-Episode
+              </HeroChip>
+            )}
+          </HeroTitle>
+        }
+        meta={
+          <>
+            {episode.aired && <span className="whitespace-nowrap">Aired: {episode.aired}</span>}
+            {episode.runtimeMinutes && <span className="whitespace-nowrap">{episode.runtimeMinutes} min</span>}
+            <TechBadges parsed={episode.parsedInfo} streamDetails={episode.streamDetails} />
+          </>
+        }
+        actions={
+          <>
             <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`px-3 py-2 text-xs font-semibold flex items-center gap-1.5 border-b-2 transition cursor-pointer whitespace-nowrap ${
-                tab === t.id ? 'border-sky-400 text-sky-300' : 'border-transparent text-slate-400 hover:text-slate-200'
+              onClick={() => setScrapeOpen(true)}
+              className="px-2.5 py-1.5 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+            >
+              <Sparkles className="w-3.5 h-3.5" /> Scrape Episode
+            </button>
+            <button
+              onClick={handleToggleWatched}
+              className={`px-2.5 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
+                episode.watched
+                  ? 'bg-purple-500/20 border-purple-500/40 text-purple-300 hover:bg-purple-500/30'
+                  : 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
               }`}
             >
-              {t.icon}
-              {t.label}
+              {episode.watched ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+              {episode.watched ? 'Watched' : 'Unwatched'}
             </button>
-          ))}
-          {toast && (
-            <span className="ml-auto text-xs text-emerald-300 bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 rounded-md">
-              {toast}
-            </span>
-          )}
-        </div>
-      </div>
+            <button
+              onClick={() => setSubSearchOpen(true)}
+              className="px-2.5 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+            >
+              <Languages className="w-3.5 h-3.5" /> Subtitles
+            </button>
+            <button
+              onClick={handleQuickRename}
+              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+            >
+              <FolderSync className="w-3.5 h-3.5 text-emerald-400" /> Auto-Rename
+            </button>
+            <button
+              onClick={handleRefreshInKodi}
+              title="Reload this episode's NFO & artwork in Kodi via JSON-RPC"
+              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+            >
+              <Tv className="w-3.5 h-3.5 text-sky-400" /> Kodi Refresh
+            </button>
+          </>
+        }
+        tabs={[
+          { id: 'metadata' as const, label: 'Metadata & Art', icon: <Info className="w-3.5 h-3.5" /> },
+          { id: 'cast' as const, label: `Cast (${epActors.length})`, icon: <Users className="w-3.5 h-3.5" /> },
+          { id: 'nfo' as const, label: 'Episode NFO XML', icon: <Code2 className="w-3.5 h-3.5" /> },
+          {
+            id: 'mediainfo' as const,
+            label: `MediaInfo & Paths (${episode.subtitles.length} sub${episode.subtitles.length === 1 ? '' : 's'})`,
+            icon: <FileCode2 className="w-3.5 h-3.5" />,
+          },
+        ].map((t) => (
+          <HeroTab key={t.id} active={tab === t.id} icon={t.icon} label={t.label} onClick={() => setTab(t.id)} />
+        ))}
+        toast={toast}
+      />
 
       {/* Body */}
-      <div className="flex-1 overflow-y-auto p-5">
+      <div className="flex-1 overflow-y-auto p-4 @xl:p-5 @container">
         {tab === 'metadata' && (
           <div className="space-y-6">
             {/* Top Row: Season/Series Poster in Top-Left + Episode Metadata Fields */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-              <div className="lg:col-span-3 xl:col-span-3">
+            <div className="grid grid-cols-1 @2xl:grid-cols-[128px_minmax(0,1fr)] @5xl:grid-cols-[152px_minmax(0,1fr)] gap-4 @2xl:gap-5 items-start">
+              <div className="w-28 @2xl:w-full shrink-0 mx-auto @2xl:mx-0 @2xl:sticky @2xl:top-0">
                 <ClickableArtCard
                   label={matchingSeason?.posterPath ? `Season ${effSeason} Poster` : 'Series Poster'}
                   filePath={seasonOrShowPoster}
@@ -550,7 +524,7 @@ export const EpisodeDetailPanel: React.FC<{
                 />
               </div>
 
-              <div className="lg:col-span-9 xl:col-span-9 space-y-3">
+              <div className="min-w-0 space-y-3">
                 {/* Multi-Episode Range & Part Switcher */}
                 <div className="p-3 rounded-xl bg-slate-900/75 border border-slate-800 space-y-2.5">
                   <div className="flex flex-wrap items-end justify-between gap-2">
@@ -659,7 +633,7 @@ export const EpisodeDetailPanel: React.FC<{
 
                 {activePartIdx === 0 || !partsDraft[activePartIdx - 1] ? (
                   <>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div className="grid grid-cols-1 @lg:grid-cols-2 @3xl:grid-cols-3 gap-2.5">
                       <Field label="Episode Title" value={form.title ?? ''} onChange={(v) => setForm({ ...form, title: v })} />
                       <Field label="Aired Date (YYYY-MM-DD)" value={form.aired ?? ''} onChange={(v) => setForm({ ...form, aired: v })} />
                       <Field
@@ -680,7 +654,7 @@ export const EpisodeDetailPanel: React.FC<{
                       />
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 @lg:grid-cols-2 gap-3">
                       <ChipInput
                         label="Directors"
                         values={form.directors ?? []}
@@ -712,7 +686,7 @@ export const EpisodeDetailPanel: React.FC<{
                           Remove Part
                         </button>
                       </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+                      <div className="grid grid-cols-2 @3xl:grid-cols-5 gap-2.5">
                         <Field
                           label="Part Season"
                           type="number"
@@ -725,7 +699,7 @@ export const EpisodeDetailPanel: React.FC<{
                           value={String(activeSub.episodeNumber)}
                           onChange={(v) => updateActiveSubPart('episodeNumber', Math.max(1, Number(v || 1)))}
                         />
-                        <div className="col-span-2 sm:col-span-3">
+                        <div className="@lg:col-span-2 @3xl:col-span-3">
                           <Field
                             label="Part Title"
                             value={activeSub.title ?? ''}
@@ -733,7 +707,7 @@ export const EpisodeDetailPanel: React.FC<{
                           />
                         </div>
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <div className="grid grid-cols-1 @lg:grid-cols-2 gap-2.5">
                         <Field
                           label="Aired Date (YYYY-MM-DD)"
                           value={activeSub.aired ?? ''}
@@ -757,7 +731,7 @@ export const EpisodeDetailPanel: React.FC<{
                           className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 leading-relaxed"
                         />
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 @lg:grid-cols-2 gap-3">
                         <ChipInput
                           label="Directors"
                           values={activeSub.directors ?? []}
@@ -815,7 +789,7 @@ export const EpisodeDetailPanel: React.FC<{
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
                 <ImageIcon className="w-3.5 h-3.5 text-sky-400" /> Episode &amp; Series Artwork
               </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+              <div className="grid grid-cols-1 @lg:grid-cols-2 @3xl:grid-cols-3 @5xl:grid-cols-4 gap-3.5">
                 <ClickableArtCard
                   label="Episode Still (16:9)"
                   filePath={episode.thumbPath ?? show.artwork.fanart}
@@ -998,7 +972,7 @@ export const EpisodeDetailPanel: React.FC<{
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-[120px_1fr] gap-2 items-center">
+              <div className="grid grid-cols-[110px_minmax(0,1fr)] gap-2 items-center">
                 <select
                   value={uploadSubLang}
                   onChange={(e) => setUploadSubLang(e.target.value)}

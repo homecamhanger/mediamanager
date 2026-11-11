@@ -20,7 +20,6 @@ import {
   Sparkles,
   Tv,
   Users,
-  X,
 } from 'lucide-react';
 import type {
   ActorEntry,
@@ -35,6 +34,7 @@ import { api, getArtworkUrl } from '../lib/api.js';
 import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 import { ArtworkPickerModal, ArtworkPickerTarget, ClickableArtCard } from './ArtworkPickerModal.js';
 import { CastListColumn } from './CastListColumn.js';
+import { DetailHero, HeroChip, HeroTab, HeroTitle } from './DetailHero.js';
 import { ChipInput } from './ChipInput.js';
 import { EpisodeScrapeModal } from './EpisodeScrapeModal.js';
 import { FormField as Field } from './FormField.js';
@@ -423,30 +423,13 @@ export const TvShowDetailPanel: React.FC<{
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      {/* Compact Show Hero */}
-      <div className="relative border-b border-slate-800 shrink-0">
-        {fanartUrl && (
-          <div className="absolute inset-0 bg-cover bg-center opacity-25" style={{ backgroundImage: `url("${fanartUrl}")` }} />
-        )}
-        <div
-          className={`relative bg-gradient-to-r from-[#0b0f17]/95 via-[#0f1522]/85 to-[#0f1522]/80 px-5 py-3 ${
-            onClose ? 'pr-16' : ''
-          } flex flex-wrap items-center justify-between gap-3`}
-        >
-          {onClose && (
-            <button
-              onClick={onClose}
-              aria-label="Close modal"
-              title="Close (Esc)"
-              className="absolute top-3 right-4 z-20 p-2 rounded-lg text-slate-300 bg-slate-900/75 hover:bg-slate-800 hover:text-white border border-slate-700/70 cursor-pointer transition"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          )}
-
-          <div className="flex items-center gap-3.5 min-w-0 flex-1">
+      <DetailHero
+        fanartUrl={fanartUrl}
+        onClose={onClose}
+        leading={
+          <>
             {tab !== 'metadata' && (
-              <div className="w-12 shrink-0 shadow-lg">
+              <div className="w-11 shrink-0 shadow-lg">
                 <PosterImage
                   filePath={activeSeasonRecord?.posterPath ?? show.artwork.poster}
                   alt={show.title}
@@ -459,35 +442,34 @@ export const TvShowDetailPanel: React.FC<{
               <img
                 src={clearlogoUrl}
                 alt={`${show.title} logo`}
-                className="hidden sm:block h-9 max-w-[140px] object-contain shrink-0 drop-shadow"
+                className="hidden @lg:block h-8 max-w-[130px] object-contain shrink-0 drop-shadow"
               />
             )}
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-lg font-bold text-white truncate">{show.title}</h2>
-                {show.year && <span className="text-slate-400 text-sm">({show.year})</span>}
-                <span className="px-2 py-0.5 rounded bg-slate-800 text-[11px] font-semibold text-sky-300">{show.status}</span>
-                {activeSeason !== 'all' && (
-                  <span className="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[11px] font-bold">
-                    Season {activeSeason}
-                  </span>
-                )}
-              </div>
-              <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-slate-400">
-                <RatingBadges ratings={show.ratings} compact />
-                <span>
-                  {show.seasonsCount} Seasons · {show.episodesCount} Episodes ({show.watchedEpisodesCount} watched)
-                </span>
-                {missingEpisodes.length > 0 && (
-                  <span className="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300 text-[11px] font-semibold inline-flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" /> {missingEpisodes.length} Missing Aired
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+          </>
+        }
+        titleArea={
+          <HeroTitle>
+            {show.title}
+            {show.year && <span className="ml-2 font-semibold text-slate-400">({show.year})</span>}
+            {show.status && <HeroChip tone="sky">{show.status}</HeroChip>}
+            {activeSeason !== 'all' && <HeroChip tone="amber">Season {activeSeason}</HeroChip>}
+          </HeroTitle>
+        }
+        meta={
+          <>
+            <RatingBadges ratings={show.ratings} compact />
+            <span className="whitespace-nowrap">
+              {show.seasonsCount} Seasons · {show.episodesCount} Episodes ({show.watchedEpisodesCount} watched)
+            </span>
+            {missingEpisodes.length > 0 && (
+              <span className="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300 text-[11px] font-semibold inline-flex items-center gap-1">
+                <AlertCircle className="w-3 h-3" /> {missingEpisodes.length} Missing Aired
+              </span>
+            )}
+          </>
+        }
+        actions={
+          <>
             <button
               onClick={() => setScrapeOpen(true)}
               className="px-3 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
@@ -508,47 +490,30 @@ export const TvShowDetailPanel: React.FC<{
             >
               <FolderSync className="w-3.5 h-3.5 text-emerald-400" /> Rename Eps
             </button>
-          </div>
-        </div>
-
-        {/* Sub-Tabs */}
-        <div className="relative px-5 bg-[#0b0f17]/85 flex items-center gap-1 overflow-x-auto border-t border-slate-800/80">
-          {[
-            { id: 'episodes' as const, label: `Episodes (${visibleEpisodes.length})`, icon: <Tv className="w-3.5 h-3.5" /> },
-            ...(activeSeason !== 'all'
-              ? [
-                  {
-                    id: 'order' as const,
-                    label: hasCustomSeasonOrder ? `Episode Order · Custom` : 'Episode Order',
-                    icon: <ArrowUpDown className="w-3.5 h-3.5" />,
-                  },
-                ]
-              : []),
-            { id: 'metadata' as const, label: 'Metadata & Art', icon: <Info className="w-3.5 h-3.5" /> },
-            { id: 'cast' as const, label: `Cast (${show.actors.length})`, icon: <Users className="w-3.5 h-3.5" /> },
-            { id: 'nfo' as const, label: 'tvshow.nfo XML', icon: <Code2 className="w-3.5 h-3.5" /> },
-          ].map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`px-3 py-2 text-xs font-semibold flex items-center gap-1.5 border-b-2 transition cursor-pointer whitespace-nowrap ${
-                tab === t.id ? 'border-sky-400 text-sky-300' : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              {t.icon}
-              {t.label}
-            </button>
-          ))}
-          {toast && (
-            <span className="ml-auto text-xs text-emerald-300 bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 rounded-md">
-              {toast}
-            </span>
-          )}
-        </div>
-      </div>
+          </>
+        }
+        tabs={[
+          { id: 'episodes' as const, label: `Episodes (${visibleEpisodes.length})`, icon: <Tv className="w-3.5 h-3.5" /> },
+          ...(activeSeason !== 'all'
+            ? [
+                {
+                  id: 'order' as const,
+                  label: hasCustomSeasonOrder ? `Episode Order · Custom` : 'Episode Order',
+                  icon: <ArrowUpDown className="w-3.5 h-3.5" />,
+                },
+              ]
+            : []),
+          { id: 'metadata' as const, label: 'Metadata & Art', icon: <Info className="w-3.5 h-3.5" /> },
+          { id: 'cast' as const, label: `Cast (${show.actors.length})`, icon: <Users className="w-3.5 h-3.5" /> },
+          { id: 'nfo' as const, label: 'tvshow.nfo XML', icon: <Code2 className="w-3.5 h-3.5" /> },
+        ].map((t) => (
+          <HeroTab key={t.id} active={tab === t.id} icon={t.icon} label={t.label} onClick={() => setTab(t.id as TvTab)} />
+        ))}
+        toast={toast}
+      />
 
       {/* Main Content */}
-      <div className="flex-1 overflow-y-auto p-5">
+      <div className="flex-1 overflow-y-auto p-4 @xl:p-5 @container">
         {tab === 'episodes' && (
           <div className="space-y-3">
             {/* Season Pills & Quick Actions */}
@@ -934,8 +899,8 @@ export const TvShowDetailPanel: React.FC<{
         {tab === 'metadata' && (
           <div className="space-y-6">
             {/* Top Row: Show Poster in Top-Left + Metadata Fields */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-              <div className="lg:col-span-3 xl:col-span-3 space-y-2.5">
+            <div className="grid grid-cols-1 @2xl:grid-cols-[168px_minmax(0,1fr)] @5xl:grid-cols-[196px_minmax(0,1fr)] gap-4 @2xl:gap-5 items-start">
+              <div className="w-32 @2xl:w-full shrink-0 space-y-2 mx-auto @2xl:mx-0 @2xl:sticky @2xl:top-0">
                 <ClickableArtCard
                   label="Series Poster (2:3)"
                   filePath={show.artwork.poster}
@@ -945,8 +910,8 @@ export const TvShowDetailPanel: React.FC<{
                 />
               </div>
 
-              <div className="lg:col-span-9 xl:col-span-9 space-y-3">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+              <div className="min-w-0 space-y-3">
+                <div className="grid grid-cols-1 @lg:grid-cols-2 @3xl:grid-cols-3 gap-2.5">
                   <Field label="Show Title" value={form.title ?? ''} onChange={(v) => setForm({ ...form, title: v })} />
                   <Field label="Original Title" value={form.originalTitle ?? ''} onChange={(v) => setForm({ ...form, originalTitle: v })} />
                   <Field label="Sort Title" value={form.sortTitle ?? ''} onChange={(v) => setForm({ ...form, sortTitle: v })} />
@@ -978,7 +943,7 @@ export const TvShowDetailPanel: React.FC<{
                   />
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 @lg:grid-cols-2 gap-3">
                   <ChipInput
                     label="Genres"
                     values={form.genres ?? []}
@@ -995,7 +960,7 @@ export const TvShowDetailPanel: React.FC<{
                   />
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div className="grid grid-cols-2 @3xl:grid-cols-4 gap-2.5">
                   <Field
                     label="TVDB ID"
                     value={form.uniqueIds?.tvdb ?? ''}
@@ -1042,7 +1007,7 @@ export const TvShowDetailPanel: React.FC<{
                     {otherArtPresentCount} / {SHOW_OTHER_ARTWORK_SLOTS.length} present
                   </span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                <div className="grid grid-cols-1 @lg:grid-cols-2 @3xl:grid-cols-3 gap-3.5">
                   {SHOW_OTHER_ARTWORK_SLOTS.map((slot) => (
                     <ClickableArtCard
                       key={slot.kind}
@@ -1059,7 +1024,7 @@ export const TvShowDetailPanel: React.FC<{
               {seasons.length > 0 && (
                 <div>
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2.5">Season Posters</h4>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+                  <div className="grid grid-cols-2 @3xl:grid-cols-4 @5xl:grid-cols-6 gap-3">
                     {seasons.map((s) => (
                       <ClickableArtCard
                         key={s.id}
