@@ -45,6 +45,7 @@ import { ChipInput } from './ChipInput.js';
 import { EpisodeScrapeModal } from './EpisodeScrapeModal.js';
 import { FormField as Field } from './FormField.js';
 import { PosterImage } from './PosterImage.js';
+import { episodeDisplay } from '../lib/episodeDisplay.js';
 import { TechBadges } from './QualityBadges.js';
 import { RatingBadges } from './RatingBadges.js';
 import { ScrapeModal } from './ScrapeModal.js';
@@ -630,6 +631,7 @@ export const TvShowDetailPanel: React.FC<{
                     ? ep.multiEpisodeEnd - ep.episodeNumber + 1
                     : 1
                 );
+                const disp = episodeDisplay(ep);
                 return (
                   <div
                     key={ep.id}
@@ -656,11 +658,20 @@ export const TvShowDetailPanel: React.FC<{
                       )}
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-slate-100 truncate">{ep.title}</span>
+                          <span className="text-xs font-bold text-slate-100 truncate">{disp.title}</span>
                           {ep.aired && <span className="text-[11px] text-slate-500 shrink-0">{ep.aired}</span>}
                         </div>
-                        <div className="text-[11px] text-slate-400 truncate mt-0.5">
-                          {ep.plot || ep.fileName}
+                        {disp.plot && (
+                          <div className="text-[11px] text-slate-400 truncate mt-0.5">{disp.plot}</div>
+                        )}
+                        {/* File name is always visible — never replaced by the plot. */}
+                        <div
+                          title={disp.filePath}
+                          className={`text-[10px] font-mono truncate ${
+                            disp.plot ? 'text-slate-500' : 'text-slate-400'
+                          } mt-0.5`}
+                        >
+                          {disp.fileName}
                         </div>
                       </div>
                     </div>

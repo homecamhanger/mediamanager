@@ -52,6 +52,7 @@ import {
   visibleSeasonKeys,
   type TreeExpansion,
 } from '../lib/treeExpansion.js';
+import { episodeFilePath } from '../lib/episodeDisplay.js';
 import { PosterImage } from './PosterImage.js';
 
 interface MediaTreeSidebarProps {
@@ -1216,7 +1217,14 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                                           {code}
                                         </span>
                                         <div className="min-w-0 flex-1">
-                                          <div className="text-[11px] truncate">{ep.title}</div>
+                                          <div className="text-[11px] truncate">{ep.title || ep.fileName}</div>
+                                          {/* File name stays visible so a mis-named file is spottable here too. */}
+                                          <div
+                                            title={episodeFilePath(ep)}
+                                            className="text-[9px] font-mono truncate text-slate-500"
+                                          >
+                                            {ep.fileName}
+                                          </div>
                                           {actorNeedle && (() => {
                                             const epActorMatch = findActorMatch(ep.actors, actorNeedle);
                                             if (!epActorMatch) return null;
