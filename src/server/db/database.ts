@@ -1403,6 +1403,24 @@ export class MediaDatabase {
     return this.getTvSeasonById(id);
   }
 
+  /**
+   * Remove episode rows for a show whose video files are no longer present on disk
+   * — or that are no longer identifiable as episodes. Without this, records created
+   * by the old "guess S01E01" fallback would linger forever after a rescan.
+   */
+  pruneTvEpisodesForShow(showId: number, keepFilePaths: ReadonlySet<string>): number {
+    const existing = this.db
+      .prepare('SELECT id, file_path FROM tv_episodes WHERE show_id = ?')
+      .all(showId) as Array<{ id: number; file_path: string }>;
+    let removed = 0;
+    for (const row of existing) {
+      if (keepFilePaths.has(row.file_path)) continue;
+      this.deleteTvEpisode(Number(row.id));
+      removed++;
+    }
+    return removed;
+  }
+
   deleteTvEpisode(id: number) {
     this.db.prepare("DELETE FROM subtitles WHERE media_type = 'episode' AND media_id = ?").run(id);
     this.db.prepare('DELETE FROM tv_episodes WHERE id = ?').run(id);

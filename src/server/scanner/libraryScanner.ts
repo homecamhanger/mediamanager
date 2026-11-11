@@ -19,6 +19,7 @@ import {
 import { computeOpenSubtitlesHash } from '../subtitles/openSubtitlesHash.js';
 import { isSubtitleFile, parseSubtitleContent, parseSubtitleFilename } from '../subtitles/subtitleTools.js';
 import { extractTitleAndYear, isSampleOrExtraFile, isVideoFile, parseMediaFilename } from './filenameParser.js';
+import { classifyShowVideos, type UnmatchedFile } from './episodePlacement.js';
 import { probeMediaFile } from './mediaProbe.js';
 
 const ARTWORK_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'];
@@ -380,13 +381,35 @@ export class LibraryScanner {
     if (onProgress) await yieldToEventLoop();
 
     const entries = fs.readdirSync(source.path, { withFileTypes: true }).filter((d) => d.isDirectory());
-    const discoveredShows: Array<{ showDirName: string; showFolder: string; epFiles: string[] }> = [];
+    const discoveredShows: Array<{
+      showDirName: string;
+      showFolder: string;
+      epFiles: string[];
+      placements: Map<string, { seasonNumber: number; episodeNumber: number }>;
+    }> = [];
+    const unmatchedByShow: Array<{ showFolder: string; unmatched: UnmatchedFile[] }> = [];
     let totalEpisodes = 0;
 
     for (const showDirEntry of entries) {
       const showFolder = path.join(source.path, showDirEntry.name);
-      const epFiles = walkVideoFiles(showFolder);
-      discoveredShows.push({ showDirName: showDirEntry.name, showFolder, epFiles });
+      const walked = walkVideoFiles(showFolder).map((filePath) => {
+        const parsed = parseMediaFilename(filePath, 'tvshow');
+        return {
+          filePath,
+          parsedSeason: parsed.seasonNumber,
+          parsedEpisode: parsed.episodeNumber,
+        };
+      });
+
+      // Only positively identified episodes enter the library. Anything else is
+      // reported rather than guessed at, so `Extras/disk3_2.mp4` cannot become a
+      // second S01E01.
+      const { episodes, unmatched } = classifyShowVideos(walked, showFolder);
+      const placements = new Map(episodes.map((e) => [e.filePath, { seasonNumber: e.seasonNumber, episodeNumber: e.episodeNumber }]));
+      const epFiles = episodes.map((e) => e.filePath);
+
+      discoveredShows.push({ showDirName: showDirEntry.name, showFolder, epFiles, placements });
+      if (unmatched.length > 0) unmatchedByShow.push({ showFolder, unmatched });
       totalEpisodes += epFiles.length;
     }
 
@@ -399,7 +422,13 @@ export class LibraryScanner {
         status: 'completed',
         completedCount: totalEpisodes,
         totalCount: totalEpisodes,
-        detail: `Found ${discoveredShows.length} series folder${discoveredShows.length === 1 ? '' : 's'}, ${totalEpisodes} episode${totalEpisodes === 1 ? '' : 's'}`,
+        detail: (() => {
+          const skipped = unmatchedByShow.reduce((n, u) => n + u.unmatched.length, 0);
+          const base = `Found ${discoveredShows.length} series folder${discoveredShows.length === 1 ? '' : 's'}, ${totalEpisodes} episode${totalEpisodes === 1 ? '' : 's'}`;
+          return skipped === 0
+            ? base
+            : `${base} · skipped ${skipped} file${skipped === 1 ? '' : 's'} with no episode marker`;
+        })(),
       },
     });
 
@@ -415,6 +444,8 @@ export class LibraryScanner {
       epNfoPath: string | null;
       epNfoXml: string | null;
       streamDetails: StreamDetails;
+      /** Resolved season/episode, or null when the file is not an identifiable episode. */
+      placement: { seasonNumber: number; episodeNumber: number } | null;
     }
 
     const probedByShow = new Map<number, ProbedEpisodeItem[]>();
@@ -453,6 +484,7 @@ export class LibraryScanner {
 
         epList.push({
           showIdx: sIdx,
+          placement: showItem.placements.get(epPath) ?? null,
           epPath,
           epDir,
           base,
@@ -562,16 +594,14 @@ export class LibraryScanner {
       showsCount++;
 
       const epItems = probedByShow.get(sIdx) ?? [];
+      const indexedFiles = new Set<string>();
       for (const epItem of epItems) {
-        let seasonNum = epItem.parsed.seasonNumber;
-        if (seasonNum === null) {
-          const parentName = path.basename(epItem.epDir);
-          const sm = parentName.match(/season\s*(\d{1,2})/i);
-          if (sm) seasonNum = Number(sm[1]);
-          else if (/specials/i.test(parentName)) seasonNum = 0;
-          else seasonNum = 1;
-        }
-        const episodeNum = epItem.parsed.episodeNumber ?? 1;
+        // Placement was resolved up front by classifyShowVideos; a file without a
+        // positive placement never reaches this list.
+        const placement = epItem.placement;
+        if (!placement) continue;
+        const seasonNum = placement.seasonNumber;
+        const episodeNum = placement.episodeNumber;
 
         const seasonFolder = epItem.epDir !== showFolder ? epItem.epDir : null;
         const seasonPoster = findSeasonArtwork(showFolder, seasonNum, 'poster');
@@ -670,6 +700,7 @@ export class LibraryScanner {
           parsedInfo: epItem.parsed,
         });
 
+        indexedFiles.add(epItem.epPath);
         const subs = discoverSidecarSubtitles('episode', savedEp.id, epItem.epDir, epItem.base);
         this.db.replaceSubtitlesForMedia('episode', savedEp.id, subs);
         episodesCount++;
@@ -692,6 +723,10 @@ export class LibraryScanner {
         if (onProgress) await yieldToEventLoop();
       }
 
+      // Drop records for files that vanished or are no longer identifiable as
+      // episodes (they may have been indexed by the old S01E01 fallback).
+      this.db.pruneTvEpisodesForShow(showRecord.id, indexedFiles);
+
       if (epItems.length === 0) {
         onProgress?.({
           overallPercent: 60 + Math.round((showsCount / Math.max(1, totalSidecarUnits)) * 34),
@@ -709,6 +744,22 @@ export class LibraryScanner {
         });
         if (onProgress) await yieldToEventLoop();
       }
+    }
+
+    // Surface files that were not identifiable as episodes. Silently dropping them
+    // was the old failure mode's mirror image; the user needs to know either way.
+    const skippedTotal = unmatchedByShow.reduce((n, u) => n + u.unmatched.length, 0);
+    if (skippedTotal > 0) {
+      const sample = unmatchedByShow
+        .flatMap((u) => u.unmatched.map((f) => path.basename(path.dirname(f.filePath)) + '/' + f.fileName))
+        .slice(0, 3)
+        .join(', ');
+      this.db.logActivity(
+        'scan',
+        'Scan TV Shows',
+        `Skipped ${skippedTotal} file${skippedTotal === 1 ? '' : 's'} with no episode marker in "${source.name}" (e.g. ${sample})`,
+        'warning'
+      );
     }
 
     onProgress?.({
