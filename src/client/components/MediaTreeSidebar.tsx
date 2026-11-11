@@ -42,6 +42,15 @@ import {
   type TvFilter,
 } from '../lib/treeSort.js';
 import type { LeftLibraryTab, SelectedMedia, ShowTreeNode } from '../lib/workspaceTypes.js';
+import {
+  collapseAll,
+  effectiveExpandedShows,
+  expandAll,
+  seasonKey,
+  seasonToReveal,
+  visibleSeasonKeys,
+  type TreeExpansion,
+} from '../lib/treeExpansion.js';
 import { PosterImage } from './PosterImage.js';
 
 interface MediaTreeSidebarProps {
@@ -83,20 +92,28 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
   const [tvTagInput, setTvTagInput] = useState('');
   const [batchBusy, setBatchBusy] = useState(false);
 
-  const [expandedShows, setExpandedShows] = useState<Set<number>>(new Set());
+  // Expansion is split into "pinned by the caret" and "open because selected".
+  // See lib/treeExpansion.ts for why: a single set made selection accumulate stale
+  // rows and made "collapse all" impossible to keep collapsed.
+  const [pinnedShows, setPinnedShows] = useState<Set<number>>(new Set());
   const [expandedSeasons, setExpandedSeasons] = useState<Set<string>>(new Set());
   const [expandedSets, setExpandedSets] = useState<Set<number>>(new Set());
 
-  // Automatically expand the first Show -> Season once tree loads, and ensure selected show/season/set stays expanded
-  useEffect(() => {
-    if (showTree.length > 0 && expandedShows.size === 0) {
-      const first = showTree[0];
-      setExpandedShows(new Set([first.show.id]));
-      if (first.seasons[0]) {
-        setExpandedSeasons(new Set([`${first.show.id}:${first.seasons[0].seasonNumber}`]));
-      }
-    }
-  }, [showTree, expandedShows.size]);
+  const selectedShowId =
+    selected?.kind === 'show' || selected?.kind === 'episode' ? selected.showId : null;
+  const selectedEpisodeId = selected?.kind === 'episode' ? selected.episodeId : null;
+
+  // "Collapse All" must stay collapsed even though a show is still selected in the
+  // inspector. We remember which selection was suppressed; any new selection
+  // (or a caret press) releases it.
+  const [suppressedShowId, setSuppressedShowId] = useState<number | null>(null);
+  const effectiveSelectedShowId = suppressedShowId != null && suppressedShowId === selectedShowId ? null : selectedShowId;
+
+  const expansion: TreeExpansion = useMemo(
+    () => ({ pinnedShows, selectedShowId: effectiveSelectedShowId, expandedSeasons }),
+    [pinnedShows, effectiveSelectedShowId, expandedSeasons]
+  );
+  const expandedShows = useMemo(() => effectiveExpandedShows(expansion), [expansion]);
 
   useEffect(() => {
     if (sets.length > 0 && expandedSets.size === 0) {
@@ -104,24 +121,24 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
     }
   }, [sets, expandedSets.size]);
 
+  // Reveal the selected show's season (the episode's own season, or the first one).
+  // This only ever *adds* the current selection's season, so it cannot undo a
+  // "collapse all" — that path leaves selectedShowId null.
   useEffect(() => {
-    if (selected?.kind === 'show') {
-      setExpandedShows((prev) => (prev.has(selected.showId) ? prev : new Set([...prev, selected.showId])));
-      if (selected.seasonNumber != null) {
-        const key = `${selected.showId}:${selected.seasonNumber}`;
-        setExpandedSeasons((prev) => (prev.has(key) ? prev : new Set([...prev, key])));
-      }
-    } else if (selected?.kind === 'episode') {
-      setExpandedShows((prev) => (prev.has(selected.showId) ? prev : new Set([...prev, selected.showId])));
-      const node = showTree.find((n) => n.show.id === selected.showId);
-      const ep = node?.episodes.find((e) => e.id === selected.episodeId);
-      if (ep) {
-        const effSeason = ep.displaySeason ?? ep.seasonNumber;
-        const key = `${selected.showId}:${effSeason}`;
-        setExpandedSeasons((prev) => (prev.has(key) ? prev : new Set([...prev, key])));
-      }
-    }
-  }, [selected, showTree]);
+    const seasonNumber = seasonToReveal(showTree, effectiveSelectedShowId, selectedEpisodeId);
+    if (effectiveSelectedShowId == null || seasonNumber == null) return;
+    const key = seasonKey(effectiveSelectedShowId, seasonNumber);
+    setExpandedSeasons((prev) => (prev.has(key) ? prev : new Set([...prev, key])));
+  }, [effectiveSelectedShowId, selectedEpisodeId, showTree]);
+
+  // Drop seasons belonging to shows that are no longer open, so re-expanding a
+  // show later doesn't resurrect stale season rows.
+  useEffect(() => {
+    setExpandedSeasons((prev) => {
+      const next = visibleSeasonKeys({ pinnedShows, selectedShowId: effectiveSelectedShowId, expandedSeasons: prev });
+      return next.size === prev.size ? prev : next;
+    });
+  }, [pinnedShows, effectiveSelectedShowId]);
 
   // Quick Set creation inside Sets tab
   const [newSetOpen, setNewSetOpen] = useState(false);
@@ -397,7 +414,8 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
 
   const toggleShowExpand = (showId: number, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    setExpandedShows((prev) => {
+    setSuppressedShowId(null);
+    setPinnedShows((prev) => {
       const next = new Set(prev);
       if (next.has(showId)) next.delete(showId);
       else next.add(showId);
@@ -407,7 +425,7 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
 
   const toggleSeasonExpand = (showId: number, seasonNumber: number, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    const key = `${showId}:${seasonNumber}`;
+    const key = seasonKey(showId, seasonNumber);
     setExpandedSeasons((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -417,19 +435,18 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
   };
 
   const expandAllTv = () => {
-    setExpandedShows(new Set(showTree.map((n) => n.show.id)));
-    const allSeasonKeys: string[] = [];
-    for (const n of showTree) {
-      for (const s of n.seasons) {
-        allSeasonKeys.push(`${n.show.id}:${s.seasonNumber}`);
-      }
-    }
-    setExpandedSeasons(new Set(allSeasonKeys));
+    const next = expandAll(showTree);
+    setPinnedShows(new Set(next.pinnedShows));
+    setExpandedSeasons(new Set(next.expandedSeasons));
   };
 
   const collapseAllTv = () => {
-    setExpandedShows(new Set());
+    const cleared = collapseAll();
+    setPinnedShows(new Set(cleared.pinnedShows));
     setExpandedSeasons(new Set());
+    // Suppress the current selection so "all closed" actually stays closed until the
+    // user picks something else.
+    setSuppressedShowId(selectedShowId);
   };
 
   const handleQuickCreateSet = async (e: React.FormEvent) => {
@@ -952,7 +969,8 @@ export const MediaTreeSidebar: React.FC<MediaTreeSidebarProps> = ({
                   {/* Level 1: Show Row */}
                   <div
                     onClick={() => {
-                      setExpandedShows((prev) => new Set([...prev, show.id]));
+                      // Selection alone opens the row; nothing is written to state,
+                      // so selecting a different series closes this one.
                       onSelectMedia({ kind: 'show', showId: show.id, seasonNumber: null });
                     }}
                     className={`px-2 py-1.5 flex items-center gap-1.5 cursor-pointer transition ${
