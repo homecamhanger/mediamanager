@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { ArtworkKind, DashboardSummary, MovieRecord } from '../../shared/types.js';
 import { buildAuditReport } from '../audit/auditEngine.js';
 import { computeMissingEpisodesFromGuide, DEFAULT_PREFERENCES, MediaDatabase } from '../db/database.js';
+import { buildLibraryVocabulary } from '../library/vocabulary.js';
 import { KodiClient } from '../kodi/kodiClient.js';
 import { serializeEpisodeNfo, serializeTvShowNfo, validateKodiNfoXml } from '../nfo/kodiNfo.js';
 import {
@@ -118,6 +119,12 @@ export function createLibraryRouter(db: MediaDatabase): Router {
     };
 
     res.json(summary);
+  });
+
+  // Reusable term vocabulary (tags, genres, studios, credits) harvested from the
+  // library so chip inputs can offer type-ahead instead of free-text guessing.
+  router.get('/library/vocabulary', (_req, res) => {
+    res.json(buildLibraryVocabulary(db.listMovies(), db.listTvShows()));
   });
 
   // ---- Movies ----

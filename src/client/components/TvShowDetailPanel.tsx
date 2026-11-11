@@ -35,6 +35,7 @@ import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 import { ArtworkPickerModal, ArtworkPickerTarget, ClickableArtCard } from './ArtworkPickerModal.js';
 import { CastListColumn } from './CastListColumn.js';
 import { DetailHero, HeroChip, HeroTab, HeroTitle } from './DetailHero.js';
+import { useLibraryVocabulary } from '../lib/useLibraryVocabulary.js';
 import { ChipInput } from './ChipInput.js';
 import { EpisodeScrapeModal } from './EpisodeScrapeModal.js';
 import { FormField as Field } from './FormField.js';
@@ -110,7 +111,9 @@ export const TvShowDetailPanel: React.FC<{
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [orderDirty, setOrderDirty] = useState(false);
 
-  const load = async () => {
+  const vocabulary = useLibraryVocabulary();
+
+    const load = async () => {
     const res = await api.getShow(showId);
     setShow(res.show);
     setForm(res.show);
@@ -949,6 +952,8 @@ export const TvShowDetailPanel: React.FC<{
                     values={form.genres ?? []}
                     onChange={(genres) => setForm({ ...form, genres })}
                     suggestions={['Science Fiction', 'Drama', 'Mystery', 'Thriller', 'Action', 'Animation']}
+                    vocabulary={vocabulary?.genres}
+                    hideQuickAdd
                     accent="sky"
                   />
                   <ChipInput
@@ -956,6 +961,8 @@ export const TvShowDetailPanel: React.FC<{
                     values={form.tags ?? []}
                     onChange={(tags) => setForm({ ...form, tags })}
                     suggestions={['4K', 'Continuing', 'Mini-Series', 'Favorites']}
+                    vocabulary={vocabulary?.tags}
+                    hideQuickAdd
                     accent="indigo"
                   />
                 </div>

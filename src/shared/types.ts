@@ -842,3 +842,17 @@ export type SmartPlaylistPresetId =
   | 'short-films'
   | 'continuing-shows'
   | 'blank';
+
+export interface VocabularyTerm {
+  value: string;
+  count: number;
+  mediaTypes: Array<'movie' | 'tvshow'>;
+}
+
+export interface LibraryVocabulary {
+  tags: VocabularyTerm[];
+  genres: VocabularyTerm[];
+  studios: VocabularyTerm[];
+  directors: VocabularyTerm[];
+  writers: VocabularyTerm[];
+}

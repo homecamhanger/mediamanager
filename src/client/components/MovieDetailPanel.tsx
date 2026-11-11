@@ -25,6 +25,7 @@ import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 import { ArtworkPickerModal, ArtworkPickerTarget, ClickableArtCard } from './ArtworkPickerModal.js';
 import { CastListColumn } from './CastListColumn.js';
 import { DetailHero, HeroChip, HeroTab, HeroTitle } from './DetailHero.js';
+import { useLibraryVocabulary } from '../lib/useLibraryVocabulary.js';
 import { ChipInput } from './ChipInput.js';
 import { FileDropZone } from './FileDropZone.js';
 import { FormField as Field } from './FormField.js';
@@ -77,6 +78,8 @@ export const MovieDetailPanel: React.FC<{
   const [editionDraft, setEditionDraft] = useState('');
   const [confirmDeleteMode, setConfirmDeleteMode] = useState<'db' | 'files' | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+
+  const vocabulary = useLibraryVocabulary();
 
   const loadMovie = async () => {
     const res = await api.getMovie(movieId);
@@ -408,6 +411,8 @@ export const MovieDetailPanel: React.FC<{
                     values={form.genres ?? []}
                     onChange={(genres) => setForm({ ...form, genres })}
                     suggestions={['Science Fiction', 'Action', 'Drama', 'Thriller', 'Adventure', 'Mystery']}
+                    vocabulary={vocabulary?.genres}
+                    hideQuickAdd
                     accent="sky"
                   />
                   <ChipInput
@@ -415,18 +420,24 @@ export const MovieDetailPanel: React.FC<{
                     values={form.tags ?? []}
                     onChange={(tags) => setForm({ ...form, tags })}
                     suggestions={['4K HDR', 'Atmos', 'Director Cut', 'IMAX', 'Favorites']}
+                    vocabulary={vocabulary?.tags}
+                    hideQuickAdd
                     accent="indigo"
                   />
                   <ChipInput
                     label="Directors"
                     values={form.directors ?? []}
                     onChange={(directors) => setForm({ ...form, directors })}
+                    vocabulary={vocabulary?.directors}
+                    hideQuickAdd
                     accent="emerald"
                   />
                   <ChipInput
                     label="Writers / Credits"
                     values={form.writers ?? []}
                     onChange={(writers) => setForm({ ...form, writers })}
+                    vocabulary={vocabulary?.writers}
+                    hideQuickAdd
                     accent="emerald"
                   />
                   <div className="sm:col-span-2">
@@ -434,6 +445,8 @@ export const MovieDetailPanel: React.FC<{
                       label="Studios"
                       values={form.studios ?? []}
                       onChange={(studios) => setForm({ ...form, studios })}
+                      vocabulary={vocabulary?.studios}
+                      hideQuickAdd
                       accent="amber"
                     />
                   </div>

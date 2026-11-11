@@ -9,6 +9,7 @@ import type {
   KodiRpcConfig,
   KodiSyncResult,
   LibraryAuditReport,
+  LibraryVocabulary,
   MediaSource,
   MissingEpisodeRecord,
   MovieRecord,
@@ -373,6 +374,8 @@ export const api = {
   resetSampleLibrary: () => req<{ ok: boolean }>('/api/settings/sample/reset', { method: 'POST' }),
   generateSmartPlaylist: (opts: Record<string, unknown>) =>
     req<{ xml: string }>('/api/export/smartplaylist', { method: 'POST', body: JSON.stringify(opts) }),
+
+  getLibraryVocabulary: () => req<LibraryVocabulary>('/api/library/vocabulary'),
 
   // Smart Playlists
   getPlaylistFields: () => req<{ fields: SmartPlaylistFieldDef[] }>('/api/playlists/fields'),

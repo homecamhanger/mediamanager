@@ -35,6 +35,7 @@ import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 import { ArtworkPickerModal, ArtworkPickerTarget, ClickableArtCard } from './ArtworkPickerModal.js';
 import { CastListColumn } from './CastListColumn.js';
 import { DetailHero, HeroChip, HeroTab, HeroTitle } from './DetailHero.js';
+import { useLibraryVocabulary } from '../lib/useLibraryVocabulary.js';
 import { ChipInput } from './ChipInput.js';
 import { EpisodeScrapeModal } from './EpisodeScrapeModal.js';
 import { FileDropZone } from './FileDropZone.js';
@@ -81,7 +82,9 @@ export const EpisodeDetailPanel: React.FC<{
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
-  const load = async () => {
+  const vocabulary = useLibraryVocabulary();
+
+    const load = async () => {
     const res = await api.getShow(showId);
     setShow(res.show);
     setSeasons(res.seasons);
@@ -659,12 +662,16 @@ export const EpisodeDetailPanel: React.FC<{
                         label="Directors"
                         values={form.directors ?? []}
                         onChange={(directors) => setForm({ ...form, directors })}
+                        vocabulary={vocabulary?.directors}
+                        hideQuickAdd
                         accent="emerald"
                       />
                       <ChipInput
                         label="Writers / Credits"
                         values={form.writers ?? []}
                         onChange={(writers) => setForm({ ...form, writers })}
+                        vocabulary={vocabulary?.writers}
+                        hideQuickAdd
                         accent="sky"
                       />
                     </div>
@@ -736,12 +743,16 @@ export const EpisodeDetailPanel: React.FC<{
                           label="Directors"
                           values={activeSub.directors ?? []}
                           onChange={(directors) => updateActiveSubPart('directors', directors)}
+                          vocabulary={vocabulary?.directors}
+                          hideQuickAdd
                           accent="emerald"
                         />
                         <ChipInput
                           label="Writers / Credits"
                           values={activeSub.writers ?? []}
                           onChange={(writers) => updateActiveSubPart('writers', writers)}
+                          vocabulary={vocabulary?.writers}
+                          hideQuickAdd
                           accent="sky"
                         />
                       </div>
