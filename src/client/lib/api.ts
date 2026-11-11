@@ -12,6 +12,7 @@ import type {
   LibraryVocabulary,
   MediaSource,
   MissingEpisodeRecord,
+  MovieListEntry,
   UnmatchedVideoFile,
   MovieRecord,
   MovieSetRecord,
@@ -89,7 +90,13 @@ export const api = {
   getAudit: () => req<LibraryAuditReport>('/api/audit'),
 
   // Movies
+  /** Slim list for the sidebar — see shared/movieListEntry.ts for the projection. */
+  listMovieEntries: () => req<{ movies: MovieListEntry[] }>('/api/movies/list'),
   listMovies: () => req<{ movies: MovieRecord[] }>('/api/movies'),
+  getLibraryCounts: () =>
+    req<{
+      counts: { movies: number; shows: number; episodes: number; sets: number; unscrapedMovies: number; unscrapedShows: number };
+    }>('/api/counts'),
   getMovie: (id: number) => req<{ movie: MovieRecord }>(`/api/movies/${id}`),
   updateMovie: (id: number, patch: Partial<MovieRecord> & { writeNfo?: boolean; setName?: string | null }) =>
     req<{ movie: MovieRecord }>(`/api/movies/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),

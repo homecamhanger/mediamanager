@@ -1,4 +1,10 @@
-import type { MovieRecord, MovieSetRecord, RatingEntry, TvEpisodeRecord, TvShowRecord } from '../../shared/types.js';
+import type { ListableMovie, MovieSetRecord, RatingEntry, TvEpisodeRecord, TvShowRecord } from '../../shared/types.js';
+
+/** Everything `sortSets` aggregates over — satisfied by `SetMovieRef`. */
+type SetSortableMovie = Pick<
+  ListableMovie,
+  'id' | 'year' | 'ratings' | 'userRating' | 'runtimeMinutes' | 'durationSeconds' | 'dateAdded' | 'updatedAt' | 'scraped' | 'hasNfo' | 'nfoValid' | 'poster' | 'subtitleCount'
+>;
 import type { ShowTreeNode } from './workspaceTypes.js';
 
 export type SortKey = 'title' | 'year' | 'rating' | 'runtime' | 'added' | 'completeness';
@@ -40,13 +46,14 @@ export function getPrimaryRating(ratings: RatingEntry[], userRating: number | nu
   return userRating ?? 0;
 }
 
-export function getMovieCompleteness(m: MovieRecord): number {
+export function getMovieCompleteness(m: SetSortableMovie): number {
   let score = 0;
   if (m.scraped) score++;
   if (m.hasNfo && m.nfoValid) score++;
-  if (m.artwork.poster) score++;
-  if (m.artwork.fanart) score++;
-  if (m.subtitles.length > 0) score++;
+  if (m.poster) score++;
+  // The list projection only carries a poster; an absent one still scores the
+  // same as before, and the detail panel shows fanart when present.
+  if (m.subtitleCount > 0) score++;
   return score;
 }
 
@@ -60,10 +67,9 @@ export function getShowCompleteness(node: ShowTreeNode): number {
   return score;
 }
 
-function getMovieRuntime(m: MovieRecord): number {
+function getMovieRuntime(m: SetSortableMovie): number {
   if (m.runtimeMinutes != null && m.runtimeMinutes > 0) return m.runtimeMinutes;
-  const secs = m.streamDetails.video[0]?.durationSeconds ?? 0;
-  return secs > 0 ? Math.round(secs / 60) : 0;
+  return m.durationSeconds > 0 ? Math.round(m.durationSeconds / 60) : 0;
 }
 
 function getShowRuntime(node: ShowTreeNode): number {
@@ -89,7 +95,7 @@ function compareStrings(a: string, b: string, dir: SortDir): number {
   return dir === 'asc' ? cmp : -cmp;
 }
 
-export function sortMovies(list: MovieRecord[], sortKey: SortKey, sortDir: SortDir): MovieRecord[] {
+export function sortMovies<T extends ListableMovie>(list: T[], sortKey: SortKey, sortDir: SortDir): T[] {
   return [...list].sort((a, b) => {
     const aLabel = a.sortTitle || a.title;
     const bLabel = b.sortTitle || b.title;
@@ -222,16 +228,16 @@ export function sortSets(list: MovieSetRecord[], sortKey: SortKey, sortDir: Sort
   });
 }
 
-export function movieMatchesFilter(m: MovieRecord, filter: MovieFilter): boolean {
+export function movieMatchesFilter(m: ListableMovie, filter: MovieFilter): boolean {
   if (filter === 'all') return true;
   if (filter === 'unscraped') return !m.scraped;
   if (filter === 'missing_nfo') return !m.hasNfo;
-  if (filter === 'nfo_warnings') return m.hasNfo && (!m.nfoValid || m.nfoWarnings.length > 0);
-  if (filter === 'missing_subs') return m.subtitles.length === 0;
-  if (filter === 'missing_art') return !m.artwork.poster || !m.artwork.fanart;
+  if (filter === 'nfo_warnings') return m.hasNfo && (!m.nfoValid || m.nfoWarningCount > 0);
+  if (filter === 'missing_subs') return m.subtitleCount === 0;
+  if (filter === 'missing_art') return !m.poster || !m.fanart;
   if (filter === 'unwatched') return !m.watched;
   if (filter === '4k') {
-    return m.parsedInfo.resolution === '2160p' || (m.streamDetails.video[0]?.height ?? 0) >= 2000;
+    return m.resolution === '2160p';
   }
   return true;
 }

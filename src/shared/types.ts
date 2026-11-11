@@ -174,7 +174,7 @@ export interface MovieSetRecord {
   fanartPath: string | null;
   clearlogoPath: string | null;
   tmdbCollectionId?: string | null;
-  movies: MovieRecord[];
+  movies: SetMovieRef[];
 }
 
 export interface GuideEpisodeEntry {
@@ -875,3 +875,7 @@ export interface LibraryVocabulary {
   directors: VocabularyTerm[];
   writers: VocabularyTerm[];
 }
+
+import type { SetMovieRef } from './movieListEntry.js';
+
+export type { ListableMovie, MovieListEntry, SetMovieRef } from './movieListEntry.js';

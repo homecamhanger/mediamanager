@@ -26,7 +26,19 @@ async function startServer() {
   } else {
     const clientDist = path.resolve(process.cwd(), 'dist/client');
     if (fs.existsSync(clientDist)) {
-      app.use(express.static(clientDist));
+      // Hashed asset filenames are content-addressed, so cache them hard. The
+      // HTML entry point must not be, or a deploy would pin an old bundle.
+      app.use(
+        express.static(clientDist, {
+          setHeaders: (res, filePath) => {
+            if (/[\\/]assets[\\/]/.test(filePath)) {
+              res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+            } else {
+              res.setHeader('Cache-Control', 'no-cache');
+            }
+          },
+        })
+      );
       app.use((req, res, next) => {
         if (req.method === 'GET' && !req.path.startsWith('/api/')) {
           return res.sendFile(path.join(clientDist, 'index.html'));

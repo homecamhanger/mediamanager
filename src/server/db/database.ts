@@ -1,3 +1,4 @@
+import { toSetMovieRef } from '../../shared/movieListEntry.js';
 import { DatabaseSync } from 'node:sqlite';
 import { hashPlaylistDefinition } from '../playlists/smartPlaylistEngine.js';
 import fs from 'node:fs';
@@ -27,6 +28,7 @@ import type {
   TvSeasonRecord,
   TvShowRecord,
   UnmatchedVideoFile,
+  MovieListEntry,
 } from '../../shared/types.js';
 
 export const DEFAULT_SCRAPER_PROVIDERS: ScraperProviderConfig[] = [
@@ -664,7 +666,8 @@ export class MediaDatabase {
         fanartPath: s.fanart_path ? String(s.fanart_path) : null,
         clearlogoPath: s.clearlogo_path ? String(s.clearlogo_path) : null,
         tmdbCollectionId: s.tmdb_collection_id ? String(s.tmdb_collection_id) : null,
-        movies: allMovies.filter((m) => m.setId === id),
+        // Slim refs: embedding full records made this payload ~7.3 KB per member.
+        movies: allMovies.filter((m) => m.setId === id).map(toSetMovieRef),
       };
     });
   }
@@ -782,6 +785,87 @@ export class MediaDatabase {
   }
 
   // ---- Movies ----
+  /**
+   * Slim list projection for the sidebar. Selects only the columns the list needs
+   * and counts subtitles with a correlated subquery instead of loading every
+   * subtitle row and grouping in JS.
+   */
+  /** Four aggregate counts for the startup badge — no full-table reads. */
+  getLibraryCounts(): { movies: number; shows: number; episodes: number; sets: number; unscrapedMovies: number; unscrapedShows: number } {
+    const one = (sql: string): number => Number((this.db.prepare(sql).get() as { c: number }).c ?? 0);
+    return {
+      movies: one('SELECT COUNT(*) c FROM movies'),
+      shows: one('SELECT COUNT(*) c FROM tv_shows'),
+      episodes: one('SELECT COUNT(*) c FROM tv_episodes'),
+      sets: one('SELECT COUNT(*) c FROM movie_sets'),
+      unscrapedMovies: one('SELECT COUNT(*) c FROM movies WHERE scraped = 0'),
+      unscrapedShows: one('SELECT COUNT(*) c FROM tv_shows WHERE scraped = 0'),
+    };
+  }
+
+  listMovieListEntries(): MovieListEntry[] {
+    const rows = this.db
+      .prepare(
+        `SELECT m.id, m.title, m.sort_title, m.original_title, m.file_name, m.year, m.watched, m.scraped, m.has_nfo, m.nfo_valid,
+                m.nfo_warnings_json, m.genres_json, m.tags_json, m.actors_json, m.ratings_json,
+                m.user_rating, m.date_added, m.updated_at, m.runtime_minutes,
+                m.set_id, m.artwork_json, m.stream_details_json, m.parsed_info_json,
+                ms.name AS set_name,
+                (SELECT COUNT(*) FROM subtitles s WHERE s.media_type = 'movie' AND s.media_id = m.id) AS subtitle_count
+         FROM movies m
+         LEFT JOIN movie_sets ms ON ms.id = m.set_id
+         ORDER BY COALESCE(NULLIF(m.sort_title, ''), m.title) ASC`
+      )
+      .all() as Array<Record<string, unknown>>;
+
+    return rows.map((r) => {
+      const artwork = safeJson<Record<string, string | null>>(r.artwork_json, {});
+      const stream = safeJson<{ video?: Array<{ durationSeconds?: number }> }>(r.stream_details_json, {});
+      const parsed = safeJson<{ resolution?: string | null; videoCodec?: string | null }>(r.parsed_info_json, {});
+      const warnings = safeJson<unknown[]>(r.nfo_warnings_json, []);
+      return {
+        id: Number(r.id),
+        title: String(r.title),
+        sortTitle: String(r.sort_title ?? ''),
+        originalTitle: String(r.original_title ?? ''),
+        fileName: String(r.file_name ?? ''),
+        year: r.year == null ? null : Number(r.year),
+        watched: Boolean(r.watched),
+        scraped: Boolean(r.scraped),
+        hasNfo: Boolean(r.has_nfo),
+        nfoValid: Boolean(r.nfo_valid),
+        nfoWarningCount: warnings.length,
+        subtitleCount: Number(r.subtitle_count ?? 0),
+        setName: r.set_name ? String(r.set_name) : null,
+        setId: r.set_id == null ? null : Number(r.set_id),
+        poster: artwork.poster ?? null,
+        fanart: artwork.fanart ?? null,
+        genres: safeJson<string[]>(r.genres_json, []),
+        tags: safeJson<string[]>(r.tags_json, []),
+        actors: safeJson<Array<{ name: string; role?: string }>>(r.actors_json, []).map((a) => ({
+          name: a.name,
+          role: a.role ?? '',
+        })),
+        ratings: safeJson<Array<{ source: string; value: number; max?: number; isDefault?: boolean }>>(
+          r.ratings_json,
+          []
+        ).map((x) => ({
+          source: x.source,
+          value: x.value,
+          max: x.max ?? 10,
+          isDefault: x.isDefault,
+        })),
+        userRating: r.user_rating == null ? null : Number(r.user_rating),
+        dateAdded: String(r.date_added),
+        updatedAt: String(r.updated_at),
+        runtimeMinutes: r.runtime_minutes == null ? null : Number(r.runtime_minutes),
+        durationSeconds: Number(stream.video?.[0]?.durationSeconds ?? 0),
+        resolution: parsed.resolution ?? null,
+        videoCodec: parsed.videoCodec ?? null,
+      };
+    });
+  }
+
   listMovies(): MovieRecord[] {
     const rows = this.db
       .prepare(

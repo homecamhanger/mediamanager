@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { ArtworkKind, DashboardSummary, MovieRecord } from '../../shared/types.js';
@@ -128,8 +129,14 @@ export function createLibraryRouter(db: MediaDatabase): Router {
   });
 
   // ---- Movies ----
+  // Full records — used by export-style consumers and kept for compatibility.
+  // The sidebar uses /movies/list, which is ~6x smaller per row.
   router.get('/movies', (_req, res) => {
     res.json({ movies: db.listMovies() });
+  });
+
+  router.get('/movies/list', (req, res) => {
+    sendWithEtag(req, res, { movies: db.listMovieListEntries() });
   });
 
   router.get('/movies/:id', (req, res) => {
@@ -275,8 +282,14 @@ export function createLibraryRouter(db: MediaDatabase): Router {
   });
 
   // ---- Movie Sets ----
-  router.get('/sets', (_req, res) => {
-    res.json({ sets: db.listMovieSets() });
+  router.get('/sets', (req, res) => {
+    sendWithEtag(req, res, { sets: db.listMovieSets() });
+  });
+
+  // Cheap counts for the startup badge. The full audit walks every movie, show,
+  // episode and subtitle row; this is four indexed aggregate queries.
+  router.get('/counts', (req, res) => {
+    sendWithEtag(req, res, { counts: db.getLibraryCounts() });
   });
 
   router.post('/sets', async (req, res) => {
@@ -306,7 +319,7 @@ export function createLibraryRouter(db: MediaDatabase): Router {
   });
 
   // ---- TV Shows & Episodes ----
-  router.get('/shows/tree', (_req, res) => {
+  router.get('/shows/tree', (req, res) => {
     const shows = db.listTvShows();
     const tree = shows.map((show) => {
       const seasons = db.listSeasonsForShow(show.id);
@@ -326,7 +339,7 @@ export function createLibraryRouter(db: MediaDatabase): Router {
         unmatchedFiles: db.listUnmatchedVideoFilesForShow(show.id),
       };
     });
-    res.json({ tree });
+    sendWithEtag(req, res, { tree });
   });
 
   router.get('/shows', (_req, res) => {
@@ -812,4 +825,22 @@ export function createLibraryRouter(db: MediaDatabase): Router {
   });
 
   return router;
+}
+
+/**
+ * Send JSON with a strong-ish ETag so repeat loads revalidate to a 304 instead of
+ * re-transferring the whole payload. `no-cache` allows storing but requires
+ * revalidation — correct even while a scan is mutating the library.
+ */
+function sendWithEtag(req: { headers: Record<string, unknown> }, res: import('express').Response, body: unknown): void {
+  const json = JSON.stringify(body);
+  const etag = `W/"${createHash('sha1').update(json).digest('base64url')}"`;
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('ETag', etag);
+  const ifNoneMatch = String(req.headers['if-none-match'] ?? '');
+  if (ifNoneMatch.split(',').map((v) => v.trim()).includes(etag)) {
+    res.status(304).end();
+    return;
+  }
+  res.type('application/json').send(json);
 }

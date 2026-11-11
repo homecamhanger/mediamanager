@@ -2,11 +2,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   BatchJob,
   DashboardSummary,
-  LibraryAuditReport,
-  MovieRecord,
+  MovieListEntry,
   MovieSetRecord,
   SourceScanJob,
 } from '../shared/types.js';
+import { bootstrapCache } from './lib/bootstrapCache.js';
 import { EpisodeDetailPanel } from './components/EpisodeDetailPanel.js';
 import { MediaTreeSidebar } from './components/MediaTreeSidebar.js';
 import { MovieDetailPanel } from './components/MovieDetailPanel.js';
@@ -35,10 +35,18 @@ export const App: React.FC = () => {
   const [actorFilter, setActorFilter] = useState<string | null>(null);
 
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
-  const [movies, setMovies] = useState<MovieRecord[]>([]);
+  const [movies, setMovies] = useState<MovieListEntry[]>([]);
   const [showTree, setShowTree] = useState<ShowTreeNode[]>([]);
   const [sets, setSets] = useState<MovieSetRecord[]>([]);
-  const [audit, setAudit] = useState<LibraryAuditReport | null>(null);
+  // The startup badge needs only a number. The full report lives on the Audit page.
+  const [issueCounts, setIssueCounts] = useState<{
+    movies: number;
+    shows: number;
+    episodes: number;
+    sets: number;
+    unscrapedMovies: number;
+    unscrapedShows: number;
+  } | null>(null);
 
   const [scanning, setScanning] = useState(false);
   const [backgroundScanning, setBackgroundScanning] = useState(false);
@@ -54,19 +62,22 @@ export const App: React.FC = () => {
   };
 
   const refreshAll = useCallback(async () => {
-    const [d, m, stTree, st, au, jobsRes] = await Promise.all([
+    // The audit is deliberately absent: it walks every movie, show, episode and
+    // subtitle row, and nothing on the startup screen needs it. The badge uses
+    // /counts, and the Audit page fetches its own report when opened.
+    const [d, m, stTree, st, counts, jobsRes] = await Promise.all([
       api.getDashboard(),
-      api.listMovies(),
+      api.listMovieEntries(),
       api.getShowsTree(),
       api.listSets(),
-      api.getAudit(),
+      api.getLibraryCounts().catch(() => null),
       api.listJobs().catch(() => ({ jobs: [] as BatchJob[], scanJobs: [] as SourceScanJob[] })),
     ]);
     setSummary(d);
     setMovies(m.movies);
     setShowTree(stTree.tree);
     setSets(st.sets);
-    setAudit(au);
+    if (counts) setIssueCounts(counts.counts);
     setBatchJobs(jobsRes.jobs);
     setScanJobs(jobsRes.scanJobs);
     setBackgroundScanning(
@@ -91,6 +102,35 @@ export const App: React.FC = () => {
       if (st.sets.length > 0) return { kind: 'set', setId: st.sets[0].id };
       return null;
     });
+
+    // Persist for the next cold start. Fire-and-forget: a cache write must never
+    // delay rendering or surface an error.
+    void bootstrapCache.write({ movies: m.movies, showTree: stTree.tree, sets: st.sets });
+  }, []);
+
+  // Fast first paint: hydrate the last snapshot, then revalidate in the background.
+  // The cached data renders immediately; `refreshAll` replaces it moments later.
+  useEffect(() => {
+    let cancelled = false;
+    void bootstrapCache.read().then((snap) => {
+      if (cancelled || !snap) return;
+      setMovies((prev) => (prev.length > 0 ? prev : (snap.movies as MovieListEntry[])));
+      setShowTree((prev) => (prev.length > 0 ? prev : (snap.showTree as ShowTreeNode[])));
+      setSets((prev) => (prev.length > 0 ? prev : (snap.sets as MovieSetRecord[])));
+      setSelected((prev) => {
+        if (prev) return prev;
+        const cachedMovies = snap.movies as MovieListEntry[];
+        const cachedTree = snap.showTree as ShowTreeNode[];
+        const cachedSets = snap.sets as MovieSetRecord[];
+        if (cachedMovies.length > 0) return { kind: 'movie', movieId: cachedMovies[0].id };
+        if (cachedTree.length > 0) return { kind: 'show', showId: cachedTree[0].show.id, seasonNumber: null };
+        if (cachedSets.length > 0) return { kind: 'set', setId: cachedSets[0].id };
+        return prev;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -295,15 +335,7 @@ export const App: React.FC = () => {
     [showTree]
   );
 
-  const issueCount = audit
-    ? audit.issues.unscrapedMovies.length +
-      audit.issues.unscrapedShows.length +
-      audit.issues.missingMovieNfo.length +
-      audit.issues.missingEpisodeNfo.length +
-      audit.issues.duplicateMovies.length +
-      audit.issues.duplicateEpisodes.length +
-      (audit.issues.missingEpisodes?.length ?? 0)
-    : 0;
+  const issueCount = issueCounts ? issueCounts.unscrapedMovies + issueCounts.unscrapedShows : 0;
 
   const selectedSet = selected?.kind === 'set' ? sets.find((s) => s.id === selected.setId) ?? null : null;
 
