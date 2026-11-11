@@ -13,6 +13,7 @@ import { MovieDetailPanel } from './components/MovieDetailPanel.js';
 import { SetDetailPanel } from './components/SetDetailPanel.js';
 import { PlaylistsPage } from './pages/PlaylistsPage.js';
 import { TopRibbon } from './components/TopRibbon.js';
+import { FileOperationToast } from './components/FileOperationToast.js';
 import { TvShowDetailPanel } from './components/TvShowDetailPanel.js';
 import { api } from './lib/api.js';
 import {
@@ -391,6 +392,7 @@ export const App: React.FC = () => {
         )}
 
         <main className="flex-1 min-w-0 min-h-0 flex flex-col bg-[#0b0f17] relative overflow-hidden">
+          <FileOperationToast />
           {toast && (
             <div className="fixed bottom-4 right-4 z-50 px-4 py-2 rounded-xl bg-sky-500 text-white text-xs font-bold shadow-xl shadow-sky-500/30">
               {toast}

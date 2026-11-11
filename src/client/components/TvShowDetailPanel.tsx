@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   ArrowDown,
@@ -46,6 +46,7 @@ import { EpisodeScrapeModal } from './EpisodeScrapeModal.js';
 import { FormField as Field } from './FormField.js';
 import { PosterImage } from './PosterImage.js';
 import { episodeDisplay } from '../lib/episodeDisplay.js';
+import { fileOperations } from '../lib/fileOperations.js';
 import { TechBadges } from './QualityBadges.js';
 import { RatingBadges } from './RatingBadges.js';
 import { ScrapeModal } from './ScrapeModal.js';
@@ -112,6 +113,14 @@ export const TvShowDetailPanel: React.FC<{
   const [artPickerTarget, setArtPickerTarget] = useState<ArtworkPickerTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  // Queued file writes outlive the panel; only touch state while it is mounted.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // Season-level episode order state
   const [orderDraft, setOrderDraft] = useState<TvEpisodeRecord[]>([]);
@@ -123,6 +132,8 @@ export const TvShowDetailPanel: React.FC<{
 
     const load = async () => {
     const res = await api.getShow(showId);
+    // A queued write can finish after the panel is closed; skip state updates then.
+    if (!mountedRef.current) return;
     setShow(res.show);
     setForm(res.show);
     setSeasons(res.seasons);
@@ -223,25 +234,29 @@ export const TvShowDetailPanel: React.FC<{
     setOrderDirty(true);
   };
 
-  const handleApplyOrder = async () => {
+  const handleApplyOrder = () => {
     if (activeSeason === 'all' || orderDraft.length === 0) return;
-    setBusy(true);
-    try {
-      const items = orderDraft.map((ep, idx) => ({
-        episodeId: ep.id,
-        targetSeason: activeSeason,
-        targetEpisode: idx + 1,
-      }));
-      const res = await api.updateEpisodeOrder(show.id, { mode: orderMode, items });
-      setShow(res.show);
-      setSeasons(res.seasons);
-      setEpisodes(res.episodes);
-      setOrderDirty(false);
-      onUpdated();
-      notify(`Saved custom ${orderMode === 'display' ? 'display' : 'episode'} order to ${res.updatedCount} NFO file(s)`);
-    } finally {
-      setBusy(false);
-    }
+    const items = orderDraft.map((ep, idx) => ({
+      episodeId: ep.id,
+      targetSeason: activeSeason,
+      targetEpisode: idx + 1,
+    }));
+    const mode = orderMode;
+    // Rewrites one NFO per episode — the slowest operation in the app. Queue it.
+    setOrderDirty(false);
+    fileOperations.enqueue({
+      label: `Write NFOs · ${show?.title ?? 'Series'} (${items.length} episodes)`,
+      run: async () => {
+        const res = await api.updateEpisodeOrder(show.id, { mode, items });
+        if (mountedRef.current) {
+          setShow(res.show);
+          setSeasons(res.seasons);
+          setEpisodes(res.episodes);
+        }
+        onUpdated();
+        return `Custom ${mode === 'display' ? 'display' : 'episode'} order written to ${res.updatedCount} NFO file(s)`;
+      },
+    });
   };
 
   const handleResetOrder = async () => {
@@ -363,10 +378,24 @@ export const TvShowDetailPanel: React.FC<{
   };
 
   const handlePickArtwork = async (kind: ArtworkKind, url?: string, dataBase64?: string) => {
-    await api.setShowArtwork(show.id, kind, url, dataBase64);
-    await load();
-    onUpdated();
-    notify(`Updated ${kind} artwork`);
+    if (!show) return;
+    // Show the new art immediately instead of waiting for the file write. The
+    // picked candidate is a fetchable URL, so the poster swaps the moment you
+    // click; persistence continues in the queue.
+    const optimistic = url ?? (dataBase64 ? `data:image/jpeg;base64,${dataBase64}` : null);
+    if (optimistic) {
+      setShow((prev) => (prev ? { ...prev, artwork: { ...prev.artwork, [kind]: optimistic } } : prev));
+      setArtCacheKey((k) => k + 1);
+    }
+    fileOperations.enqueue({
+      label: `Artwork · ${show.title} ${kind}`,
+      run: async () => {
+        await api.setShowArtwork(show.id, kind, url, dataBase64);
+        await load();
+        onUpdated();
+        return `${kind} saved`;
+      },
+    });
   };
 
   const handlePickSeasonPoster = async (
@@ -375,10 +404,20 @@ export const TvShowDetailPanel: React.FC<{
     url?: string,
     dataBase64?: string
   ) => {
-    await api.setSeasonArtwork(seasonId, 'poster', url, dataBase64);
-    await load();
-    onUpdated();
-    notify(`Updated ${seasonName} poster`);
+    const optimistic = url ?? (dataBase64 ? `data:image/jpeg;base64,${dataBase64}` : null);
+    if (optimistic) {
+      setSeasons((prev) => prev.map((sn) => (sn.id === seasonId ? { ...sn, posterPath: optimistic } : sn)));
+      setArtCacheKey((k) => k + 1);
+    }
+    fileOperations.enqueue({
+      label: `Artwork · ${seasonName} poster`,
+      run: async () => {
+        await api.setSeasonArtwork(seasonId, 'poster', url, dataBase64);
+        await load();
+        onUpdated();
+        return `${seasonName} poster saved`;
+      },
+    });
   };
 
   const openShowArtPicker = (
@@ -831,11 +870,11 @@ export const TvShowDetailPanel: React.FC<{
                   </button>
                   <button
                     onClick={handleApplyOrder}
-                    disabled={busy || orderDraft.length === 0}
+                    disabled={orderDraft.length === 0}
                     className="px-3.5 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                   >
                     <Save className="w-3.5 h-3.5" />
-                    {busy ? 'Writing NFOs...' : orderDirty ? 'Save Order & Write NFOs *' : 'Save Order & Write NFOs'}
+                    {orderDirty ? 'Save Order & Write NFOs *' : 'Save Order & Write NFOs'}
                   </button>
                 </div>
               </div>

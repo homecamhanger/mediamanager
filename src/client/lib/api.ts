@@ -44,7 +44,10 @@ import type {
 
 export function getArtworkUrl(filePath: string | null | undefined, cacheBust?: string | number): string | null {
   if (!filePath) return null;
-  if (/^https?:\/\//i.test(filePath) || filePath.startsWith('/api/')) return filePath;
+  // Already a URL — remote artwork, an API route, or an optimistic inline
+  // preview (`data:`/`blob:`) shown before the disk write finishes. Passing an
+  // inline preview through the proxy would request a filesystem path and 404.
+  if (/^(https?:|data:|blob:)/i.test(filePath) || filePath.startsWith('/api/')) return filePath;
   const qs = new URLSearchParams({ path: filePath });
   if (cacheBust !== undefined) qs.set('v', String(cacheBust));
   return `/api/artwork/file?${qs.toString()}`;

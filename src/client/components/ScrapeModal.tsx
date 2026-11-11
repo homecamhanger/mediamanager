@@ -7,6 +7,7 @@ import type {
   ScraperSearchResult,
 } from '../../shared/types.js';
 import { api } from '../lib/api.js';
+import { fileOperations } from '../lib/fileOperations.js';
 import { useEscapeKey } from '../lib/useEscapeKey.js';
 import { PosterImage } from './PosterImage.js';
 import { RatingBadges } from './RatingBadges.js';
@@ -38,7 +39,6 @@ export const ScrapeModal: React.FC<ScrapeModalProps> = ({
   const [bundleLoading, setBundleLoading] = useState(false);
   const [bundle, setBundle] = useState<ScrapedMetadataBundle | null>(null);
   const [selectedArtwork, setSelectedArtwork] = useState<Partial<Record<ArtworkKind, string>>>({});
-  const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const runSearch = async (qStr = query, yStr = year) => {
@@ -92,22 +92,27 @@ export const ScrapeModal: React.FC<ScrapeModalProps> = ({
 
   if (!open) return null;
 
-  const handleApply = async () => {
+  const handleApply = () => {
     if (!bundle) return;
-    setApplying(true);
-    try {
-      if (mediaKind === 'movie') {
-        await api.applyMovieBundle(mediaId, bundle, selectedArtwork);
-      } else {
-        await api.applyShowBundle(mediaId, bundle);
-      }
-      onApplied();
-      onClose();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setApplying(false);
-    }
+    const applied = bundle;
+    const artwork = selectedArtwork;
+
+    // Close at once and let the write finish in the background — metadata, artwork
+    // and NFO writes on a slow share should not hold the dialog open.
+    setError(null);
+    onClose();
+    fileOperations.enqueue({
+      label: `Scrape · ${applied.title}${applied.year ? ` (${applied.year})` : ''}`,
+      run: async () => {
+        if (mediaKind === 'movie') {
+          await api.applyMovieBundle(mediaId, applied, artwork);
+        } else {
+          await api.applyShowBundle(mediaId, applied);
+        }
+        onApplied();
+        return 'Metadata, artwork & NFO saved';
+      },
+    });
   };
 
   const artworkByKind = (kind: ArtworkKind) => bundle?.artwork.filter((a) => a.kind === kind) ?? [];
@@ -324,11 +329,11 @@ export const ScrapeModal: React.FC<ScrapeModalProps> = ({
             </button>
             <button
               onClick={handleApply}
-              disabled={!bundle || applying}
+              disabled={!bundle}
               className="px-4 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
               <CheckCircle2 className="w-4 h-4" />
-              {applying ? 'Saving Metadata & Artwork...' : 'Apply Metadata & Write NFO'}
+              Apply Metadata & Write NFO
             </button>
           </div>
         </div>
