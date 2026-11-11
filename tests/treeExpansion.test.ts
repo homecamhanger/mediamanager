@@ -3,9 +3,12 @@ import {
   collapseAll,
   effectiveExpandedShows,
   expandAll,
+  clearStaleReveal,
   isSeasonExpanded,
   isShowExpanded,
   parseSeasonKey,
+  pinShow,
+  revealShow,
   seasonKey,
   seasonToReveal,
   togglePin,
@@ -17,7 +20,7 @@ import type { ShowTreeNode } from '../src/client/lib/workspaceTypes.js';
 
 const expansion = (over: Partial<TreeExpansion> = {}): TreeExpansion => ({
   pinnedShows: new Set<number>(),
-  selectedShowId: null,
+  revealedShowId: null,
   expandedSeasons: new Set<string>(),
   ...over,
 });
@@ -34,62 +37,97 @@ const node = (showId: number, seasons: number[], episodes: Array<[number, number
   }) as never;
 
 describe('Tree expansion', () => {
-  it('opens a show purely by being selected, without pinning it', () => {
-    const e = expansion({ selectedShowId: 7 });
-    expect(isShowExpanded(e, 7)).toBe(true);
-    expect(e.pinnedShows.has(7)).toBe(false);
+  it('is closed by default — selection alone does not open a series', () => {
+    const e = expansion();
+    expect(effectiveExpandedShows(e)).toEqual(new Set());
+    expect(isShowExpanded(e, 1)).toBe(false);
   });
 
-  it('closes the previously selected show when another is selected', () => {
-    // Selecting B is represented by changing selectedShowId — no state accumulates.
-    const before = expansion({ selectedShowId: 1 });
-    const after: TreeExpansion = { ...before, selectedShowId: 2 };
-    expect(isShowExpanded(after, 1)).toBe(false);
-    expect(isShowExpanded(after, 2)).toBe(true);
-    expect(effectiveExpandedShows(after)).toEqual(new Set([2]));
-  });
-
-  it('keeps a caret-pinned show open when navigation moves elsewhere', () => {
-    let e = expansion();
-    e = togglePin(e, 1); // caret on show 1
-    e = { ...e, selectedShowId: 2 }; // now select show 2
+  it('opens on double click and stays open while navigating', () => {
+    const e = pinShow(expansion(), 1);
     expect(isShowExpanded(e, 1)).toBe(true);
-    expect(isShowExpanded(e, 2)).toBe(true);
+    // Selection is not part of the model, so clicking elsewhere leaves it open.
+    expect(effectiveExpandedShows(e)).toEqual(new Set([1]));
+  });
+
+  it('double-clicking an already open series is idempotent, not a toggle', () => {
+    const once = pinShow(expansion(), 1);
+    const twice = pinShow(once, 1);
+    expect(isShowExpanded(twice, 1)).toBe(true);
+    expect(twice).toBe(once); // no state churn
+  });
+
+  it('keeps other open series open when a second is double-clicked', () => {
+    const e = pinShow(pinShow(expansion(), 1), 2);
     expect(effectiveExpandedShows(e)).toEqual(new Set([1, 2]));
   });
 
-  it('unpins on a second caret press', () => {
+  it('caret toggles a series closed and open again', () => {
     let e = togglePin(expansion(), 1);
     expect(isShowExpanded(e, 1)).toBe(true);
     e = togglePin(e, 1);
     expect(isShowExpanded(e, 1)).toBe(false);
-    // Still closed once the caret is released and nothing is selected.
     expect(effectiveExpandedShows(e)).toEqual(new Set());
   });
 
-  it('"collapse all" clears pins, seasons and selection', () => {
-    const busy = expansion({
-      pinnedShows: new Set([1, 2]),
-      selectedShowId: 3,
-      expandedSeasons: new Set([seasonKey(1, 1), seasonKey(2, 1)]),
-    });
-    const cleared = collapseAll();
-    expect(cleared.pinnedShows.size).toBe(0);
-    expect(cleared.selectedShowId).toBeNull();
-    expect(cleared.expandedSeasons.size).toBe(0);
-    // Nothing is expanded after collapsing, and re-deriving stays empty.
-    expect(effectiveExpandedShows(cleared)).toEqual(new Set());
-    expect(isShowExpanded(busy, 1)).toBe(true); // sanity: was open before
+  it('caret closes a row that was opened by double click', () => {
+    const opened = pinShow(expansion(), 1);
+    const closed = togglePin(opened, 1);
+    expect(isShowExpanded(closed, 1)).toBe(false);
   });
 
-  it('stays fully collapsed when a show is still selected but suppressed', () => {
-    // The component models "collapse all" as suppression of the selected show,
-    // which resolves to selectedShowId === null.
-    const suppressed: TreeExpansion = { pinnedShows: new Set(), selectedShowId: null, expandedSeasons: new Set() };
-    expect(effectiveExpandedShows(suppressed)).toEqual(new Set());
-    // A brand-new selection lifts the suppression.
-    const afterNewSelection: TreeExpansion = { ...suppressed, selectedShowId: 9 };
-    expect(effectiveExpandedShows(afterNewSelection)).toEqual(new Set([9]));
+  it('caret closes a row that was revealed by episode selection', () => {
+    const revealed = revealShow(expansion(), 1);
+    expect(isShowExpanded(revealed, 1)).toBe(true);
+    const closed = togglePin(revealed, 1);
+    // Would have stayed open via the union if the reveal were not cleared.
+    expect(isShowExpanded(closed, 1)).toBe(false);
+    expect(effectiveExpandedShows(closed)).toEqual(new Set());
+  });
+
+  it('reveals only one show at a time as episode selection moves', () => {
+    const first = revealShow(expansion(), 1);
+    const second = revealShow(first, 2);
+    expect(second.revealedShowId).toBe(2);
+    expect(effectiveExpandedShows(second)).toEqual(new Set([2]));
+  });
+
+  it('reveal does not disturb double-click-pinned series', () => {
+    const e = revealShow(pinShow(expansion(), 1), 2);
+    expect(effectiveExpandedShows(e)).toEqual(new Set([1, 2]));
+  });
+
+  it('drops a reveal once selection moves to another series', () => {
+    const revealed = revealShow(expansion(), 1);
+    expect(clearStaleReveal(revealed, 2).revealedShowId).toBeNull();
+    // Still selected -> keep it open.
+    expect(clearStaleReveal(revealed, 1).revealedShowId).toBe(1);
+    // Pinned rows are unaffected by navigation.
+    const mixed = revealShow(pinShow(expansion(), 5), 1);
+    const moved = clearStaleReveal(mixed, 2);
+    expect(moved.revealedShowId).toBeNull();
+    expect(effectiveExpandedShows(moved)).toEqual(new Set([5]));
+  });
+
+  it('no reveal -> clearing is a no-op', () => {
+    const e = pinShow(expansion(), 1);
+    expect(clearStaleReveal(e, 2)).toBe(e);
+  });
+
+  it('"collapse all" clears everything and stays collapsed', () => {
+    const busy = expansion({
+      pinnedShows: new Set([1, 2]),
+      revealedShowId: 3,
+      expandedSeasons: new Set([seasonKey(1, 1), seasonKey(2, 1)]),
+    });
+    expect(effectiveExpandedShows(busy).size).toBe(3); // sanity: was open before
+
+    const cleared = collapseAll();
+    expect(cleared.pinnedShows.size).toBe(0);
+    expect(cleared.revealedShowId).toBeNull();
+    expect(cleared.expandedSeasons.size).toBe(0);
+    // Nothing re-derives from selection, so this cannot bounce back open.
+    expect(effectiveExpandedShows(cleared)).toEqual(new Set());
   });
 
   it('expands everything for "expand all"', () => {
@@ -103,7 +141,7 @@ describe('Tree expansion', () => {
   });
 
   it('toggles a season independently of its show', () => {
-    let e = toggleSeason(expansion({ selectedShowId: 1 }), 1, 2);
+    let e = toggleSeason(expansion(), 1, 2);
     expect(isSeasonExpanded(e, 1, 2)).toBe(true);
     expect(isSeasonExpanded(e, 1, 1)).toBe(false);
     e = toggleSeason(e, 1, 2);
@@ -113,16 +151,16 @@ describe('Tree expansion', () => {
   it('prunes seasons belonging to shows that are no longer open', () => {
     const e = expansion({
       pinnedShows: new Set([1]),
-      selectedShowId: 2,
+      revealedShowId: 2,
       expandedSeasons: new Set([seasonKey(1, 1), seasonKey(2, 1), seasonKey(3, 1)]),
     });
     const visible = visibleSeasonKeys(e);
     expect(visible).toEqual(new Set([seasonKey(1, 1), seasonKey(2, 1)]));
-    // Show 3's season is dropped, so re-expanding show 3 later starts clean.
+    // Show 3's season is dropped, so re-opening show 3 later starts clean.
     expect(visible.has(seasonKey(3, 1))).toBe(false);
   });
 
-  it('reveals the selected episode\'s season, honouring display order', () => {
+  it("reveals the selected episode's season, honouring display order", () => {
     const tree = [node(1, [1, 2], [[10, 2], [11, 1, 5]])];
     expect(seasonToReveal(tree, 1, 10)).toBe(2);
     // displaySeason overrides the on-disk season number.
@@ -150,7 +188,11 @@ describe('Tree expansion', () => {
     const e = expansion({ pinnedShows: new Set([1]) });
     togglePin(e, 2);
     toggleSeason(e, 1, 1);
+    pinShow(e, 3);
+    revealShow(e, 4);
     expect(e.pinnedShows.has(2)).toBe(false);
+    expect(e.pinnedShows.has(3)).toBe(false);
+    expect(e.revealedShowId).toBeNull();
     expect(e.expandedSeasons.size).toBe(0);
   });
 });

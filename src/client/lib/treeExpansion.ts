@@ -3,21 +3,22 @@ import type { ShowTreeNode } from './workspaceTypes.js';
 /**
  * Expansion state for the TV tree.
  *
- * The tree has two *different* reasons for a show to be open, and conflating them
- * caused two bugs: selecting a series piled up stale expanded rows, and "collapse
- * all" was immediately undone by the selected row re-expanding itself.
+ * Opening a series is always an *explicit* act, never a side effect of selection:
  *
- *  - `pinnedShows` are open because the user pressed the caret. These persist when
- *    the user navigates elsewhere — that is the whole point of pinning.
- *  - the currently selected show is open purely *because* it is selected. It closes
- *    the moment something else is selected.
+ *  - single click selects a series and only fills the data pane — it never opens
+ *    or closes anything;
+ *  - double click opens a series (`pinShow`), and it stays open as you navigate;
+ *  - the caret toggles open/closed (`togglePin`);
+ *  - selecting an *episode* from elsewhere (e.g. search) reveals its season via
+ *    `revealedShowId`, which holds at most one show and is replaced as you move.
  *
- * `pinnedShows ∪ {selectedShow}` is the effective set, so selection never has to
- * write state and cannot resurrect a collapsed tree.
+ * `pinnedShows ∪ {revealedShowId}` is the effective set. Because selection no
+ * longer contributes, "collapse all" cannot be undone by the selected row and
+ * navigation cannot leave a trail of stale open series.
  */
 export interface TreeExpansion {
   pinnedShows: ReadonlySet<number>;
-  selectedShowId: number | null;
+  revealedShowId: number | null;
   expandedSeasons: ReadonlySet<string>;
 }
 
@@ -34,16 +35,25 @@ export function parseSeasonKey(key: string): { showId: number; seasonNumber: num
 /** The shows whose episode lists should be rendered. */
 export function effectiveExpandedShows(expansion: TreeExpansion): Set<number> {
   const next = new Set<number>(expansion.pinnedShows);
-  if (expansion.selectedShowId != null) next.add(expansion.selectedShowId);
+  if (expansion.revealedShowId != null) next.add(expansion.revealedShowId);
   return next;
 }
 
 export function isShowExpanded(expansion: TreeExpansion, showId: number): boolean {
-  return expansion.pinnedShows.has(showId) || expansion.selectedShowId === showId;
+  return expansion.pinnedShows.has(showId) || expansion.revealedShowId === showId;
 }
 
 export function isSeasonExpanded(expansion: TreeExpansion, showId: number, seasonNumber: number): boolean {
   return expansion.expandedSeasons.has(seasonKey(showId, seasonNumber));
+}
+
+/**
+ * Drop a reveal once the selection moves off that show. Only explicit opens
+ * (caret / double click) are meant to survive navigation.
+ */
+export function clearStaleReveal(expansion: TreeExpansion, selectedShowId: number | null): TreeExpansion {
+  if (expansion.revealedShowId == null || expansion.revealedShowId === selectedShowId) return expansion;
+  return { ...expansion, revealedShowId: null };
 }
 
 /**
@@ -61,12 +71,44 @@ export function visibleSeasonKeys(expansion: TreeExpansion): Set<string> {
   return next;
 }
 
-/** Toggle a show's caret. Selection is untouched, so this is purely a pin/unpin. */
+/**
+ * Toggle a show's caret. Closing also drops a reveal for the same show, otherwise
+ * the row would stay open via the union and the caret would appear dead.
+ */
 export function togglePin(expansion: TreeExpansion, showId: number): TreeExpansion {
   const pinnedShows = new Set(expansion.pinnedShows);
-  if (pinnedShows.has(showId)) pinnedShows.delete(showId);
-  else pinnedShows.add(showId);
+  const isOpen = pinnedShows.has(showId) || expansion.revealedShowId === showId;
+
+  if (isOpen) {
+    pinnedShows.delete(showId);
+    return {
+      ...expansion,
+      pinnedShows,
+      revealedShowId: expansion.revealedShowId === showId ? null : expansion.revealedShowId,
+    };
+  }
+  pinnedShows.add(showId);
   return { ...expansion, pinnedShows };
+}
+
+/**
+ * Open a show explicitly (double click). Idempotent — double-clicking an already
+ * open series must not close it the way a toggle would.
+ */
+export function pinShow(expansion: TreeExpansion, showId: number): TreeExpansion {
+  if (expansion.pinnedShows.has(showId)) return expansion;
+  const pinnedShows = new Set(expansion.pinnedShows);
+  pinnedShows.add(showId);
+  return {
+    ...expansion,
+    pinnedShows,
+    revealedShowId: expansion.revealedShowId === showId ? null : expansion.revealedShowId,
+  };
+}
+
+/** Reveal a show because one of its episodes was selected. Replaces any previous reveal. */
+export function revealShow(expansion: TreeExpansion, showId: number): TreeExpansion {
+  return expansion.revealedShowId === showId ? expansion : { ...expansion, revealedShowId: showId };
 }
 
 /** Season carets behave the same way, but scoped to a show + season pair. */
@@ -79,12 +121,11 @@ export function toggleSeason(expansion: TreeExpansion, showId: number, seasonNum
 }
 
 /**
- * "Collapse All" clears pins and seasons. `selectedShowId` is nulled too, but the
- * component additionally records a `suppressedShowId` so a still-selected show does
- * not immediately re-open the tree.
+ * "Collapse All" clears pins, the reveal and every season. Nothing re-derives from
+ * the current selection, so this stays collapsed even with a series still selected.
  */
 export function collapseAll(): TreeExpansion {
-  return { pinnedShows: new Set(), selectedShowId: null, expandedSeasons: new Set() };
+  return { pinnedShows: new Set(), revealedShowId: null, expandedSeasons: new Set() };
 }
 
 export function expandAll(tree: ShowTreeNode[]): TreeExpansion {
@@ -94,7 +135,7 @@ export function expandAll(tree: ShowTreeNode[]): TreeExpansion {
     pinnedShows.add(node.show.id);
     for (const season of node.seasons) expandedSeasons.add(seasonKey(node.show.id, season.seasonNumber));
   }
-  return { pinnedShows, selectedShowId: null, expandedSeasons };
+  return { pinnedShows, revealedShowId: null, expandedSeasons };
 }
 
 /**
