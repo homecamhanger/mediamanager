@@ -802,21 +802,27 @@ export class LibraryScanner {
   }
 }
 
-function walkVideoFiles(dir: string, opts: { keepSampleAndExtras?: boolean } = {}): string[] {
+function walkVideoFiles(
+  dir: string,
+  opts: { keepSampleAndExtras?: boolean; root?: string } = {}
+): string[] {
   const out: string[] = [];
   if (!fs.existsSync(dir)) return out;
+  // The scan root bounds the extras-directory walk, so a source that genuinely
+  // lives under a folder called "Extras" is not filtered wholesale.
+  const root = opts.root ?? dir;
   const items = fs.readdirSync(dir, { withFileTypes: true });
   for (const item of items) {
     if (item.name.startsWith('.')) continue;
     const full = path.join(dir, item.name);
     if (item.isDirectory()) {
       if (['extrafanart', 'extrathumbs', '.actors', 'subs', 'subtitles'].includes(item.name.toLowerCase())) continue;
-      out.push(...walkVideoFiles(full, opts));
+      out.push(...walkVideoFiles(full, { ...opts, root }));
     } else if (item.isFile() && isVideoFile(full)) {
       // Movies drop sample/trailer/featurette files outright so they are never
       // scraped as films. TV keeps them, because a series folder's extras are
       // exactly what we want to *flag* rather than silently ignore.
-      if (!opts.keepSampleAndExtras && isSampleOrExtraFile(full)) continue;
+      if (!opts.keepSampleAndExtras && isSampleOrExtraFile(full, opts.root)) continue;
       out.push(full);
     }
   }
