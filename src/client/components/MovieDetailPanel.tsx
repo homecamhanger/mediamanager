@@ -10,6 +10,7 @@ import {
   Image as ImageIcon,
   Info,
   Languages,
+  Loader2,
   Save,
   Sparkles,
   Star,
@@ -21,6 +22,7 @@ import {
 } from 'lucide-react';
 import type { ActorEntry, ArtworkKind, MovieRecord, NfoValidationReport } from '../../shared/types.js';
 import { api, formatBytes, getArtworkUrl } from '../lib/api.js';
+import { detailCache, movieKey } from '../lib/detailCache.js';
 import { fileOperations } from '../lib/fileOperations.js';
 import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 import { ArtworkPickerModal, ArtworkPickerTarget, ClickableArtCard } from './ArtworkPickerModal.js';
@@ -56,14 +58,19 @@ function resolveMovieTab(tab?: DetailTab | InspectorFocusTab): DetailTab {
 
 export const MovieDetailPanel: React.FC<{
   movieId: number;
+  /** List-derived record so the panel paints immediately instead of showing the previous item. */
+  seed?: MovieRecord | null;
   initialTab?: DetailTab | InspectorFocusTab;
   activeActor?: string | null;
   onSelectActor?: (actorName: string) => void;
   onUpdated: () => void;
   onDeleted?: () => void;
   onClose?: () => void;
-}> = ({ movieId, initialTab, activeActor, onSelectActor, onUpdated, onDeleted, onClose }) => {
-  const [movie, setMovie] = useState<MovieRecord | null>(null);
+}> = ({ movieId, seed, initialTab, activeActor, onSelectActor, onUpdated, onDeleted, onClose }) => {
+  const [movie, setMovie] = useState<MovieRecord | null>(seed ?? null);
+  // Distinguishes "not loaded yet" from "loaded and empty", and drives the
+  // "updating" affordance so a cached paint is visibly being revalidated.
+  const [refreshing, setRefreshing] = useState(false);
   const [tab, setTab] = useState<DetailTab>(resolveMovieTab(initialTab));
   const [scrapeOpen, setScrapeOpen] = useState(false);
   const [subSearchOpen, setSubSearchOpen] = useState(false);
@@ -80,6 +87,9 @@ export const MovieDetailPanel: React.FC<{
   const [toast, setToast] = useState<string | null>(null);
   // Queued file writes outlive the panel; only touch state while it is mounted.
   const mountedRef = useRef(true);
+  // Monotonic per-load token. A response whose token is stale belongs to a movie
+  // the user has already navigated away from, so it is dropped instead of painted.
+  const loadTokenRef = useRef(0);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -89,22 +99,69 @@ export const MovieDetailPanel: React.FC<{
 
   const vocabulary = useLibraryVocabulary();
 
-  const loadMovie = async () => {
-    const res = await api.getMovie(movieId);
-    // A queued write can finish after the panel is closed; skip state updates then.
-    if (!mountedRef.current) return;
-    setMovie(res.movie);
-    setForm(res.movie);
-    setEditionDraft(res.movie.parsedInfo.edition ?? '');
-    setConfirmDeleteMode(null);
-    setArtCacheKey((k) => k + 1);
-    const nfo = await api.readNfo('movie', movieId);
-    setNfoXml(nfo.xml);
-    setNfoVal(nfo.validation);
+  /**
+   * Paints from cache/seed first, then revalidates.
+   *
+   * The record and its NFO are two sequential round-trips, and the NFO is a
+   * synchronous read off the media share. Waiting for both before painting left the
+   * previously selected movie on screen, which is what made clicking feel laggy.
+   */
+  const loadMovie = async (opts: { force?: boolean } = {}) => {
+    const cacheKey = movieKey(movieId);
+    // Belt and braces on top of the per-item state reset: if the user has moved on
+    // by the time a response lands, that response describes a different film and
+    // must not be painted.
+    const token = ++loadTokenRef.current;
+    const isCurrent = () => mountedRef.current && token === loadTokenRef.current;
+
+    if (!opts.force) {
+      const cached = detailCache.peek<MovieRecord>(cacheKey);
+      const initial = cached ?? seed ?? null;
+      if (initial) {
+        setMovie(initial);
+        setForm(initial);
+        setArtCacheKey((k) => k + 1);
+      }
+    }
+
+    // The detail record is one request; the NFO is a second, disk-bound one. The
+    // record alone is enough to paint the panel, so it is awaited separately.
+    setRefreshing(true);
+    try {
+      // `refresh`, not `get`: a cache hit is a head start, not a reason to skip
+      // revalidation, or a panel would show stale metadata all session.
+      const movie = await detailCache.refresh(cacheKey, async () => {
+        const res = await api.getMovie(movieId);
+        return res.movie;
+      });
+      if (!isCurrent()) return;
+      setMovie(movie);
+      setForm(movie);
+      setEditionDraft(movie.parsedInfo.edition ?? '');
+      setConfirmDeleteMode(null);
+      setArtCacheKey((k) => k + 1);
+      // Paint the record now; the NFO arrives behind it.
+      setRefreshing(false);
+
+      const nfo = await api.readNfo('movie', movieId);
+      if (!isCurrent()) return;
+      setNfoXml(nfo.xml);
+      setNfoVal(nfo.validation);
+    } catch {
+      // Keep whatever is painted; a failed refresh must not blank the panel.
+    } finally {
+      if (isCurrent()) setRefreshing(false);
+    }
   };
 
   useEffect(() => {
     setTab(resolveMovieTab(initialTab));
+    // Clear per-item state immediately: without this, switching movies briefly shows
+    // the previous film's NFO text and subtitle rows under the new title.
+    setNfoXml('');
+    setNfoVal(null);
+    setForm(seed ?? {});
+    setMovie(seed ?? null);
     void loadMovie();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [movieId, initialTab]);
@@ -124,8 +181,19 @@ export const MovieDetailPanel: React.FC<{
     }
   }, [initialTab, movieId]);
 
+  // Only reached when there is neither a seed nor a cache entry — a genuinely cold
+  // selection. The skeleton mirrors the panel's shape so the layout does not jump.
   if (!movie) {
-    return <div className="p-6 text-xs text-slate-400">Loading movie details...</div>;
+    return (
+      <div className="p-5 space-y-4 animate-pulse" aria-busy="true">
+        <div className="h-4 w-48 rounded bg-slate-800" />
+        <div className="h-3 w-32 rounded bg-slate-800/70" />
+        <div className="h-40 rounded-xl bg-slate-800/60" />
+        <div className="h-3 w-full rounded bg-slate-800/50" />
+        <div className="h-3 w-2/3 rounded bg-slate-800/50" />
+        <span className="sr-only">Loading movie details…</span>
+      </div>
+    );
   }
 
   const notify = (msg: string) => {
@@ -312,6 +380,13 @@ export const MovieDetailPanel: React.FC<{
             {movie.year && <span className="ml-2 font-semibold text-slate-400">({movie.year})</span>}
             {movie.mpaa && <HeroChip>{movie.mpaa}</HeroChip>}
             {!movie.scraped && <HeroChip tone="amber">UNSCRAPED</HeroChip>}
+            {/* A cached paint is provisional; say so rather than looking settled. */}
+            {refreshing && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-300/90">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Updating…
+              </span>
+            )}
           </HeroTitle>
         }
         meta={
