@@ -12,7 +12,6 @@ import {
   Info,
   Languages,
   Layers,
-  Loader2,
   Plus,
   Save,
   Sparkles,
@@ -37,6 +36,7 @@ import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 import { ArtworkPickerModal, ArtworkPickerTarget, ClickableArtCard } from './ArtworkPickerModal.js';
 import { CastListColumn } from './CastListColumn.js';
 import { DetailHero, HeroChip, HeroTab, HeroTitle } from './DetailHero.js';
+import { RefreshIndicator } from './RefreshIndicator.js';
 import { useLibraryVocabulary } from '../lib/useLibraryVocabulary.js';
 import { ChipInput } from './ChipInput.js';
 import { EpisodeScrapeModal } from './EpisodeScrapeModal.js';
@@ -508,12 +508,7 @@ export const EpisodeDetailPanel: React.FC<{
         }
         titleArea={
           <HeroTitle>
-            {refreshing && (
-              <span className="mr-2 inline-flex items-center gap-1 align-middle text-[10px] font-semibold text-sky-300/90">
-                <Loader2 className="w-3 h-3 animate-spin" />
-                Updating…
-              </span>
-            )}
+            <RefreshIndicator active={refreshing} className="mr-2 align-middle" />
             <span className="mr-1.5 font-mono text-sky-300">{epCode}</span>
             {episode.title}
             {totalPartCount > 1 && (

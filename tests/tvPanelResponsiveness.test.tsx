@@ -46,6 +46,7 @@ vi.mock('../src/client/lib/useLibraryVocabulary.js', () => ({
 const { TvShowDetailPanel } = await import('../src/client/components/TvShowDetailPanel.js');
 const { EpisodeDetailPanel } = await import('../src/client/components/EpisodeDetailPanel.js');
 const { detailCache } = await import('../src/client/lib/detailCache.js');
+const { REFRESH_TIMING } = await import('../src/client/lib/useRefreshStatus.js');
 const { seedEpisodeFromTree, seedShowFromTree } = await import('../src/client/lib/detailSeed.js');
 
 function show(id: number, title: string): TvShowRecord {
@@ -118,6 +119,9 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  // Fake clocks so the indicator's timing is deterministic; the panels' own
+  // promises still resolve through microtasks, which `advanceTimersByTimeAsync` flushes.
+  vi.useFakeTimers();
   detailCache.clear();
   getShow.mockReset();
   readNfo.mockClear();
@@ -131,11 +135,19 @@ afterEach(async () => {
     root.unmount();
   });
   container.remove();
+  vi.useRealTimers();
 });
 
 async function render(ui: React.ReactElement) {
   await act(async () => {
     root.render(ui);
+  });
+}
+
+/** Lets the indicator's announce threshold pass; quick refreshes stay silent. */
+async function untilAnnounced() {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(REFRESH_TIMING.appearAfterMs + 10);
   });
 }
 
@@ -152,6 +164,7 @@ describe('TvShowDetailPanel responsiveness', () => {
     );
 
     expect(container.textContent).toContain('The Office');
+    await untilAnnounced();
     expect(container.textContent).toContain('Updating');
   });
 
@@ -190,6 +203,7 @@ describe('EpisodeDetailPanel responsiveness', () => {
 
     expect(container.textContent).toContain('Diversity Day');
     expect(container.textContent).not.toContain('Pilot');
+    await untilAnnounced();
     expect(container.textContent).toContain('Updating');
   });
 

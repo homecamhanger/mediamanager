@@ -10,7 +10,6 @@ import {
   Image as ImageIcon,
   Info,
   Languages,
-  Loader2,
   Save,
   Sparkles,
   Star,
@@ -28,6 +27,7 @@ import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 import { ArtworkPickerModal, ArtworkPickerTarget, ClickableArtCard } from './ArtworkPickerModal.js';
 import { CastListColumn } from './CastListColumn.js';
 import { DetailHero, HeroChip, HeroTab, HeroTitle } from './DetailHero.js';
+import { RefreshIndicator } from './RefreshIndicator.js';
 import { useLibraryVocabulary } from '../lib/useLibraryVocabulary.js';
 import { ChipInput } from './ChipInput.js';
 import { FileDropZone } from './FileDropZone.js';
@@ -381,12 +381,7 @@ export const MovieDetailPanel: React.FC<{
             {movie.mpaa && <HeroChip>{movie.mpaa}</HeroChip>}
             {!movie.scraped && <HeroChip tone="amber">UNSCRAPED</HeroChip>}
             {/* A cached paint is provisional; say so rather than looking settled. */}
-            {refreshing && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-300/90">
-                <Loader2 className="w-3 h-3 animate-spin" />
-                Updating…
-              </span>
-            )}
+            <RefreshIndicator active={refreshing} />
           </HeroTitle>
         }
         meta={

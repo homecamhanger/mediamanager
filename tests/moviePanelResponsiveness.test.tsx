@@ -104,6 +104,7 @@ function record(e: MovieListEntry): MovieRecord {
 }
 
 const { detailCache } = await import('../src/client/lib/detailCache.js');
+const { REFRESH_TIMING } = await import('../src/client/lib/useRefreshStatus.js');
 
 // React needs to know it is in a test environment or `act` warns on every update.
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -112,6 +113,9 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  // Fake clocks so the indicator's timing is deterministic; the panels' own
+  // promises still resolve through microtasks, which `advanceTimersByTimeAsync` flushes.
+  vi.useFakeTimers();
   detailCache.clear();
   getMovie.mockReset();
   readNfo.mockClear();
@@ -125,11 +129,24 @@ afterEach(async () => {
     root.unmount();
   });
   container.remove();
+  vi.useRealTimers();
 });
 
 async function render(ui: React.ReactElement) {
   await act(async () => {
     root.render(ui);
+  });
+}
+
+/**
+ * Waits out the indicator's announce threshold.
+ *
+ * The chip is deliberately not shown for refreshes that finish in a few
+ * milliseconds, so an assertion about it has to let that timer pass first.
+ */
+async function untilAnnounced() {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(REFRESH_TIMING.appearAfterMs + 10);
   });
 }
 
@@ -149,7 +166,8 @@ describe('MovieDetailPanel responsiveness', () => {
 
     expect(container.textContent).toContain('Ant-Man');
     expect(container.textContent).not.toContain('Loading movie details');
-    // The panel is honest that it is still refreshing.
+    // A refresh that drags on is announced rather than left implicit.
+    await untilAnnounced();
     expect(container.textContent).toContain('Updating');
   });
 
@@ -216,6 +234,7 @@ describe('MovieDetailPanel responsiveness', () => {
     );
 
     expect(container.textContent).toContain('Plot of Ant-Man');
+    await untilAnnounced();
     expect(container.textContent).toContain('Updating');
   });
 

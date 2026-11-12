@@ -19,7 +19,6 @@ import {
   Image as ImageIcon,
   Info,
   Languages,
-  Loader2,
   RotateCcw,
   Save,
   Sparkles,
@@ -41,6 +40,7 @@ import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 import { ArtworkPickerModal, ArtworkPickerTarget, ClickableArtCard } from './ArtworkPickerModal.js';
 import { CastListColumn } from './CastListColumn.js';
 import { DetailHero, HeroChip, HeroTab, HeroTitle } from './DetailHero.js';
+import { RefreshIndicator } from './RefreshIndicator.js';
 import { useLibraryVocabulary } from '../lib/useLibraryVocabulary.js';
 import { ChipInput } from './ChipInput.js';
 import { EpisodeScrapeModal } from './EpisodeScrapeModal.js';
@@ -554,12 +554,7 @@ export const TvShowDetailPanel: React.FC<{
             {show.title}
             {show.year && <span className="ml-2 font-semibold text-slate-400">({show.year})</span>}
             {show.status && <HeroChip tone="sky">{show.status}</HeroChip>}
-            {refreshing && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-300/90">
-                <Loader2 className="w-3 h-3 animate-spin" />
-                Updating…
-              </span>
-            )}
+            <RefreshIndicator active={refreshing} />
             {activeSeason !== 'all' && <HeroChip tone="amber">Season {activeSeason}</HeroChip>}
           </HeroTitle>
         }
