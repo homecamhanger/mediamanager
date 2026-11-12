@@ -212,3 +212,55 @@ describe('Folder browser confinement', () => {
     expect(Array.isArray(res.body.browsableRoots)).toBe(true);
   });
 });
+
+describe('Artwork cache headers', () => {
+  it('revalidates instead of serving a stale poster for a day', async () => {
+    const { app, db } = makeApp();
+    const sourceRoot = tmpDir('media-');
+    const movieDir = path.join(sourceRoot, 'Movie (2020)');
+    fs.mkdirSync(movieDir, { recursive: true });
+    const filePath = path.join(movieDir, 'Movie.2020.mkv');
+    fs.writeFileSync(filePath, 'x');
+    const posterPath = path.join(movieDir, 'poster.jpg');
+    fs.writeFileSync(posterPath, Buffer.alloc(64, 1));
+
+    const source = db.addSource({ name: 'Movies', path: sourceRoot, mediaKind: 'movie' });
+    db.upsertMovie(makeMovie({ sourceId: source.id, filePath, folderPath: movieDir }));
+
+    const url = `/api/artwork/file?path=${encodeURIComponent(posterPath)}`;
+    const first = await request(app).get(url);
+    expect(first.status).toBe(200);
+    // `no-cache` means store-and-revalidate. `max-age` here caused the reported
+    // bug: an uploaded poster replaces the file at the same path, the list keeps
+    // the same URL, and the browser would not ask again for 24 hours.
+    expect(first.headers['cache-control']).toBe('no-cache');
+    expect(first.headers.etag).toBeTruthy();
+
+    // A conditional request after the file changes must return the new bytes.
+    const etagBefore = first.headers.etag;
+    fs.writeFileSync(posterPath, Buffer.alloc(64, 2));
+    const conditional = await request(app).get(url).set('If-None-Match', etagBefore as string);
+    expect(conditional.status).toBe(200);
+    expect(conditional.body.equals(Buffer.alloc(64, 2))).toBe(true);
+  });
+
+  it('still answers an unchanged poster with 304', async () => {
+    const { app, db } = makeApp();
+    const sourceRoot = tmpDir('media-');
+    const movieDir = path.join(sourceRoot, 'Movie (2020)');
+    fs.mkdirSync(movieDir, { recursive: true });
+    const filePath = path.join(movieDir, 'Movie.2020.mkv');
+    fs.writeFileSync(filePath, 'x');
+    const posterPath = path.join(movieDir, 'poster.jpg');
+    fs.writeFileSync(posterPath, Buffer.alloc(64, 1));
+
+    const source = db.addSource({ name: 'Movies', path: sourceRoot, mediaKind: 'movie' });
+    db.upsertMovie(makeMovie({ sourceId: source.id, filePath, folderPath: movieDir }));
+
+    const url = `/api/artwork/file?path=${encodeURIComponent(posterPath)}`;
+    const first = await request(app).get(url);
+    const again = await request(app).get(url).set('If-None-Match', first.headers.etag as string);
+    expect(again.status).toBe(304);
+    expect(again.text ?? '').toBe('');
+  });
+});

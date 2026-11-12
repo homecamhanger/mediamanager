@@ -20,12 +20,64 @@ export function isVideoFile(filePath: string): boolean {
   return VIDEO_EXTENSIONS.has(path.extname(filePath).toLowerCase());
 }
 
-export function isSampleOrExtraFile(filePath: string): boolean {
-  const base = path.basename(filePath, path.extname(filePath)).toLowerCase();
-  if (/(^|[-._ ])(sample|trailer|featurette|behindthescenes|deleted|extras?|interview)([-._ ]|$)/.test(base)) {
-    return true;
+/**
+ * Picks the feature film among the videos in one folder.
+ *
+ * Keyword matching was the wrong tool here. The vocabulary of extras is unbounded
+ * ("Gag Reel", "Funny Bits", "The Making Of…", a language whose idiom you did not
+ * anticipate), so every list is both incomplete — letting extras become movies —
+ * and over-broad — silently deleting films whose titles happen to contain a word
+ * like "interview".
+ *
+ * File size is a far better signal and needs no vocabulary: in a folder holding one
+ * film and its extras, the film is overwhelmingly the largest file. Extras, samples
+ * and trailers are short, so they lose by a wide margin.
+ *
+ * Two properties matter for this to be safe:
+ *
+ *  - It only ever *demotes* extras that sit beside a much larger file. A folder with
+ *    a single video keeps it regardless of size, so a source pointed straight at
+ *    `Movie.mkv` still scans.
+ *  - The threshold is deliberately far apart (1.5×). A deliberately split film
+ *    (`cd1`/`cd2` at roughly equal size) must keep both parts rather than treating
+ *    the smaller half as an extra.
+ */
+
+/** A trailing video is kept as a feature when it is at least this share of the folder's largest. */
+export const FEATURE_SIZE_RATIO = 0.66;
+
+export interface FolderVideoGroup {
+  /** Videos believed to be features (usually exactly one). */
+  features: string[];
+  /** Videos demoted because a sibling is far larger. */
+  extras: string[];
+}
+
+/**
+ * Selects the feature(s) in a folder from `(path, sizeBytes)` pairs.
+ *
+ * Pure so the decision is testable without touching the filesystem.
+ */
+export function selectFolderFeatures(files: Array<{ path: string; sizeBytes: number }>): FolderVideoGroup {
+  if (files.length === 0) return { features: [], extras: [] };
+  if (files.length === 1) return { features: files.map((f) => f.path), extras: [] };
+
+  const largest = Math.max(...files.map((f) => f.sizeBytes));
+  // An empty or unreadable set gives no size signal; keep everything rather than
+  // guessing, because dropping a film is the unrecoverable mistake.
+  if (!Number.isFinite(largest) || largest <= 0) return { features: files.map((f) => f.path), extras: [] };
+
+  const threshold = largest * FEATURE_SIZE_RATIO;
+  const features: string[] = [];
+  const extras: string[] = [];
+  for (const file of files) {
+    if (file.sizeBytes >= threshold) features.push(file.path);
+    else extras.push(file.path);
   }
-  return false;
+  // Never demote everything: if rounding or odd sizes left the feature out, the
+  // largest file is still the best candidate.
+  if (features.length === 0) features.push(files.reduce((a, b) => (b.sizeBytes > a.sizeBytes ? b : a)).path);
+  return { features, extras };
 }
 
 export function parseMediaFilename(filePath: string, hintKind?: 'movie' | 'tvshow'): ParsedFilenameInfo {

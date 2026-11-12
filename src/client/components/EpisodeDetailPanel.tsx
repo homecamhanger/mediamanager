@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -31,10 +31,12 @@ import type {
   TvShowRecord,
 } from '../../shared/types.js';
 import { api, formatBytes, getArtworkUrl } from '../lib/api.js';
+import { detailCache, showKey, type ShowDetailPayload } from '../lib/detailCache.js';
 import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 import { ArtworkPickerModal, ArtworkPickerTarget, ClickableArtCard } from './ArtworkPickerModal.js';
 import { CastListColumn } from './CastListColumn.js';
 import { DetailHero, HeroChip, HeroTab, HeroTitle } from './DetailHero.js';
+import { RefreshIndicator } from './RefreshIndicator.js';
 import { useLibraryVocabulary } from '../lib/useLibraryVocabulary.js';
 import { ChipInput } from './ChipInput.js';
 import { EpisodeScrapeModal } from './EpisodeScrapeModal.js';
@@ -46,6 +48,13 @@ import { SubtitleEditorModal, SubtitleSearchModal } from './SubtitleSearchModal.
 
 type EpisodeTab = 'metadata' | 'cast' | 'nfo' | 'mediainfo';
 
+/**
+ * Episodes all read one `GET /api/shows/:id` payload, so this window is what stops
+ * clicking through a season from firing a series fetch per episode. Edits clear the
+ * cache via `refreshAll`, so metadata cannot go stale behind this.
+ */
+const EPISODE_PAYLOAD_MAX_AGE_MS = 30_000;
+
 function resolveEpisodeTab(tab?: EpisodeTab | InspectorFocusTab): EpisodeTab {
   if (tab === 'subtitles' || tab === 'mediainfo') return 'mediainfo';
   if (tab === 'nfo') return 'nfo';
@@ -56,16 +65,25 @@ function resolveEpisodeTab(tab?: EpisodeTab | InspectorFocusTab): EpisodeTab {
 export const EpisodeDetailPanel: React.FC<{
   showId: number;
   episodeId: number;
+  /**
+   * What the list already knows about this episode. Painted immediately so clicking
+   * an episode shows *that* episode, not the one selected before it.
+   */
+  seed?: { show: TvShowRecord; episode: TvEpisodeRecord } | null;
   initialTab?: EpisodeTab | InspectorFocusTab;
   activeActor?: string | null;
   onSelectActor?: (actorName: string) => void;
   onSelectShow: (showId: number, seasonNumber?: number | null) => void;
   onUpdated: () => void;
   onDeleted?: () => void;
-}> = ({ showId, episodeId, initialTab, activeActor, onSelectActor, onSelectShow, onUpdated, onDeleted }) => {
-  const [show, setShow] = useState<TvShowRecord | null>(null);
+}> = ({ showId, episodeId, seed, initialTab, activeActor, onSelectActor, onSelectShow, onUpdated, onDeleted }) => {
+  const [show, setShow] = useState<TvShowRecord | null>(seed?.show ?? null);
   const [seasons, setSeasons] = useState<TvSeasonRecord[]>([]);
-  const [episode, setEpisode] = useState<TvEpisodeRecord | null>(null);
+  const [episode, setEpisode] = useState<TvEpisodeRecord | null>(seed?.episode ?? null);
+  const [refreshing, setRefreshing] = useState(false);
+  const mountedRef = useRef(true);
+  /** Monotonic per-load token; stale responses are dropped. See MovieDetailPanel. */
+  const loadTokenRef = useRef(0);
   const [form, setForm] = useState<Partial<TvEpisodeRecord>>({});
   const [partsDraft, setPartsDraft] = useState<TvEpisodeSubEntry[]>([]);
   const [activePartIdx, setActivePartIdx] = useState(0);
@@ -84,26 +102,94 @@ export const EpisodeDetailPanel: React.FC<{
 
   const vocabulary = useLibraryVocabulary();
 
-    const load = async () => {
-    const res = await api.getShow(showId);
-    setShow(res.show);
-    setSeasons(res.seasons);
-    const ep = res.episodes.find((e) => e.id === episodeId) ?? null;
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  /** Applies a show payload to the panel; returns the selected episode, if present. */
+  const applyPayload = (payload: ShowDetailPayload, applyOpts: { keepArtCacheKey?: boolean } = {}) => {
+    setShow(payload.show);
+    setSeasons(payload.seasons);
+    const ep = payload.episodes.find((e) => e.id === episodeId) ?? null;
     setEpisode(ep);
-    setConfirmDeleteMode(null);
-    setArtCacheKey((k) => k + 1);
+    if (!applyOpts.keepArtCacheKey) setArtCacheKey((k) => k + 1);
     if (ep) {
       setForm(ep);
       setPartsDraft(ep.multiEpisodeParts ?? []);
       setActivePartIdx((prev) => (prev > (ep.multiEpisodeParts?.length ?? 0) ? 0 : prev));
-      const nfo = await api.readNfo('episode', ep.id);
-      setNfoXml(nfo.xml);
-      setNfoVal(nfo.validation);
+    }
+    return ep;
+  };
+
+  /**
+   * Paints from cache/seed first, then revalidates.
+   *
+   * Episodes share the show payload — one `GET /api/shows/:id` carries the whole
+   * series and its episodes — so the cache key is the show, and the panel picks its
+   * episode out of the result. `episodeId` is part of the token, not the key, so
+   * moving between episodes of one show reuses the payload it already has.
+   */
+  const load = async ({ force = false }: { force?: boolean } = {}) => {
+    const token = ++loadTokenRef.current;
+    const isCurrent = () => mountedRef.current && token === loadTokenRef.current;
+
+    if (!force) {
+      const cached = detailCache.peek<ShowDetailPayload>(showKey(showId));
+      if (cached) applyPayload(cached);
+    }
+
+    setRefreshing(true);
+    try {
+      const payload = await detailCache.refresh<ShowDetailPayload>(
+        showKey(showId),
+        async () => {
+          const res = await api.getShow(showId);
+          return {
+            show: res.show,
+            seasons: res.seasons,
+            episodes: res.episodes,
+            missingEpisodes: res.missingEpisodes ?? [],
+            unmatchedFiles: res.unmatchedFiles ?? [],
+          };
+        },
+        // Every episode of a show shares one payload; within this window, stepping
+        // between episodes reads the cache instead of refetching the whole series.
+        { maxAgeMs: force ? 0 : EPISODE_PAYLOAD_MAX_AGE_MS },
+      );
+      if (!isCurrent()) return;
+      const ep = applyPayload(payload);
+      setConfirmDeleteMode(null);
+      // Paint the episode now; its NFO arrives behind it.
+      setRefreshing(false);
+
+      if (ep) {
+        const nfo = await api.readNfo('episode', ep.id);
+        if (!isCurrent()) return;
+        setNfoXml(nfo.xml);
+        setNfoVal(nfo.validation);
+      }
+    } catch {
+      // Keep whatever is painted; a failed refresh must not blank the panel.
+    } finally {
+      if (isCurrent()) setRefreshing(false);
     }
   };
 
   useEffect(() => {
     setTab(resolveEpisodeTab(initialTab));
+    // Reset per-item state: the newly selected episode must never inherit the
+    // previous one's title, NFO or parts list while its record loads.
+    setEpisode(seed?.episode ?? null);
+    setShow(seed?.show ?? null);
+    setForm(seed?.episode ?? {});
+    setPartsDraft(seed?.episode?.multiEpisodeParts ?? []);
+    setActivePartIdx(0);
+    setNfoXml('');
+    setNfoVal(null);
+    setConfirmDeleteMode(null);
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showId, episodeId, initialTab]);
@@ -124,7 +210,13 @@ export const EpisodeDetailPanel: React.FC<{
   }, [initialTab, episodeId]);
 
   if (!show || !episode) {
-    return <div className="p-6 text-xs text-slate-400">Loading episode details...</div>;
+    return (
+      <div className="space-y-3 p-6">
+        <div className="h-5 w-2/5 animate-pulse rounded bg-slate-700/60" />
+        <div className="h-3 w-1/3 animate-pulse rounded bg-slate-700/40" />
+        <div className="h-40 w-full animate-pulse rounded-xl bg-slate-800/50" />
+      </div>
+    );
   }
 
   const notify = (msg: string) => {
@@ -416,6 +508,7 @@ export const EpisodeDetailPanel: React.FC<{
         }
         titleArea={
           <HeroTitle>
+            <RefreshIndicator active={refreshing} className="mr-2 align-middle" />
             <span className="mr-1.5 font-mono text-sky-300">{epCode}</span>
             {episode.title}
             {totalPartCount > 1 && (

@@ -110,6 +110,9 @@ export const TopRibbon: React.FC<TopRibbonProps> = ({
     );
   };
 
+  const queuedScans = scanJobs.filter((j) => j.status === 'queued');
+  const runningScanCount = scanJobs.filter((j) => j.status === 'running').length;
+
   return (
     <header className="bg-[#0e1420] border-b border-slate-800/90 shrink-0 z-30">
       {/* Upper Command Bar: Brand, Live Telemetry, Batch Actions */}
@@ -260,6 +263,22 @@ export const TopRibbon: React.FC<TopRibbonProps> = ({
       {(batchJobs.some((j) => j.status === 'running') ||
         scanJobs.some((j) => j.status === 'running' || j.status === 'queued')) && (
         <div className="px-3 py-1.5 border-t border-slate-800/80 bg-[#0d1525] flex flex-col gap-1.5">
+          {/* Queued work is the part a person cannot otherwise account for: the strip
+              appearing to do nothing is exactly what "not legible" looked like. */}
+          {queuedScans.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2.5 text-[11px]">
+              <span className="px-1.5 py-0.5 rounded bg-slate-700/40 border border-slate-600/50 text-slate-300 font-bold uppercase text-[10px]">
+                Queued
+              </span>
+              <span className="text-slate-300">
+                {queuedScans.length} scan{queuedScans.length === 1 ? '' : 's'} waiting
+                {runningScanCount > 0 ? ' to start' : ''}
+              </span>
+              <span className="text-slate-500 truncate max-w-[260px]">
+                {queuedScans.map((j) => j.sourceName).join(', ')}
+              </span>
+            </div>
+          )}
           {batchJobs
             .filter((j) => j.status === 'running')
             .map((job) => (
@@ -280,6 +299,17 @@ export const TopRibbon: React.FC<TopRibbonProps> = ({
                 <span className="font-mono text-slate-300 shrink-0">
                   {job.processedCount}/{job.totalCount} ({job.overallPercent}%)
                 </span>
+                {/* How the batch is actually going: silence about failures is what
+                    makes a finished job look like it simply stopped. */}
+                {(job.failedCount > 0 || job.skippedCount > 0) && (
+                  <span className="font-mono text-[10px] text-slate-400 shrink-0">
+                    {job.succeededCount} ok
+                    {job.skippedCount > 0 ? `, ${job.skippedCount} skipped` : ''}
+                    {job.failedCount > 0 ? (
+                      <span className="text-rose-300">, {job.failedCount} failed</span>
+                    ) : null}
+                  </span>
+                )}
                 {onCancelJob && (
                   <button
                     type="button"
@@ -295,33 +325,28 @@ export const TopRibbon: React.FC<TopRibbonProps> = ({
             ))}
 
           {scanJobs
-            .filter((j) => j.status === 'running' || j.status === 'queued')
+            .filter((j) => j.status === 'running')
             .map((sj) => (
               <div key={sj.jobId} className="flex flex-wrap items-center gap-2.5 text-[11px]">
-                <span
-                  className={`px-1.5 py-0.5 rounded border font-bold uppercase text-[10px] ${
-                    sj.status === 'queued'
-                      ? 'bg-slate-700/40 border-slate-600/50 text-slate-300'
-                      : 'bg-amber-500/20 border-amber-500/40 text-amber-300'
-                  }`}
-                >
-                  {sj.status === 'queued' ? 'QUEUED' : 'SCAN'}
+                <span className="px-1.5 py-0.5 rounded border font-bold uppercase text-[10px] bg-amber-500/20 border-amber-500/40 text-amber-300">
+                  SCAN
                 </span>
-                <span className="font-semibold text-slate-100">
-                  {sj.status === 'queued' ? `Queued: ${sj.sourceName}` : `Scanning ${sj.sourceName}`}
-                </span>
+                <span className="font-semibold text-slate-100">Scanning {sj.sourceName}</span>
                 {sj.currentItem && (
                   <span className="text-slate-400 truncate max-w-[240px]">{sj.currentItem}</span>
                 )}
                 <div className="flex-1 min-w-[120px] max-w-xs h-1.5 rounded-full bg-slate-800 overflow-hidden">
                   <div
-                    className={`h-full transition-all duration-300 ${
-                      sj.status === 'queued' ? 'bg-slate-500' : 'bg-amber-400'
-                    }`}
+                    className="h-full transition-all duration-300 bg-amber-400"
                     style={{ width: `${Math.max(5, sj.overallPercent)}%` }}
                   />
                 </div>
                 <span className="font-mono text-slate-300 shrink-0">{sj.overallPercent}%</span>
+                {sj.status === 'running' && (
+                  <span className="font-mono text-[10px] text-slate-400 shrink-0">
+                    {sj.moviesScanned + sj.showsScanned} found
+                  </span>
+                )}
               </div>
             ))}
         </div>
