@@ -55,3 +55,18 @@ npm run typecheck
 npm run build
 npm start
 ```
+
+### Network binding
+
+The server listens on **`127.0.0.1` by default**. It can read and write the media
+library, rewrite NFO files, and browse directories, and it has no authentication
+yet — so reaching it from another machine has to be a deliberate choice:
+
+```bash
+HOST=0.0.0.0 npm start        # all interfaces
+HOST=192.168.1.50 npm start   # one interface
+```
+
+A non-loopback bind logs a warning on startup. This is the setting to change when
+moving from "runs and is browsed on the same machine" to "runs on the server,
+browsed from the PC" — add authentication *before* making that move.

@@ -2,6 +2,7 @@ import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createApiApp } from './app.js';
+import { displayHost, exposureWarning, resolveBindHost } from './lib/networkBinding.js';
 import { MediaDatabase } from './db/database.js';
 import { seedSampleLibraryIfEmpty } from './scanner/sampleGenerator.js';
 
@@ -48,8 +49,17 @@ async function startServer() {
     }
   }
 
-  app.listen(port, '0.0.0.0', () => {
-    console.log(`KodiVault running at http://0.0.0.0:${port} (${isProd ? 'production' : 'dev'} mode)`);
+  // Loopback unless HOST says otherwise: this server has no authentication and can
+  // read and write the media library, so network exposure must be a deliberate act.
+  const host = resolveBindHost();
+  const warning = exposureWarning(host);
+  if (warning) console.warn(`[security] ${warning}`);
+
+  app.listen(port, host, () => {
+    console.log(
+      `KodiVault running at http://${displayHost(host)}:${port} (${isProd ? 'production' : 'dev'} mode)`
+    );
+    if (warning) console.log(`[security] Reached from other machines at http://<this-host>:${port}`);
   });
 }
 

@@ -9,6 +9,9 @@ import { useFileOperations } from '../lib/useFileOperations.js';
  * drive spun up. Collapsed it is a single pill showing what is in flight; expanded
  * it lists each operation with its outcome. Failures stay until dismissed and can
  * be retried — previously they were lost when the dialog closed.
+ *
+ * Operations restored from IndexedDB after a reload are marked as resumed so it is
+ * clear the write predates this page load.
  */
 export const FileOperationToast: React.FC = () => {
   const { ops, activeCount, dismiss, retry, clearFinished } = useFileOperations();
@@ -76,6 +79,9 @@ export const FileOperationToast: React.FC = () => {
 
                 <div className="min-w-0 flex-1">
                   <div className="text-[11px] text-slate-200 truncate">{op.label}</div>
+                  {op.restored && (
+                    <div className="text-[10px] text-amber-300/80">Resumed after page reload</div>
+                  )}
                   {op.status === 'queued' && <div className="text-[10px] text-slate-500">Waiting…</div>}
                   {op.detail && <div className="text-[10px] text-slate-500 truncate">{op.detail}</div>}
                   {op.error && (

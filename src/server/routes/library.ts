@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { ArtworkKind, DashboardSummary, MovieRecord } from '../../shared/types.js';
+import { isArtworkKind, type ArtworkKind, type DashboardSummary, type MovieRecord } from '../../shared/types.js';
 import { buildAuditReport } from '../audit/auditEngine.js';
 import { computeMissingEpisodesFromGuide, DEFAULT_PREFERENCES, MediaDatabase } from '../db/database.js';
 import { buildLibraryVocabulary } from '../library/vocabulary.js';
@@ -161,7 +161,11 @@ export function createLibraryRouter(db: MediaDatabase): Router {
 
   router.post('/movies/:id/artwork', async (req, res) => {
     const id = Number(req.params.id);
-    const { kind, url, dataBase64 } = req.body as { kind: ArtworkKind; url?: string; dataBase64?: string };
+    const { kind, url, dataBase64 } = req.body as { kind: unknown; url?: string; dataBase64?: string };
+    // `kind` becomes a filename; anything outside the union could escape the folder.
+    if (!isArtworkKind(kind)) {
+      return res.status(400).json({ error: `Unsupported artwork kind: ${String(kind)}` });
+    }
     const movie = db.getMovie(id);
     if (!movie) return res.status(404).json({ error: 'Movie not found' });
 
@@ -385,7 +389,10 @@ export function createLibraryRouter(db: MediaDatabase): Router {
 
   router.post('/shows/:id/artwork', async (req, res) => {
     const showId = Number(req.params.id);
-    const { kind, url, dataBase64 } = req.body as { kind: ArtworkKind; url?: string; dataBase64?: string };
+    const { kind, url, dataBase64 } = req.body as { kind: unknown; url?: string; dataBase64?: string };
+    if (!isArtworkKind(kind)) {
+      return res.status(400).json({ error: `Unsupported artwork kind: ${String(kind)}` });
+    }
     const show = db.getTvShow(showId);
     if (!show) return res.status(404).json({ error: 'TV Show not found' });
 

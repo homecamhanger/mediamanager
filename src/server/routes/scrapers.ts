@@ -7,15 +7,20 @@ import type {
   ScraperProviderId,
 } from '../../shared/types.js';
 import { DEFAULT_FIELD_MAPPING, DEFAULT_SCRAPER_PROVIDERS, MediaDatabase } from '../db/database.js';
+import { isRedacted, redactSecret } from '../lib/redact.js';
 import { ScraperEngine } from '../scrapers/scraperEngine.js';
 
 export function createScrapersRouter(db: MediaDatabase): Router {
   const router = Router();
   const scraper = new ScraperEngine(db);
 
+  /** Providers with API keys masked; the editor only needs to know one is set. */
+  const publicProviders = (providers: ScraperProviderConfig[]) =>
+    providers.map((p) => ({ ...p, apiKey: redactSecret(p.apiKey) }));
+
   router.get('/config', (_req, res) => {
     res.json({
-      providers: scraper.getProviders(),
+      providers: publicProviders(scraper.getProviders()),
       fieldMapping: scraper.getFieldMapping(),
     });
   });
@@ -25,11 +30,21 @@ export function createScrapersRouter(db: MediaDatabase): Router {
       providers?: ScraperProviderConfig[];
       fieldMapping?: ScraperFieldMapping;
     };
-    if (providers) db.setSetting('scraper_providers', providers);
+    if (providers) {
+      // The client sends the mask back for keys it did not change; keep the stored
+      // value in that case instead of persisting the mask itself.
+      const stored = db.getSetting<ScraperProviderConfig[]>('scraper_providers', DEFAULT_SCRAPER_PROVIDERS);
+      const merged = providers.map((incoming) => {
+        const existing = stored.find((p) => p.id === incoming.id);
+        if (!isRedacted(incoming.apiKey)) return incoming;
+        return { ...incoming, apiKey: existing?.apiKey ?? '' };
+      });
+      db.setSetting('scraper_providers', merged);
+    }
     if (fieldMapping) db.setSetting('scraper_field_mapping', fieldMapping);
     db.logActivity('scrape', 'Update Scraper Config', 'Saved scraper provider settings & field priority profile', 'info');
     res.json({
-      providers: db.getSetting('scraper_providers', DEFAULT_SCRAPER_PROVIDERS),
+      providers: publicProviders(db.getSetting('scraper_providers', DEFAULT_SCRAPER_PROVIDERS)),
       fieldMapping: db.getSetting('scraper_field_mapping', DEFAULT_FIELD_MAPPING),
     });
   });

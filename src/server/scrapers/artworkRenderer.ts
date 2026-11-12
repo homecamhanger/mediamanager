@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { checkFetchTarget } from '../lib/urlSafety.js';
 import { Resvg } from '@resvg/resvg-js';
 import { PNG } from 'pngjs';
 import jpeg from 'jpeg-js';
@@ -262,13 +263,21 @@ export async function saveArtworkToDisk(
 ): Promise<string> {
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
 
-  // Attempt real remote image download if sourceUrl is http(s)
-  if (sourceUrl && /^https?:\/\//i.test(sourceUrl)) {
+  // Attempt a remote image download, but only from an allowlisted host: this URL
+  // arrives from the client, and fetching it unchecked let a request make the
+  // server reach loopback, private, and cloud-metadata addresses.
+  const target = await checkFetchTarget(sourceUrl);
+  if (target.ok) {
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 6000);
-      const res = await fetch(sourceUrl, { signal: ctrl.signal });
+      // `redirect: 'manual'` matters: an allowlisted host could redirect to a
+      // private address, and we are not going to chase it.
+      const res = await fetch(target.url.toString(), { signal: ctrl.signal, redirect: 'manual' });
       clearTimeout(timer);
+      if (res.status >= 300 && res.status < 400) {
+        throw new Error('Refusing to follow a redirect for artwork download');
+      }
       if (res.ok) {
         const buf = Buffer.from(await res.arrayBuffer());
         if (buf.length > 200) {

@@ -15,7 +15,14 @@
  *  - auto-clears successes after a short delay.
  *
  * The logic here is deliberately framework-free so it can be tested directly.
+ *
+ * Persistence: operations now carry a serializable `FileOperationTask` rather
+ * than a closure, so anything still queued is written to IndexedDB and rebuilt
+ * on the next load. Before that, a refresh silently stranded pending writes.
  */
+
+import { FILE_OPS_SCHEMA, readPersistedOperations, writePersistedOperations } from './fileOperationStorage.js';
+import { runFileOperationTask, type FileOperationTask } from './fileOperationTasks.js';
 
 export type FileOperationStatus = 'queued' | 'running' | 'done' | 'error';
 
@@ -30,12 +37,20 @@ export interface FileOperation {
   finishedAt: number | null;
   /** Non-fatal notes, e.g. "updated 4 episodes". */
   detail: string | null;
+  /** True when this operation was restored from a previous page load. */
+  restored?: boolean;
 }
 
 export interface FileOperationInput {
   label: string;
-  /** Performs the write. Rejecting marks the operation failed. */
-  run: () => Promise<string | void>;
+  /** What to write. Serializable, so it survives a refresh. */
+  task: FileOperationTask;
+  /**
+   * Optional in-page follow-up (reload a panel, notify a parent). Runs after the
+   * write succeeds. Deliberately not persisted: after a refresh the panel that
+   * wanted it is gone, and the shared `onUpdated` refresh covers the list.
+   */
+  onApplied?: () => void;
 }
 
 type Listener = (ops: FileOperation[]) => void;
@@ -46,10 +61,14 @@ let nextId = 1;
 
 export class FileOperationQueue {
   private ops: FileOperation[] = [];
-  private pending: Array<{ id: string; run: () => Promise<string | void> }> = [];
+  private pending: string[] = [];
+  private tasks = new Map<string, FileOperationTask>();
+  private hooks = new Map<string, (() => void) | undefined>();
   private running = false;
   private listeners = new Set<Listener>();
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private hydrated = false;
+  private persisting: Promise<void> = Promise.resolve();
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -82,9 +101,11 @@ export class FileOperationQueue {
         detail: null,
       },
     ];
-    this.runners.set(id, input.run);
-    this.pending.push({ id, run: input.run });
+    this.tasks.set(id, input.task);
+    this.hooks.set(id, input.onApplied);
+    this.pending.push(id);
     this.emit();
+    this.persist();
     void this.drain();
     return id;
   }
@@ -92,10 +113,10 @@ export class FileOperationQueue {
   /** Re-run a failed operation. Its label and runner are retried as-is. */
   retry(id: string): void {
     const op = this.ops.find((o) => o.id === id);
-    const run = this.runners.get(id);
-    if (!op || op.status !== 'error' || !run) return;
+    if (!op || op.status !== 'error' || !this.tasks.has(id)) return;
     this.update(id, { status: 'queued', error: null, finishedAt: null });
-    this.pending.push({ id, run });
+    this.pending.push(id);
+    this.persist();
     void this.drain();
   }
 
@@ -103,7 +124,10 @@ export class FileOperationQueue {
     clearTimeout(this.timers.get(id));
     this.timers.delete(id);
     this.ops = this.ops.filter((o) => o.id !== id);
+    this.tasks.delete(id);
+    this.hooks.delete(id);
     this.emit();
+    this.persist();
   }
 
   /** Remove all finished operations (used by "Clear" in the toast). */
@@ -124,42 +148,118 @@ export class FileOperationQueue {
     this.timers.clear();
     this.ops = [];
     this.pending = [];
-    this.runners.clear();
+    this.tasks.clear();
+    this.hooks.clear();
     this.running = false;
     this.emit();
+    this.persist();
   }
-
-  // Runners are kept so `retry` can re-invoke the original closure.
-  private runners = new Map<string, () => Promise<string | void>>();
 
   private async drain(): Promise<void> {
     if (this.running) return;
     this.running = true;
     try {
       while (this.pending.length > 0) {
-        const next = this.pending.shift()!;
+        const id = this.pending.shift()!;
         // A dismissed operation must not run.
-        if (!this.ops.some((o) => o.id === next.id)) continue;
-        this.update(next.id, { status: 'running' });
+        const task = this.tasks.get(id);
+        if (!this.ops.some((o) => o.id === id) || !task) continue;
+        this.update(id, { status: 'running' });
+        this.persist();
         try {
-          const detail = await next.run();
-          this.update(next.id, {
+          const result = await runFileOperationTask(task);
+          this.hooks.get(id)?.();
+          this.update(id, {
             status: 'done',
             finishedAt: Date.now(),
-            detail: typeof detail === 'string' ? detail : null,
+            detail: result?.detail ?? null,
           });
-          this.scheduleAutoClear(next.id);
+          this.scheduleAutoClear(id);
         } catch (err) {
-          this.update(next.id, {
+          this.update(id, {
             status: 'error',
             error: err instanceof Error ? err.message : String(err),
             finishedAt: Date.now(),
           });
         }
+        this.persist();
       }
     } finally {
       this.running = false;
     }
+  }
+
+  /**
+   * Rebuilds queued work saved by a previous page load.
+   *
+   * Restored operations that were `running` when the page went away are re-queued
+   * rather than assumed complete: the request may never have reached the server,
+   * and these writes are idempotent. Safe to call more than once.
+   */
+  async hydrate(): Promise<number> {
+    if (this.hydrated) return 0;
+    this.hydrated = true;
+    const saved = await readPersistedOperations();
+    if (saved.length === 0) return 0;
+
+    let restored = 0;
+    for (const row of saved) {
+      // Never resurrect something already live (e.g. hydrate raced an enqueue).
+      if (this.ops.some((o) => o.id === row.id)) continue;
+      const task = row.task as FileOperationTask;
+      this.tasks.set(row.id, task);
+      // A write that was mid-flight is queued again; a failure stays failed so it
+      // is visible with its retry button instead of silently retrying on every load.
+      const wasError = row.status === 'error';
+      this.ops = [
+        ...this.ops,
+        {
+          id: row.id,
+          label: row.label,
+          status: wasError ? 'error' : 'queued',
+          error: wasError ? row.error : null,
+          queuedAt: row.queuedAt,
+          finishedAt: wasError ? Date.now() : null,
+          detail: null,
+          restored: true,
+        },
+      ];
+      // Keep the numeric suffix ahead of restored ids so new ids never collide.
+      const suffix = Number(row.id.replace(/^op-/, ''));
+      if (Number.isFinite(suffix) && suffix >= nextId) nextId = suffix + 1;
+      restored += 1;
+    }
+
+    if (restored > 0) {
+      // Re-queue in original order; failed rows stay failed until retried.
+      for (const row of saved) {
+        const op = this.ops.find((o) => o.id === row.id);
+        if (op && op.status === 'queued' && !this.pending.includes(row.id)) this.pending.push(row.id);
+      }
+      this.emit();
+      this.persist();
+      void this.drain();
+    }
+    return restored;
+  }
+
+  /** Writes the not-yet-finished operations to IndexedDB. */
+  private persist(): void {
+    const rows = this.ops
+      .filter((o) => o.status === 'queued' || o.status === 'running' || o.status === 'error')
+      .map((o) => ({
+        schema: FILE_OPS_SCHEMA,
+        id: o.id,
+        label: o.label,
+        task: this.tasks.get(o.id)!,
+        status: o.status as 'queued' | 'running' | 'error',
+        error: o.error,
+        queuedAt: o.queuedAt,
+      }))
+      // A task is mandatory; skip anything in an unexpected state.
+      .filter((r) => Boolean(r.task));
+    // Serialize writes so overlapping persists cannot interleave.
+    this.persisting = this.persisting.then(() => writePersistedOperations(rows));
   }
 
   private update(id: string, patch: Partial<FileOperation>): void {

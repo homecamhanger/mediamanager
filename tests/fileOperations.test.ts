@@ -1,5 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FileOperationQueue, fileOperations } from '../src/client/lib/fileOperations.js';
+import { setTaskRunner } from '../src/client/lib/fileOperationTasks.js';
+
+/**
+ * Tests drive effects through the task runner rather than closures, mirroring how
+ * the app builds operations: a serializable task plus a registry entry.
+ */
+type Impl = (task: { kind: string; key?: string }) => Promise<{ detail: string } | void>;
+let impl: Impl = async () => ({ detail: 'ok' });
+
+/** A tiny task whose meaning is defined by the current `impl`. */
+const task = (key: string) => ({ kind: 'movieUpdate', movieId: 1, patch: { key } } as never);
 
 /**
  * A deferrable promise lets tests advance an operation's completion deliberately,
@@ -19,11 +30,21 @@ describe('File operation queue', () => {
   let queue: FileOperationQueue;
 
   beforeEach(() => {
+    impl = async () => ({ detail: 'ok' });
+    setTaskRunner((t) => impl(t as never) as Promise<{ detail: string } | void> as never);
+  });
+
+  afterEach(() => {
+    setTaskRunner(null);
+  });
+
+  beforeEach(() => {
     queue = new FileOperationQueue();
   });
 
   it('runs an operation and records success with its detail', async () => {
-    const id = queue.enqueue({ label: 'Write NFO', run: async () => 'saved' });
+    impl = async () => ({ detail: 'saved' });
+    const id = queue.enqueue({ label: 'Write NFO', task: task('a') });
     await vi.waitFor(() => expect(queue.snapshot()[0].status).toBe('done'));
     const op = queue.snapshot().find((o) => o.id === id)!;
     expect(op.status).toBe('done');
@@ -36,20 +57,18 @@ describe('File operation queue', () => {
     const gate = deferred();
     const order: string[] = [];
 
-    queue.enqueue({
-      label: 'first',
-      run: async () => {
+    impl = async () => {
+      if (order.length === 0) {
         order.push('first-start');
         await gate.promise;
         order.push('first-end');
-      },
-    });
-    queue.enqueue({
-      label: 'second',
-      run: async () => {
+      } else {
         order.push('second-start');
-      },
-    });
+      }
+      return { detail: 'ok' };
+    };
+    queue.enqueue({ label: 'first', task: task('a') });
+    queue.enqueue({ label: 'second', task: task('b') });
 
     // Let the first start; the second must not have begun.
     await vi.waitFor(() => expect(order).toContain('first-start'));
@@ -61,26 +80,22 @@ describe('File operation queue', () => {
   });
 
   it('marks a rejected operation as failed and keeps the message', async () => {
-    queue.enqueue({
-      label: 'Write NFO',
-      run: async () => {
-        throw new Error('EACCES: permission denied');
-      },
-    });
+    impl = async () => {
+      throw new Error('EACCES: permission denied');
+    };
+    queue.enqueue({ label: 'Write NFO', task: task('a') });
     await vi.waitFor(() => expect(queue.snapshot()[0].status).toBe('error'));
     expect(queue.snapshot()[0].error).toBe('EACCES: permission denied');
   });
 
   it('keeps a failure queued for retry and can succeed on the second attempt', async () => {
     let attempts = 0;
-    const id = queue.enqueue({
-      label: 'Write NFO',
-      run: async () => {
-        attempts++;
-        if (attempts === 1) throw new Error('network drive asleep');
-        return 'saved on retry';
-      },
-    });
+    impl = async () => {
+      attempts++;
+      if (attempts === 1) throw new Error('network drive asleep');
+      return { detail: 'saved on retry' };
+    };
+    const id = queue.enqueue({ label: 'Write NFO', task: task('a') });
 
     await vi.waitFor(() => expect(queue.snapshot()[0].status).toBe('error'));
     expect(queue.snapshot()[0].error).toBe('network drive asleep');
@@ -92,7 +107,8 @@ describe('File operation queue', () => {
   });
 
   it('has no effect retrying something that did not fail', async () => {
-    const id = queue.enqueue({ label: 'ok', run: async () => 'done' });
+    impl = async () => ({ detail: 'done' });
+    const id = queue.enqueue({ label: 'ok', task: task('a') });
     await vi.waitFor(() => expect(queue.snapshot()[0].status).toBe('done'));
     queue.retry(id);
     expect(queue.snapshot()[0].status).toBe('done');
@@ -100,8 +116,13 @@ describe('File operation queue', () => {
 
   it('counts queued and running operations as active', async () => {
     const gate = deferred();
-    queue.enqueue({ label: 'a', run: () => gate.promise });
-    queue.enqueue({ label: 'b', run: async () => {} });
+    impl = async () => {
+      await gate.promise;
+      return { detail: 'a' };
+    };
+    queue.enqueue({ label: 'a', task: task('a') });
+    impl = async () => ({ detail: 'b' });
+    queue.enqueue({ label: 'b', task: task('b') });
     expect(queue.activeCount()).toBe(2);
     gate.resolve();
     await vi.waitFor(() => expect(queue.activeCount()).toBe(0));
@@ -110,18 +131,16 @@ describe('File operation queue', () => {
   it('dismisses an operation and prevents a dismissed queued job from running', async () => {
     const gate = deferred();
     const ran: string[] = [];
-    queue.enqueue({
-      label: 'blocker',
-      run: async () => {
-        await gate.promise;
-      },
-    });
-    const queuedId = queue.enqueue({
-      label: 'queued',
-      run: async () => {
-        ran.push('queued');
-      },
-    });
+    impl = async () => {
+      await gate.promise;
+      return { detail: 'blocker' };
+    };
+    queue.enqueue({ label: 'blocker', task: task('a') });
+    impl = async () => {
+      ran.push('queued');
+      return { detail: 'queued' };
+    };
+    const queuedId = queue.enqueue({ label: 'queued', task: task('b') });
 
     queue.dismiss(queuedId);
     gate.resolve();
@@ -133,11 +152,11 @@ describe('File operation queue', () => {
   it('notifies subscribers with immutable snapshots', async () => {
     const seen: number[] = [];
     const unsubscribe = queue.subscribe((ops) => seen.push(ops.length));
-    queue.enqueue({ label: 'one', run: async () => {} });
+    queue.enqueue({ label: 'one', task: task('a') });
     await vi.waitFor(() => expect(seen.length).toBeGreaterThan(1));
     unsubscribe();
     const before = seen.length;
-    queue.enqueue({ label: 'two', run: async () => {} });
+    queue.enqueue({ label: 'two', task: task('b') });
     await new Promise((r) => setTimeout(r, 20));
     expect(seen.length).toBe(before);
   });
@@ -145,7 +164,8 @@ describe('File operation queue', () => {
   it('auto-clears a completed operation', async () => {
     vi.useFakeTimers();
     try {
-      queue.enqueue({ label: 'quick', run: async () => 'ok' });
+      impl = async () => ({ detail: 'ok' });
+      queue.enqueue({ label: 'quick', task: task('a') });
       await vi.waitFor(() => expect(queue.snapshot()[0]?.status).toBe('done'));
       expect(queue.snapshot()).toHaveLength(1);
       vi.advanceTimersByTime(6000);
@@ -158,10 +178,14 @@ describe('File operation queue', () => {
   it('clears only finished operations', async () => {
     // Sequential execution means a pending job cannot fail while an earlier one
     // still runs, so finish the failure first and leave a second one queued.
-    queue.enqueue({ label: 'failed', run: async () => { throw new Error('x'); } });
+    impl = async () => {
+      throw new Error('x');
+    };
+    queue.enqueue({ label: 'failed', task: task('a') });
     await vi.waitFor(() => expect(queue.snapshot().some((o) => o.status === 'error')).toBe(true));
 
-    const id = queue.enqueue({ label: 'done', run: async () => 'ok' });
+    impl = async () => ({ detail: 'ok' });
+    const id = queue.enqueue({ label: 'done', task: task('b') });
     await vi.waitFor(() => expect(queue.snapshot().find((o) => o.id === id)?.status).toBe('done'));
 
     queue.clearFinished();

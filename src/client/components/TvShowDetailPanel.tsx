@@ -246,15 +246,12 @@ export const TvShowDetailPanel: React.FC<{
     setOrderDirty(false);
     fileOperations.enqueue({
       label: `Write NFOs · ${show?.title ?? 'Series'} (${items.length} episodes)`,
-      run: async () => {
-        const res = await api.updateEpisodeOrder(show.id, { mode, items });
-        if (mountedRef.current) {
-          setShow(res.show);
-          setSeasons(res.seasons);
-          setEpisodes(res.episodes);
-        }
+      task: { kind: 'episodeOrder', showId: show.id, mode, items },
+      // The panel may be gone by the time the write lands; `onUpdated` alone still
+      // refreshes the library list from App.
+      onApplied: () => {
+        void load();
         onUpdated();
-        return `Custom ${mode === 'display' ? 'display' : 'episode'} order written to ${res.updatedCount} NFO file(s)`;
       },
     });
   };
@@ -389,11 +386,10 @@ export const TvShowDetailPanel: React.FC<{
     }
     fileOperations.enqueue({
       label: `Artwork · ${show.title} ${kind}`,
-      run: async () => {
-        await api.setShowArtwork(show.id, kind, url, dataBase64);
-        await load();
+      task: { kind: 'showArtwork', showId: show.id, artKind: kind, url, dataBase64 },
+      onApplied: () => {
+        void load();
         onUpdated();
-        return `${kind} saved`;
       },
     });
   };
@@ -411,11 +407,10 @@ export const TvShowDetailPanel: React.FC<{
     }
     fileOperations.enqueue({
       label: `Artwork · ${seasonName} poster`,
-      run: async () => {
-        await api.setSeasonArtwork(seasonId, 'poster', url, dataBase64);
-        await load();
+      task: { kind: 'seasonArtwork', seasonId, artKind: 'poster', url, dataBase64 },
+      onApplied: () => {
+        void load();
         onUpdated();
-        return `${seasonName} poster saved`;
       },
     });
   };

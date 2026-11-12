@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { ArrowDown, ArrowUp, Check, KeyRound, Save, SearchCheck, Sparkles } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { AlertTriangle, ArrowDown, ArrowUp, Check, KeyRound, RotateCw, Save, SearchCheck, Sparkles } from 'lucide-react';
 import type { ScraperFieldMapping, ScraperProviderConfig, ScraperProviderId } from '../../shared/types.js';
 import { api } from '../lib/api.js';
 
@@ -19,13 +19,29 @@ export const ScrapersPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
   const [mapping, setMapping] = useState<ScraperFieldMapping | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  // Without these the page rendered a header over an empty grid on first paint and
+  // stayed that way forever if the fetch failed — indistinguishable from "no
+  // scrapers configured", which is never actually true.
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  useEffect(() => {
-    void api.getScraperConfig().then((res) => {
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const res = await api.getScraperConfig();
       setProviders(res.providers);
       setMapping(res.fieldMapping);
-    });
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Could not load scraper configuration');
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   const updateProvider = (id: ScraperProviderId, patch: Partial<ScraperProviderConfig>) => {
     setProviders((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
@@ -43,11 +59,15 @@ export const ScrapersPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
   const handleSave = async () => {
     if (!mapping) return;
     setSaving(true);
+    setSavedMsg(null);
     try {
       await api.saveScraperConfig(providers, mapping);
       onRefresh();
       setSavedMsg('Scraper profile & API keys saved');
       setTimeout(() => setSavedMsg(null), 2500);
+    } catch (err) {
+      // Previously this rejected unhandled and the click looked like a no-op.
+      setLoadError(err instanceof Error ? err.message : 'Could not save scraper configuration');
     } finally {
       setSaving(false);
     }
@@ -68,7 +88,7 @@ export const ScrapersPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
           {savedMsg && <span className="text-xs text-emerald-300 flex items-center gap-1"><Check className="w-3.5 h-3.5" /> {savedMsg}</span>}
           <button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || loading || Boolean(loadError) || !mapping}
             className="px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
           >
             <Save className="w-4 h-4" />
@@ -77,7 +97,43 @@ export const ScrapersPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
         </div>
       </div>
 
+      {loadError && (
+        <div className="flex flex-wrap items-center gap-3 p-4 rounded-2xl bg-rose-500/10 border border-rose-500/40">
+          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="text-xs font-bold text-rose-200">Could not load scraper configuration</div>
+            <div className="text-[11px] text-rose-300/80 break-words">{loadError}</div>
+          </div>
+          <button
+            onClick={() => void load()}
+            className="px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+          >
+            <RotateCw className="w-3.5 h-3.5" />
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Loading placeholders keep the layout from collapsing to nothing. */}
+      {loading && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4" aria-busy="true">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="p-4 rounded-2xl border border-slate-800 bg-[#111827] space-y-3">
+              <div className="h-3.5 w-40 rounded bg-slate-800 animate-pulse" />
+              <div className="h-3 w-full rounded bg-slate-800/70 animate-pulse" />
+              <div className="h-3 w-2/3 rounded bg-slate-800/70 animate-pulse" />
+              <div className="grid grid-cols-2 gap-2.5 pt-1">
+                <div className="h-7 rounded-lg bg-slate-900 animate-pulse" />
+                <div className="h-7 rounded-lg bg-slate-900 animate-pulse" />
+              </div>
+            </div>
+          ))}
+          <span className="sr-only">Loading scraper sources…</span>
+        </div>
+      )}
+
       {/* Providers Grid */}
+      {!loading && !loadError && (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {providers.map((p) => (
           <div
@@ -115,11 +171,14 @@ export const ScrapersPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
                   <label className="text-[10px] font-semibold uppercase text-slate-400 flex items-center gap-1">
                     <KeyRound className="w-3 h-3" /> API Key / Token
                   </label>
+                  {p.apiKey ? (
+                    <p className="text-[10px] text-emerald-400">A key is saved. Editing this field replaces it.</p>
+                  ) : null}
                   <input
                     type="password"
                     value={p.apiKey}
                     onChange={(e) => updateProvider(p.id, { apiKey: e.target.value })}
-                    placeholder={p.apiKey ? '••••••••' : 'Optional (uses demo catalog if blank)'}
+                    placeholder="Optional (uses demo catalog if blank)"
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200"
                   />
                   <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer">
@@ -151,6 +210,7 @@ export const ScrapersPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
           </div>
         ))}
       </div>
+      )}
 
       {/* Field Precedence Matrix */}
       {mapping && (

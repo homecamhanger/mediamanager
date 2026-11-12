@@ -161,11 +161,10 @@ export const MovieDetailPanel: React.FC<{
     // committed, keep the form in sync, and let the write drain in the queue.
     fileOperations.enqueue({
       label: `Write NFO · ${payload.title || form.title || 'Movie'}`,
-      run: async () => {
-        await api.updateMovie(movie.id, payload);
-        await loadMovie();
+      task: { kind: 'movieUpdate', movieId: movie.id, patch: payload as unknown as Record<string, unknown> },
+      onApplied: () => {
+        void loadMovie();
         onUpdated();
-        return 'Metadata & NFO saved';
       },
     });
   };
@@ -174,12 +173,10 @@ export const MovieDetailPanel: React.FC<{
     // Raw NFO writes are the slowest operation of the lot; queue rather than block.
     fileOperations.enqueue({
       label: `Write NFO · ${movie?.title ?? 'Movie'} (edited XML)`,
-      run: async () => {
-        const res = await api.saveNfo('movie', movie.id, nfoXml);
-        if (mountedRef.current) setNfoVal(res.validation);
-        await loadMovie();
+      task: { kind: 'nfo', mediaType: 'movie', mediaId: movie.id, xml: nfoXml },
+      onApplied: () => {
+        void loadMovie();
         onUpdated();
-        return 'NFO XML validated and written to disk';
       },
     });
   };
@@ -194,11 +191,10 @@ export const MovieDetailPanel: React.FC<{
     }
     fileOperations.enqueue({
       label: `Artwork · ${movie.title} ${kind}`,
-      run: async () => {
-        await api.setMovieArtwork(movie.id, kind, url, dataBase64);
-        await loadMovie();
+      task: { kind: 'movieArtwork', movieId: movie.id, artKind: kind, url, dataBase64 },
+      onApplied: () => {
+        void loadMovie();
         onUpdated();
-        return `${kind} saved`;
       },
     });
   };
