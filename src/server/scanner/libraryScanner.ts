@@ -853,35 +853,33 @@ function sizeOf(filePath: string): { path: string; sizeBytes: number } {
 }
 
 /**
- * Movies: within each release folder, the largest file is the feature and much
- * smaller siblings are extras, samples or trailers.
+ * Movies: a fixed two-level hierarchy, by explicit design.
  *
- * Comparison happens across the whole release folder, not per directory. Extras
- * normally live in a subfolder (`Ant-Man (2015)/Featurettes/Gag Reel.mkv`), so a
- * per-directory comparison would see exactly one file there and keep it.
+ *   <source>/<film folder>/<the film>.mkv
  *
- * Size rather than keywords: the vocabulary of extras is unbounded, so any keyword
- * list is simultaneously incomplete (extras become movies) and over-broad (films
- * whose titles contain a word are dropped). See `selectFolderFeatures`.
+ * For each immediate subdirectory of the source, the largest video *at that level*
+ * is the film. Nothing is collected from deeper subdirectories: `Featurettes/`,
+ * `Extras/`, `Sample/` and friends are where extras live, so recursing into them
+ * would let a large featurette displace the actual film. A directory that is not
+ * the source root is never treated as a film folder itself.
  *
- * TV deliberately does not use this — there, a series folder's extras are flagged
- * to the user rather than silently discarded.
+ * Other videos sitting beside the film are samples and are simply not indexed.
+ * They are not reported as unmatched either — in a movie library that noise would
+ * bury the genuinely unidentifiable files a TV library surfaces.
+ *
+ * Videos directly in the source root follow the same rule within the root.
  */
 function walkMovieVideoFiles(sourceRoot: string): string[] {
   const out: string[] = [];
-  // Files sitting directly in the source root have no release folder to compare
-  // against, so each stands on its own.
-  for (const file of collectVideoFiles(sourceRoot).get(sourceRoot) ?? []) out.push(file);
+
+  const rootFiles = collectVideoFiles(sourceRoot).get(sourceRoot) ?? [];
+  if (rootFiles.length > 0) out.push(...selectFolderFeatures(rootFiles.map(sizeOf)).features);
 
   for (const releaseDir of childDirs(sourceRoot)) {
-    const byDir = collectVideoFiles(releaseDir);
-    const files = [...byDir.values()].flat();
-    if (files.length === 0) continue;
-    if (files.length === 1) {
-      out.push(files[0]);
-      continue;
-    }
-    out.push(...selectFolderFeatures(files.map(sizeOf)).features);
+    // Shallow by design: only videos that are direct children of the film folder.
+    const filmFiles = collectVideoFiles(releaseDir).get(releaseDir) ?? [];
+    if (filmFiles.length === 0) continue;
+    out.push(...selectFolderFeatures(filmFiles.map(sizeOf)).features);
   }
   return out;
 }

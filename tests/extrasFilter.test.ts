@@ -143,6 +143,70 @@ describe('Movie scan by size', () => {
     expect(db.listMovies().map((m) => m.fileName)).toEqual(['Ant-Man (2015).mkv']);
   });
 
+  it('ignores a subfolder even when it holds a larger video', async () => {
+    // The rule is structural, not size-based: Featurettes/ is never a film folder.
+    // A featurette can easily be bigger than a short film's feature, so size alone
+    // must not decide this.
+    const root = tmpDir();
+    const moviesRoot = path.join(root, 'Movies');
+    const film = path.join(moviesRoot, 'Ant-Man (2015)');
+    videoFile(path.join(film, 'Ant-Man (2015).mkv'), 2);
+    videoFile(path.join(film, 'Featurettes', 'Making Of.mkv'), 5); // larger!
+    videoFile(path.join(film, 'Featurettes', 'Gag Reel.mkv'), 1);
+
+    const db = new MediaDatabase(path.join(root, 'test.db'));
+    const source = db.addSource({ name: 'Movies', path: moviesRoot, mediaKind: 'movie' });
+    await new LibraryScanner(db).scanSource(source);
+
+    const movies = db.listMovies();
+    expect(movies).toHaveLength(1);
+    expect(movies[0].fileName).toBe('Ant-Man (2015).mkv');
+    expect(movies[0].title).not.toMatch(/making of|gag reel/i);
+  });
+
+  it('never treats a nested folder as its own film folder', async () => {
+    // A film folder containing only subfolders must not promote a grandchild file.
+    const root = tmpDir();
+    const moviesRoot = path.join(root, 'Movies');
+    videoFile(path.join(moviesRoot, 'Deep (2020)', 'disc1', 'movie.mkv'), 8);
+
+    const db = new MediaDatabase(path.join(root, 'test.db'));
+    const source = db.addSource({ name: 'Movies', path: moviesRoot, mediaKind: 'movie' });
+    await new LibraryScanner(db).scanSource(source);
+
+    // 'Deep (2020)' has no video at its own level, so it contributes nothing.
+    expect(db.listMovies()).toHaveLength(0);
+  });
+
+  it('does not report movie-side samples as unmatched files', async () => {
+    // Samples beside a film are expected; flagging them would bury real problems.
+    const root = tmpDir();
+    const moviesRoot = path.join(root, 'Movies');
+    const film = path.join(moviesRoot, 'Dune (2021)');
+    videoFile(path.join(film, 'Dune.mkv'), 9);
+    videoFile(path.join(film, 'Dune.sample.mkv'), 0.1);
+
+    const db = new MediaDatabase(path.join(root, 'test.db'));
+    const source = db.addSource({ name: 'Movies', path: moviesRoot, mediaKind: 'movie' });
+    await new LibraryScanner(db).scanSource(source);
+
+    expect(db.listMovies()).toHaveLength(1);
+    expect(db.listUnmatchedVideoFiles()).toHaveLength(0);
+  });
+
+  it('indexes the largest video directly in the source root', async () => {
+    const root = tmpDir();
+    const moviesRoot = path.join(root, 'Movies');
+    videoFile(path.join(moviesRoot, 'Film (2020).mkv'), 7);
+    videoFile(path.join(moviesRoot, 'Film (2020).sample.mkv'), 0.05);
+
+    const db = new MediaDatabase(path.join(root, 'test.db'));
+    const source = db.addSource({ name: 'Movies', path: moviesRoot, mediaKind: 'movie' });
+    await new LibraryScanner(db).scanSource(source);
+
+    expect(db.listMovies().map((m) => m.fileName)).toEqual(['Film (2020).mkv']);
+  });
+
   it('handles flat layouts across folders independently', async () => {
     const root = tmpDir();
     const moviesRoot = path.join(root, 'Movies');
