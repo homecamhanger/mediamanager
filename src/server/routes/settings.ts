@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AppPreferences, KodiRpcConfig } from '../../shared/types.js';
 import { DEFAULT_KODI_RPC, DEFAULT_PREFERENCES, MediaDatabase } from '../db/database.js';
+import { isPathInsideAnyRoot } from '../lib/pathSafety.js';
+import { mergeSecretUpdate, redactFields } from '../lib/redact.js';
 import { KodiClient } from '../kodi/kodiClient.js';
 import { LibraryScanner } from '../scanner/libraryScanner.js';
 import { ScanJobManager } from '../scanner/scanJobManager.js';
@@ -107,9 +109,39 @@ export function createSettingsRouter(db: MediaDatabase, sharedScanJobs?: ScanJob
     res.json(result);
   });
 
+  /**
+   * Directories the folder browser may show.
+   *
+   * It exists to help pick a media folder, but it accepted any absolute path and
+   * would enumerate the whole host (`?path=/`), which is a filesystem disclosure
+   * for anyone who can reach the port. Allowed roots are the configured media
+   * sources, the sample library, and whatever `BROWSE_ROOTS` adds — a comma
+   * separated list for the "I need to see /mnt before I've added a source" case.
+   */
+  const browseRoots = (): string[] => {
+    const fromEnv = (process.env.BROWSE_ROOTS ?? '')
+      .split(',')
+      .map((p) => p.trim())
+      .filter(Boolean);
+    const sources = db.listSources().map((s) => s.path);
+    const sampleDir = path.resolve(process.cwd(), 'sample-library');
+    return [...new Set([...fromEnv, ...sources, sampleDir, os.homedir()].map((p) => path.resolve(p)))];
+  };
+
   router.get('/fs/browse', (req, res) => {
-    const target = req.query.path ? path.resolve(String(req.query.path)) : process.cwd();
-    const safeTarget = fs.existsSync(target) ? target : os.homedir();
+    const roots = browseRoots();
+    const requested = req.query.path ? path.resolve(String(req.query.path)) : roots[0] ?? os.homedir();
+
+    // Refuse anything outside the allowed roots rather than silently redirecting:
+    // a redirect would make a traversal attempt look like a successful browse.
+    if (!isPathInsideAnyRoot(requested, roots)) {
+      return res.status(403).json({
+        error: 'Path is outside the browsable roots',
+        browsableRoots: roots,
+      });
+    }
+
+    const safeTarget = fs.existsSync(requested) ? requested : os.homedir();
     try {
       const entries = fs
         .readdirSync(safeTarget, { withFileTypes: true })
@@ -137,7 +169,8 @@ export function createSettingsRouter(db: MediaDatabase, sharedScanJobs?: ScanJob
   });
 
   router.get('/kodi', (_req, res) => {
-    res.json(kodi.getConfig());
+    // The Kodi RPC password is a credential; never echo it back.
+    res.json(redactFields(kodi.getConfig(), ['password'] as const));
   });
 
   router.put('/kodi', (req, res) => {
@@ -150,9 +183,10 @@ export function createSettingsRouter(db: MediaDatabase, sharedScanJobs?: ScanJob
           }))
           .filter((m) => m.localPrefix && m.kodiPrefix)
       : kodi.getConfig().pathMappings;
-    const next = { ...DEFAULT_KODI_RPC, ...body, pathMappings };
+    const stored = { ...DEFAULT_KODI_RPC, ...kodi.getConfig() };
+    const next = mergeSecretUpdate({ ...body, pathMappings }, stored, ['password'] as const);
     db.setSetting('kodi_rpc', next);
-    res.json(next);
+    res.json(redactFields(next, ['password'] as const));
   });
 
   router.post('/kodi/test', async (_req, res) => {

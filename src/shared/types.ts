@@ -59,6 +59,28 @@ export type ArtworkKind =
   | 'landscape'
   | 'thumb';
 
+/**
+ * Runtime counterpart of `ArtworkKind`.
+ *
+ * Artwork kinds are interpolated into filenames on disk, so a request-supplied
+ * `kind` has to be checked against this list rather than trusted. Keeping it here
+ * means the union and the accepted values cannot drift apart.
+ */
+export const ARTWORK_KINDS: readonly ArtworkKind[] = [
+  'poster',
+  'fanart',
+  'banner',
+  'clearlogo',
+  'clearart',
+  'disc',
+  'landscape',
+  'thumb',
+];
+
+export function isArtworkKind(value: unknown): value is ArtworkKind {
+  return typeof value === 'string' && (ARTWORK_KINDS as readonly string[]).includes(value);
+}
+
 export interface ArtworkFileInfo {
   kind: ArtworkKind;
   path: string | null;

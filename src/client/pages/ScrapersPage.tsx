@@ -171,11 +171,14 @@ export const ScrapersPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh })
                   <label className="text-[10px] font-semibold uppercase text-slate-400 flex items-center gap-1">
                     <KeyRound className="w-3 h-3" /> API Key / Token
                   </label>
+                  {p.apiKey ? (
+                    <p className="text-[10px] text-emerald-400">A key is saved. Editing this field replaces it.</p>
+                  ) : null}
                   <input
                     type="password"
                     value={p.apiKey}
                     onChange={(e) => updateProvider(p.id, { apiKey: e.target.value })}
-                    placeholder={p.apiKey ? '••••••••' : 'Optional (uses demo catalog if blank)'}
+                    placeholder="Optional (uses demo catalog if blank)"
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200"
                   />
                   <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer">

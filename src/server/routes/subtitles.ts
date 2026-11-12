@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { mergeSecretUpdate, redactFields } from '../lib/redact.js';
 import type { SubtitleSearchResult } from '../../shared/types.js';
 import { DEFAULT_PREFERENCES, DEFAULT_SUBTITLE_CONFIG, MediaDatabase, SubtitleConfig } from '../db/database.js';
 import { SubtitleEngine } from '../subtitles/subtitleEngine.js';
@@ -30,14 +31,20 @@ export function createSubtitlesRouter(db: MediaDatabase): Router {
     res.json({ subtitles: enriched });
   });
 
+  // Credentials are masked on read: the editor only needs to know one is set.
+  const SECRET_FIELDS = ['openSubtitlesApiKey', 'openSubtitlesPassword', 'subdlApiKey'] as const;
+
   router.get('/config', (_req, res) => {
-    res.json(engine.getConfig());
+    res.json(redactFields(engine.getConfig(), SECRET_FIELDS));
   });
 
   router.put('/config', (req, res) => {
-    const next = { ...DEFAULT_SUBTITLE_CONFIG, ...(req.body as Partial<SubtitleConfig>) };
+    const stored = db.getSetting<SubtitleConfig>('subtitle_config', DEFAULT_SUBTITLE_CONFIG);
+    // A mask echoed back means "unchanged"; storing it literally would break
+    // subtitle search while looking like a successful save.
+    const next = mergeSecretUpdate(req.body as Partial<SubtitleConfig>, stored, SECRET_FIELDS);
     db.setSetting('subtitle_config', next);
-    res.json(next);
+    res.json(redactFields(next, SECRET_FIELDS));
   });
 
   router.post('/search', async (req, res) => {

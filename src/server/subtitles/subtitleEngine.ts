@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { checkFetchTarget } from '../lib/urlSafety.js';
 import path from 'node:path';
 import type { SubtitleFileRecord, SubtitleSearchResult } from '../../shared/types.js';
 import { DEFAULT_SUBTITLE_CONFIG, MediaDatabase, SubtitleConfig } from '../db/database.js';
@@ -324,11 +325,17 @@ export class SubtitleEngine {
         }
       }
     } else if (params.candidate.dataOrigin === 'live-api' && params.candidate.downloadUrl) {
-      try {
-        const r = await fetch(params.candidate.downloadUrl);
-        if (r.ok) srtContent = await r.text();
-      } catch {
-        // ignore
+      // `downloadUrl` comes from the request body, so it is client-controlled.
+      // Only an allowlisted host is fetched, and redirects are not followed.
+      const target = await checkFetchTarget(params.candidate.downloadUrl);
+      if (target.ok) {
+        try {
+          const r = await fetch(target.url.toString(), { redirect: 'manual' });
+          if (r.status >= 300 && r.status < 400) throw new Error('refusing redirect');
+          if (r.ok) srtContent = await r.text();
+        } catch {
+          // ignore
+        }
       }
     }
 
