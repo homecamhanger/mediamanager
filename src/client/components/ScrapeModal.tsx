@@ -103,15 +103,11 @@ export const ScrapeModal: React.FC<ScrapeModalProps> = ({
     onClose();
     fileOperations.enqueue({
       label: `Scrape · ${applied.title}${applied.year ? ` (${applied.year})` : ''}`,
-      run: async () => {
-        if (mediaKind === 'movie') {
-          await api.applyMovieBundle(mediaId, applied, artwork);
-        } else {
-          await api.applyShowBundle(mediaId, applied);
-        }
-        onApplied();
-        return 'Metadata, artwork & NFO saved';
-      },
+      task:
+        mediaKind === 'movie'
+          ? { kind: 'movieBundle', movieId: mediaId, bundle: applied, artwork }
+          : { kind: 'showBundle', showId: mediaId, bundle: applied },
+      onApplied,
     });
   };
 

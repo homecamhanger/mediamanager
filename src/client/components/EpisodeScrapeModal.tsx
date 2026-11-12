@@ -17,7 +17,8 @@ interface Props {
   show: TvShowRecord;
   episode: TvEpisodeRecord;
   onClose: () => void;
-  onApplied: (updated: TvEpisodeRecord) => void;
+  /** Called after the queued write lands; the parent refreshes the library. */
+  onApplied?: () => void;
 }
 
 export const EpisodeScrapeModal: React.FC<Props> = ({ open, show, episode, onClose, onApplied }) => {
@@ -138,11 +139,10 @@ export const EpisodeScrapeModal: React.FC<Props> = ({ open, show, episode, onClo
     const code = `S${String(seasonNumber).padStart(2, '0')}E${String(episodeNumber).padStart(2, '0')}`;
     fileOperations.enqueue({
       label: `Write NFO · ${episode.showTitle || 'Episode'} ${code}`,
-      run: async () => {
-        const res = await api.applyEpisodeScrape(episode.id, payload);
-        onApplied(res.episode);
-        return 'Episode metadata & NFO saved';
-      },
+      task: { kind: 'episodeScrape', episodeId: episode.id, payload },
+      // The write may land long after this panel closed (or after a refresh), so
+      // only a no-arg refresh signal is forwarded.
+      onApplied,
     });
   };
 

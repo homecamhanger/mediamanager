@@ -14,6 +14,8 @@ import { SetDetailPanel } from './components/SetDetailPanel.js';
 import { PlaylistsPage } from './pages/PlaylistsPage.js';
 import { TopRibbon } from './components/TopRibbon.js';
 import { FileOperationToast } from './components/FileOperationToast.js';
+import { fileOperations } from './lib/fileOperations.js';
+import { registerFileOperationRunner } from './lib/fileOperationRunner.js';
 import { TvShowDetailPanel } from './components/TvShowDetailPanel.js';
 import { api } from './lib/api.js';
 import {
@@ -28,9 +30,25 @@ import { RenamerPage } from './pages/RenamerPage.js';
 import { ScrapersPage } from './pages/ScrapersPage.js';
 import { SettingsPage } from './pages/SettingsPage.js';
 
+const ACTIVE_TOOL_KEY = 'kodivault.activeTool';
+
+const RIBBON_TOOLS: readonly RibbonTool[] = ['overview', 'renamer', 'playlists', 'audit', 'scrapers', 'settings'];
+
+/** Best-effort read of the last visited tool; unknown values are ignored. */
+function readStoredTool(): RibbonTool | null {
+  try {
+    const raw = window.localStorage.getItem(ACTIVE_TOOL_KEY);
+    return RIBBON_TOOLS.includes(raw as RibbonTool) ? (raw as RibbonTool) : null;
+  } catch {
+    return null;
+  }
+}
+
 export const App: React.FC = () => {
   const [leftTab, setLeftTab] = useState<LeftLibraryTab>('movies');
-  const [activeTool, setActiveTool] = useState<RibbonTool | null>(null);
+  // Restored from the last visit so a refresh keeps you on the page you were on
+  // instead of dropping back to the library view.
+  const [activeTool, setActiveToolState] = useState<RibbonTool | null>(() => readStoredTool());
   const [selected, setSelected] = useState<SelectedMedia>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [actorFilter, setActorFilter] = useState<string | null>(null);
@@ -56,6 +74,16 @@ export const App: React.FC = () => {
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const prevRunningIdsRef = useRef<Set<string>>(new Set());
+
+  const setActiveTool = useCallback((tool: RibbonTool | null) => {
+    setActiveToolState(tool);
+    try {
+      if (tool) window.localStorage.setItem(ACTIVE_TOOL_KEY, tool);
+      else window.localStorage.removeItem(ACTIVE_TOOL_KEY);
+    } catch {
+      // Private-mode or quota failures must not break navigation.
+    }
+  }, []);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -111,6 +139,13 @@ export const App: React.FC = () => {
 
   // Fast first paint: hydrate the last snapshot, then revalidate in the background.
   // The cached data renders immediately; `refreshAll` replaces it moments later.
+  // Queued writes survive a refresh: make the runner available, then rebuild
+  // anything the previous page left unfinished. Both are safe to run once.
+  useEffect(() => {
+    registerFileOperationRunner();
+    void fileOperations.hydrate();
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void bootstrapCache.read().then((snap) => {
