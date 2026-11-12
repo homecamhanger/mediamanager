@@ -863,17 +863,22 @@ function sizeOf(filePath: string): { path: string; sizeBytes: number } {
  * would let a large featurette displace the actual film. A directory that is not
  * the source root is never treated as a film folder itself.
  *
- * Other videos sitting beside the film are samples and are simply not indexed.
- * They are not reported as unmatched either — in a movie library that noise would
- * bury the genuinely unidentifiable files a TV library surfaces.
+ * Inside a film folder, other videos beside the film are samples: not indexed, and
+ * not reported as unmatched either — in a movie library that noise would bury the
+ * genuinely unidentifiable files a TV library surfaces.
  *
- * Videos directly in the source root follow the same rule within the root.
+ * The source root is the one exception to the size rule: every video directly in it
+ * is taken as a film, so a single dumped file is picked up without needing its own
+ * folder. Featurettes are not expected at that level.
  */
 function walkMovieVideoFiles(sourceRoot: string): string[] {
   const out: string[] = [];
 
-  const rootFiles = collectVideoFiles(sourceRoot).get(sourceRoot) ?? [];
-  if (rootFiles.length > 0) out.push(...selectFolderFeatures(rootFiles.map(sizeOf)).features);
+  // The source root is exempt from the size rule: dropping a video file straight
+  // into the library root is a deliberate way to add one film, so every video at
+  // that level counts. Featurettes are expected to live in film folders, never
+  // here, which is what makes this safe.
+  out.push(...(collectVideoFiles(sourceRoot).get(sourceRoot) ?? []));
 
   for (const releaseDir of childDirs(sourceRoot)) {
     // Shallow by design: only videos that are direct children of the film folder.

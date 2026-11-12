@@ -194,17 +194,34 @@ describe('Movie scan by size', () => {
     expect(db.listUnmatchedVideoFiles()).toHaveLength(0);
   });
 
-  it('indexes the largest video directly in the source root', async () => {
+  it('indexes every video directly in the source root, regardless of size', async () => {
+    // Dropping a single file into the library root is a deliberate way to add a
+    // film, so the size rule does not apply there.
     const root = tmpDir();
     const moviesRoot = path.join(root, 'Movies');
     videoFile(path.join(moviesRoot, 'Film (2020).mkv'), 7);
-    videoFile(path.join(moviesRoot, 'Film (2020).sample.mkv'), 0.05);
+    videoFile(path.join(moviesRoot, 'Another Film (2021).mkv'), 3);
 
     const db = new MediaDatabase(path.join(root, 'test.db'));
     const source = db.addSource({ name: 'Movies', path: moviesRoot, mediaKind: 'movie' });
     await new LibraryScanner(db).scanSource(source);
 
-    expect(db.listMovies().map((m) => m.fileName)).toEqual(['Film (2020).mkv']);
+    expect(db.listMovies().map((m) => m.fileName).sort()).toEqual([
+      'Another Film (2021).mkv',
+      'Film (2020).mkv',
+    ]);
+  });
+
+  it('indexes a lone dumped file even when it is tiny', async () => {
+    const root = tmpDir();
+    const moviesRoot = path.join(root, 'Movies');
+    videoFile(path.join(moviesRoot, 'Short Film (1999).mkv'), 0.05);
+
+    const db = new MediaDatabase(path.join(root, 'test.db'));
+    const source = db.addSource({ name: 'Movies', path: moviesRoot, mediaKind: 'movie' });
+    await new LibraryScanner(db).scanSource(source);
+
+    expect(db.listMovies().map((m) => m.fileName)).toEqual(['Short Film (1999).mkv']);
   });
 
   it('handles flat layouts across folders independently', async () => {
