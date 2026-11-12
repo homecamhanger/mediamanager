@@ -18,7 +18,12 @@ import {
 } from '../nfo/kodiNfo.js';
 import { computeOpenSubtitlesHash } from '../subtitles/openSubtitlesHash.js';
 import { isSubtitleFile, parseSubtitleContent, parseSubtitleFilename } from '../subtitles/subtitleTools.js';
-import { extractTitleAndYear, isSampleOrExtraFile, isVideoFile, parseMediaFilename } from './filenameParser.js';
+import {
+  extractTitleAndYear,
+  isVideoFile,
+  parseMediaFilename,
+  selectFolderFeatures,
+} from './filenameParser.js';
 import { classifyShowVideos, type UnmatchedFile } from './episodePlacement.js';
 import { probeMediaFile } from './mediaProbe.js';
 
@@ -134,7 +139,7 @@ export class LibraryScanner {
     });
     if (onProgress) await yieldToEventLoop();
 
-    const videoFiles = walkVideoFiles(source.path);
+    const videoFiles = walkMovieVideoFiles(source.path);
     const total = videoFiles.length;
     onProgress?.({
       overallPercent: 20,
@@ -392,7 +397,7 @@ export class LibraryScanner {
 
     for (const showDirEntry of entries) {
       const showFolder = path.join(source.path, showDirEntry.name);
-      const walked = walkVideoFiles(showFolder, { keepSampleAndExtras: true }).map((filePath) => {
+      const walked = walkAllVideoFiles(showFolder).map((filePath) => {
         const parsed = parseMediaFilename(filePath, 'tvshow');
         return {
           filePath,
@@ -802,30 +807,89 @@ export class LibraryScanner {
   }
 }
 
-function walkVideoFiles(
-  dir: string,
-  opts: { keepSampleAndExtras?: boolean; root?: string } = {}
-): string[] {
-  const out: string[] = [];
+/** Video files collected under a directory, keyed by the directory that holds them. */
+function collectVideoFiles(dir: string, out = new Map<string, string[]>()): Map<string, string[]> {
   if (!fs.existsSync(dir)) return out;
-  // The scan root bounds the extras-directory walk, so a source that genuinely
-  // lives under a folder called "Extras" is not filtered wholesale.
-  const root = opts.root ?? dir;
   const items = fs.readdirSync(dir, { withFileTypes: true });
   for (const item of items) {
     if (item.name.startsWith('.')) continue;
     const full = path.join(dir, item.name);
     if (item.isDirectory()) {
       if (['extrafanart', 'extrathumbs', '.actors', 'subs', 'subtitles'].includes(item.name.toLowerCase())) continue;
-      out.push(...walkVideoFiles(full, { ...opts, root }));
+      collectVideoFiles(full, out);
     } else if (item.isFile() && isVideoFile(full)) {
-      // Movies drop sample/trailer/featurette files outright so they are never
-      // scraped as films. TV keeps them, because a series folder's extras are
-      // exactly what we want to *flag* rather than silently ignore.
-      if (!opts.keepSampleAndExtras && isSampleOrExtraFile(full, opts.root)) continue;
-      out.push(full);
+      const list = out.get(dir) ?? [];
+      list.push(full);
+      out.set(dir, list);
     }
   }
+  return out;
+}
+
+/** Direct child directories of `dir` (ignores sidecar folders), or [] if unreadable. */
+function childDirs(dir: string): string[] {
+  try {
+    return fs
+      .readdirSync(dir, { withFileTypes: true })
+      .filter(
+        (d) =>
+          d.isDirectory() &&
+          !d.name.startsWith('.') &&
+          !['extrafanart', 'extrathumbs', '.actors', 'subs', 'subtitles'].includes(d.name.toLowerCase())
+      )
+      .map((d) => path.join(dir, d.name));
+  } catch {
+    return [];
+  }
+}
+
+function sizeOf(filePath: string): { path: string; sizeBytes: number } {
+  try {
+    return { path: filePath, sizeBytes: fs.statSync(filePath).size };
+  } catch {
+    // Unreadable entry: no size signal, so it must never be treated as an extra.
+    return { path: filePath, sizeBytes: 0 };
+  }
+}
+
+/**
+ * Movies: within each release folder, the largest file is the feature and much
+ * smaller siblings are extras, samples or trailers.
+ *
+ * Comparison happens across the whole release folder, not per directory. Extras
+ * normally live in a subfolder (`Ant-Man (2015)/Featurettes/Gag Reel.mkv`), so a
+ * per-directory comparison would see exactly one file there and keep it.
+ *
+ * Size rather than keywords: the vocabulary of extras is unbounded, so any keyword
+ * list is simultaneously incomplete (extras become movies) and over-broad (films
+ * whose titles contain a word are dropped). See `selectFolderFeatures`.
+ *
+ * TV deliberately does not use this — there, a series folder's extras are flagged
+ * to the user rather than silently discarded.
+ */
+function walkMovieVideoFiles(sourceRoot: string): string[] {
+  const out: string[] = [];
+  // Files sitting directly in the source root have no release folder to compare
+  // against, so each stands on its own.
+  for (const file of collectVideoFiles(sourceRoot).get(sourceRoot) ?? []) out.push(file);
+
+  for (const releaseDir of childDirs(sourceRoot)) {
+    const byDir = collectVideoFiles(releaseDir);
+    const files = [...byDir.values()].flat();
+    if (files.length === 0) continue;
+    if (files.length === 1) {
+      out.push(files[0]);
+      continue;
+    }
+    out.push(...selectFolderFeatures(files.map(sizeOf)).features);
+  }
+  return out;
+}
+
+/** TV: every video is collected, because extras are reported rather than dropped. */
+function walkAllVideoFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const files of collectVideoFiles(dir).values()) out.push(...files);
   return out;
 }
 

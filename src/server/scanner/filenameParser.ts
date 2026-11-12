@@ -21,87 +21,63 @@ export function isVideoFile(filePath: string): boolean {
 }
 
 /**
- * Directories whose entire contents are extras.
+ * Picks the feature film among the videos in one folder.
  *
- * `Featurettes/` was not in this list — the walker skipped it by *name* only for a
- * handful of sidecar directories — so `Movies/Ant-Man (2015)/Featurettes/Gag
- * Reel.mkv` was walked like any other video and became its own movie.
+ * Keyword matching was the wrong tool here. The vocabulary of extras is unbounded
+ * ("Gag Reel", "Funny Bits", "The Making Of…", a language whose idiom you did not
+ * anticipate), so every list is both incomplete — letting extras become movies —
+ * and over-broad — silently deleting films whose titles happen to contain a word
+ * like "interview".
+ *
+ * File size is a far better signal and needs no vocabulary: in a folder holding one
+ * film and its extras, the film is overwhelmingly the largest file. Extras, samples
+ * and trailers are short, so they lose by a wide margin.
+ *
+ * Two properties matter for this to be safe:
+ *
+ *  - It only ever *demotes* extras that sit beside a much larger file. A folder with
+ *    a single video keeps it regardless of size, so a source pointed straight at
+ *    `Movie.mkv` still scans.
+ *  - The threshold is deliberately far apart (1.5×). A deliberately split film
+ *    (`cd1`/`cd2` at roughly equal size) must keep both parts rather than treating
+ *    the smaller half as an extra.
  */
-const EXTRA_DIR_NAMES = new Set([
-  'extras',
-  'featurettes',
-  'featurette',
-  'deleted scenes',
-  'deleted-scenes',
-  'behind the scenes',
-  'behind-the-scenes',
-  'interviews',
-  'trailers',
-  'samples',
-  'shorts',
-  'bonus',
-  'bonus features',
-  'special features',
-  'making of',
-]);
 
-/** True when any directory between `root` and the file is an extras folder. */
-export function isInsideExtraDirectory(filePath: string, root?: string): boolean {
-  const stop = root ? path.resolve(root) : null;
-  let dir = path.dirname(path.resolve(filePath));
-  for (;;) {
-    const name = path.basename(dir).toLowerCase();
-    if (EXTRA_DIR_NAMES.has(name) || EXTRA_DIR_NAMES.has(name.replace(/[._]/g, ' '))) return true;
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    if (stop && dir === stop) break;
-    dir = parent;
-  }
-  return false;
+/** A trailing video is kept as a feature when it is at least this share of the folder's largest. */
+export const FEATURE_SIZE_RATIO = 0.66;
+
+export interface FolderVideoGroup {
+  /** Videos believed to be features (usually exactly one). */
+  features: string[];
+  /** Videos demoted because a sibling is far larger. */
+  extras: string[];
 }
 
 /**
- * Heuristic: is this file a sample/trailer/extra rather than a feature?
+ * Selects the feature(s) in a folder from `(path, sizeBytes)` pairs.
  *
- * Used only to filter *movie* candidates. Two failure modes matter and they pull
- * in opposite directions:
- *
- *  - Missing extras (`Gag Reel`), so they become bogus movies. The keyword list
- *    now covers the common disc-extras vocabulary, and intermediates like `Gag
- *    Reel`, `Deleted Scenes`, `Behind the Scenes` are allowed to match across a
- *    separator.
- *  - Dropping real films (`The Interview (2014)`, `Trailer Park Boys`) because
- *    their title contains a keyword. A trailing `(year)` or a title that merely
- *    *contains* the keyword is treated as a genuine title, not an extra.
- *
- * TV does not use this: a series folder's extras are flagged to the user instead
- * of being silently dropped.
+ * Pure so the decision is testable without touching the filesystem.
  */
-export function isSampleOrExtraFile(filePath: string, root?: string): boolean {
-  // A file inside a Featurettes/Extras folder is an extra regardless of its name.
-  // Checked first: `Gag Reel.mkv` has no keyword of its own, which is exactly how
-  // it used to end up as a movie.
-  if (isInsideExtraDirectory(filePath, root)) return true;
+export function selectFolderFeatures(files: Array<{ path: string; sizeBytes: number }>): FolderVideoGroup {
+  if (files.length === 0) return { features: [], extras: [] };
+  if (files.length === 1) return { features: files.map((f) => f.path), extras: [] };
 
-  const base = path.basename(filePath, path.extname(filePath)).toLowerCase();
+  const largest = Math.max(...files.map((f) => f.sizeBytes));
+  // An empty or unreadable set gives no size signal; keep everything rather than
+  // guessing, because dropping a film is the unrecoverable mistake.
+  if (!Number.isFinite(largest) || largest <= 0) return { features: files.map((f) => f.path), extras: [] };
 
-  // A release year is a strong signal of a real film title. It rescues
-  // "The Interview (2014)" and "Trailer.Park.Boys.2006.1080p" — extras almost
-  // never carry one. Both the parenthesised and scene-separated styles are
-  // accepted, and the year must stand alone so "Blade Runner 2049" and trailing
-  // resolution tags do not read as one.
-  if (/(^|[-._ (])(19|20)\d{2}([-._ )]|$)/.test(base)) return false;
-
-  // Two-word extras names that legitimately contain a separator.
-  if (/(^|[-._ ])(gag ?reel|deleted ?scenes?|behind ?the ?scenes|making ?of|bloopers?)($|[-._ ])/.test(base)) {
-    return true;
+  const threshold = largest * FEATURE_SIZE_RATIO;
+  const features: string[] = [];
+  const extras: string[] = [];
+  for (const file of files) {
+    if (file.sizeBytes >= threshold) features.push(file.path);
+    else extras.push(file.path);
   }
-
-  if (/(^|[-._ ])(sample|trailer|featurette|behindthescenes|deleted|extras?|interviews?)($|[-._ ])/.test(base)) {
-    return true;
-  }
-
-  return false;
+  // Never demote everything: if rounding or odd sizes left the feature out, the
+  // largest file is still the best candidate.
+  if (features.length === 0) features.push(files.reduce((a, b) => (b.sizeBytes > a.sizeBytes ? b : a)).path);
+  return { features, extras };
 }
 
 export function parseMediaFilename(filePath: string, hintKind?: 'movie' | 'tvshow'): ParsedFilenameInfo {

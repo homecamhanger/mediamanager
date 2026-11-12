@@ -4,148 +4,207 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MediaDatabase } from '../src/server/db/database.js';
 import { LibraryScanner } from '../src/server/scanner/libraryScanner.js';
-import { isInsideExtraDirectory, isSampleOrExtraFile } from '../src/server/scanner/filenameParser.js';
+import { FEATURE_SIZE_RATIO, selectFolderFeatures } from '../src/server/scanner/filenameParser.js';
 
 /**
- * Movie scanning must separate "a feature" from "an extra that lives in the film's
- * folder". Both directions of that judgement matter:
+ * Feature-vs-extra selection by file size.
  *
- *  - Missing an extra creates a bogus movie (`Gag Reel` became one).
- *  - Over-matching deletes a real film from the library, silently (`The Interview`).
+ * Keyword matching was removed deliberately: the vocabulary of extras is unbounded,
+ * so every list was both incomplete (extras became bogus movies) and over-broad
+ * (films with "interview" in the title were silently deleted). Size needs no
+ * vocabulary.
+ *
+ * The risk this trades for is dropping a real film, so most of these tests are
+ * about *not* demoting things.
  */
 const tmpDirs: string[] = [];
 
 function tmpDir(): string {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'extras-')));
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'sizematch-')));
   tmpDirs.push(dir);
   return dir;
 }
 
-function video(p: string) {
+/** Writes a file of approximately `mb` megabytes. Sparse, so it costs nothing. */
+function videoFile(p: string, mb: number) {
   fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, 'not-a-real-video');
+  const fd = fs.openSync(p, 'w');
+  fs.ftruncateSync(fd, Math.max(1, Math.round(mb * 1024 * 1024)));
+  fs.closeSync(fd);
 }
 
 afterEach(() => {
   for (const d of tmpDirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
 
-describe('isInsideExtraDirectory', () => {
-  it('detects the reported path', () => {
-    expect(
-      isInsideExtraDirectory('/m/Movies/Ant-Man (2015)/Featurettes/Gag Reel.mkv', '/m/Movies')
-    ).toBe(true);
-  });
-
-  it('detects common extras folder spellings', () => {
-    for (const dir of ['Extras', 'Featurettes', 'Deleted Scenes', 'Behind The Scenes', 'Trailers', 'Bonus', 'Shorts', 'Interviews']) {
-      expect(isInsideExtraDirectory(`/m/Movies/Film (2020)/${dir}/x.mkv`, '/m/Movies'), dir).toBe(true);
-    }
-  });
-
-  it('is case-insensitive and tolerant of separators', () => {
-    expect(isInsideExtraDirectory('/m/Movies/F/featurettes/a.mkv', '/m/Movies')).toBe(true);
-    expect(isInsideExtraDirectory('/m/Movies/F/behind.the.scenes/a.mkv', '/m/Movies')).toBe(true);
-  });
-
-  it('finds a nested extras folder, not just the immediate parent', () => {
-    expect(isInsideExtraDirectory('/m/Movies/F/Featurettes/Sub/Gag.mkv', '/m/Movies')).toBe(true);
-  });
-
-  it('does not flag a normal film folder', () => {
-    expect(isInsideExtraDirectory('/m/Movies/Ant-Man (2015)/Ant-Man.mkv', '/m/Movies')).toBe(false);
-  });
-
-  it('stops at the scan root, so a source living under "Extras" still scans', () => {
-    // The root itself is inside a folder called Extras; everything under it is not
-    // an extra just because of where the source was configured.
-    expect(isInsideExtraDirectory('/srv/Extras/Movies/Film (2020)/Film.mkv', '/srv/Extras/Movies')).toBe(false);
-  });
-});
-
-describe('isSampleOrExtraFile', () => {
-  it('flags the reported gag reel by name as well as by folder', () => {
-    expect(isSampleOrExtraFile('/m/Movies/Ant-Man (2015)/Featurettes/Gag Reel.mkv')).toBe(true);
-    expect(isSampleOrExtraFile('/m/Movies/Ant-Man (2015)/Gag Reel.mkv')).toBe(true);
-  });
-
-  it('flags the usual extras vocabulary', () => {
-    for (const n of ['sample', 'Sample.mkv', 'Trailer.mkv', 'Featurette.mkv', 'Deleted Scenes.mkv', 'Behind the Scenes.mkv', 'Bloopers.mkv', 'Making of.mkv', 'Interviews.mkv']) {
-      expect(isSampleOrExtraFile(`/m/Movies/Film/${n}`), n).toBe(true);
-    }
-  });
-
-  it('does not drop real films whose titles contain a keyword', () => {
-    // These were being silently discarded from the library before.
-    for (const n of [
-      'The Interview (2014).mkv',
-      'Interview (2014).mkv',
-      'Trailer Park Boys (2006).mkv',
-      'The Extras (2019).mkv',
-    ]) {
-      expect(isSampleOrExtraFile(`/m/Movies/Folder/${n}`), n).toBe(false);
-    }
-  });
-
-  it('keeps a year-bearing file as a film, but an extras folder still wins', () => {
-    // A deliberate trade: a yearless extras name is the common shape, and treating
-    // a year as evidence of a real title rescues whole films. The folder check
-    // still catches "Featurettes/Gag Reel 2015.mkv".
-    expect(isSampleOrExtraFile('/m/Movies/Film (2019)/Trailer 2020.mkv')).toBe(false);
-    expect(isSampleOrExtraFile('/m/Movies/Film (2019)/Featurettes/Gag Reel 2015.mkv', '/m/Movies')).toBe(true);
-    // "2049" is a title, not a year tag, but it must not be swallowed either way.
-    expect(isSampleOrExtraFile('/m/Movies/Blade Runner 2049/Blade Runner 2049.mkv')).toBe(false);
-  });
-
-  it('leaves ordinary films alone', () => {
-    for (const n of ['Ant-Man.2015.1080p.BluRay.x264.mkv', 'Serenity.mkv', 'Samples Of My Life (2021).mkv']) {
-      expect(isSampleOrExtraFile(`/m/Movies/F/${n}`), n).toBe(false);
-    }
-  });
-});
-
-describe('Movie scan', () => {
-  it('does not index a featurette as its own movie', async () => {
-    const root = tmpDir();
-    const moviesRoot = path.join(root, 'Movies');
-    const filmDir = path.join(moviesRoot, 'Ant-Man (2015)');
-    video(path.join(filmDir, 'Ant-Man (2015).mkv'));
-    video(path.join(filmDir, 'Featurettes', 'Gag Reel.mkv'));
-    video(path.join(filmDir, 'Featurettes', 'Deleted Scenes.mkv'));
-    video(path.join(filmDir, 'sample.mkv'));
-
-    const db = new MediaDatabase(path.join(root, 'test.db'));
-    const source = db.addSource({ name: 'Movies', path: moviesRoot, mediaKind: 'movie' });
-    await new LibraryScanner(db).scanSource(source);
-
-    const movies = db.listMovies();
-    expect(movies).toHaveLength(1);
-    expect(movies[0].fileName).toBe('Ant-Man (2015).mkv');
-  });
-
-  it('still indexes a real film whose title contains an extras keyword', async () => {
-    const root = tmpDir();
-    const moviesRoot = path.join(root, 'Movies');
-    video(path.join(moviesRoot, 'The Interview (2014)', 'The Interview (2014).mkv'));
-    video(path.join(moviesRoot, 'Trailer Park Boys (2006)', 'Trailer.Park.Boys.2006.mkv'));
-
-    const db = new MediaDatabase(path.join(root, 'test.db'));
-    const source = db.addSource({ name: 'Movies', path: moviesRoot, mediaKind: 'movie' });
-    await new LibraryScanner(db).scanSource(source);
-
-    expect(db.listMovies().map((m) => m.fileName).sort()).toEqual([
-      'The Interview (2014).mkv',
-      'Trailer.Park.Boys.2006.mkv',
+describe('selectFolderFeatures', () => {
+  it('picks the largest file and demotes much smaller siblings', () => {
+    const result = selectFolderFeatures([
+      { path: '/m/Film (2015)/Film.mkv', sizeBytes: 8_000_000_000 },
+      { path: '/m/Film (2015)/Gag Reel.mkv', sizeBytes: 120_000_000 },
+      { path: '/m/Film (2015)/Deleted Scenes.mkv', sizeBytes: 300_000_000 },
     ]);
+    expect(result.features).toEqual(['/m/Film (2015)/Film.mkv']);
+    expect(result.extras).toHaveLength(2);
   });
 
-  it('keeps TV extras flagged rather than indexed or dropped', async () => {
-    // The movie rule must not leak into TV: there, extras are surfaced to the user.
+  it('demotes extras regardless of what they are called', () => {
+    // The point of the change: no vocabulary required.
+    const names = ['Gag Reel.mkv', 'Funny Bits.mkv', 'Bloopers 2020.mkv', 'An Odd Extra Name.mkv'];
+    const result = selectFolderFeatures([
+      { path: '/m/F/Film.mkv', sizeBytes: 5_000_000_000 },
+      ...names.map((n) => ({ path: `/m/F/${n}`, sizeBytes: 90_000_000 })),
+    ]);
+    expect(result.features).toEqual(['/m/F/Film.mkv']);
+    expect(result.extras).toHaveLength(names.length);
+  });
+
+  it('keeps a film whose title contains a former keyword', () => {
+    // "The Interview" used to be silently dropped by keyword matching.
+    const result = selectFolderFeatures([
+      { path: '/m/The Interview (2014)/The Interview (2014).mkv', sizeBytes: 6_000_000_000 },
+      { path: '/m/The Interview (2014)/trailer.mkv', sizeBytes: 60_000_000 },
+    ]);
+    expect(result.features).toEqual(['/m/The Interview (2014)/The Interview (2014).mkv']);
+  });
+
+  it('keeps a single file whatever its size', () => {
+    // A source pointed straight at one file must still scan, even a tiny one.
+    const result = selectFolderFeatures([{ path: '/m/Film.mkv', sizeBytes: 1_000 }]);
+    expect(result.features).toEqual(['/m/Film.mkv']);
+    expect(result.extras).toEqual([]);
+  });
+
+  it('keeps both halves of a split film of similar size', () => {
+    // Demoting "cd2" here would lose half the movie.
+    const result = selectFolderFeatures([
+      { path: '/m/F/cd1.mkv', sizeBytes: 4_000_000_000 },
+      { path: '/m/F/cd2.mkv', sizeBytes: 3_900_000_000 },
+    ]);
+    expect(result.features).toHaveLength(2);
+    expect(result.extras).toEqual([]);
+  });
+
+  it('keeps a slightly smaller companion, such as a different cut', () => {
+    const result = selectFolderFeatures([
+      { path: '/m/F/Theatrical.mkv', sizeBytes: 7_000_000_000 },
+      { path: '/m/F/Extended.mkv', sizeBytes: 6_500_000_000 },
+    ]);
+    expect(result.features).toHaveLength(2);
+  });
+
+  it('treats exactly the threshold as a feature', () => {
+    const largest = 6_000_000_000;
+    const result = selectFolderFeatures([
+      { path: '/m/F/big.mkv', sizeBytes: largest },
+      { path: '/m/F/edge.mkv', sizeBytes: Math.round(largest * FEATURE_SIZE_RATIO) },
+    ]);
+    expect(result.features).toContain('/m/F/edge.mkv');
+  });
+
+  it('keeps everything when sizes are unavailable', () => {
+    // A stat failure must not be read as "small file, therefore an extra".
+    const result = selectFolderFeatures([
+      { path: '/m/F/a.mkv', sizeBytes: 0 },
+      { path: '/m/F/b.mkv', sizeBytes: 0 },
+    ]);
+    expect(result.features).toHaveLength(2);
+    expect(result.extras).toEqual([]);
+  });
+
+  it('never demotes every file', () => {
+    const result = selectFolderFeatures([
+      { path: '/m/F/a.mkv', sizeBytes: 5 },
+      { path: '/m/F/b.mkv', sizeBytes: 1 },
+    ]);
+    expect(result.features).toHaveLength(1);
+    expect(result.features[0]).toBe('/m/F/a.mkv');
+  });
+
+  it('handles an empty folder', () => {
+    expect(selectFolderFeatures([])).toEqual({ features: [], extras: [] });
+  });
+});
+
+describe('Movie scan by size', () => {
+  it('indexes only the feature in a folder with extras — the reported bug', async () => {
+    const root = tmpDir();
+    const moviesRoot = path.join(root, 'Movies');
+    const film = path.join(moviesRoot, 'Ant-Man (2015)');
+    videoFile(path.join(film, 'Ant-Man (2015).mkv'), 8);
+    videoFile(path.join(film, 'Featurettes', 'Gag Reel.mkv'), 0.2);
+    videoFile(path.join(film, 'Featurettes', 'An Unhelpfully Named Clip.mkv'), 0.1);
+    videoFile(path.join(film, 'sample.mkv'), 0.05);
+
+    const db = new MediaDatabase(path.join(root, 'test.db'));
+    const source = db.addSource({ name: 'Movies', path: moviesRoot, mediaKind: 'movie' });
+    await new LibraryScanner(db).scanSource(source);
+
+    expect(db.listMovies().map((m) => m.fileName)).toEqual(['Ant-Man (2015).mkv']);
+  });
+
+  it('handles flat layouts across folders independently', async () => {
+    const root = tmpDir();
+    const moviesRoot = path.join(root, 'Movies');
+    videoFile(path.join(moviesRoot, 'Dune (2021)', 'Dune.mkv'), 10);
+    videoFile(path.join(moviesRoot, 'Dune (2021)', 'trailer.mkv'), 0.1);
+    // A second folder with only a small file must still be indexed.
+    videoFile(path.join(moviesRoot, 'Tiny Film (1999)', 'Tiny.mkv'), 0.3);
+
+    const db = new MediaDatabase(path.join(root, 'test.db'));
+    const source = db.addSource({ name: 'Movies', path: moviesRoot, mediaKind: 'movie' });
+    await new LibraryScanner(db).scanSource(source);
+
+    expect(db.listMovies().map((m) => m.fileName).sort()).toEqual(['Dune.mkv', 'Tiny.mkv']);
+  });
+
+  it('keeps a real film whose title contains a former keyword', async () => {
+    const root = tmpDir();
+    const moviesRoot = path.join(root, 'Movies');
+    videoFile(path.join(moviesRoot, 'The Interview (2014)', 'The Interview (2014).mkv'), 6);
+    videoFile(path.join(moviesRoot, 'Trailer Park Boys (2006)', 'Trailer.Park.Boys.2006.mkv'), 5);
+
+    const db = new MediaDatabase(path.join(root, 'test.db'));
+    const source = db.addSource({ name: 'Movies', path: moviesRoot, mediaKind: 'movie' });
+    await new LibraryScanner(db).scanSource(source);
+
+    expect(db.listMovies()).toHaveLength(2);
+  });
+
+  it('removes leftover bogus records on rescan', async () => {
+    // Existing libraries still hold featurettes indexed by the old keyword logic.
+    const root = tmpDir();
+    const moviesRoot = path.join(root, 'Movies');
+    const film = path.join(moviesRoot, 'Ant-Man (2015)');
+    videoFile(path.join(film, 'Ant-Man (2015).mkv'), 8);
+    const extra = path.join(film, 'Featurettes', 'Gag Reel.mkv');
+    videoFile(extra, 0.2);
+
+    const db = new MediaDatabase(path.join(root, 'test.db'));
+    const source = db.addSource({ name: 'Movies', path: moviesRoot, mediaKind: 'movie' });
+    await new LibraryScanner(db).scanSource(source);
+    expect(db.listMovies()).toHaveLength(1);
+
+    // Simulate a record left behind by the pre-fix scanner.
+    db.upsertMovie({
+      ...db.listMovies()[0],
+      filePath: extra,
+      fileName: 'Gag Reel.mkv',
+      folderPath: path.dirname(extra),
+    });
+    expect(db.listMovies()).toHaveLength(2);
+
+    await new LibraryScanner(db).scanSource(source);
+    expect(db.listMovies().map((m) => m.fileName)).toEqual(['Ant-Man (2015).mkv']);
+  });
+
+  it('leaves TV alone: extras are flagged, not dropped', async () => {
     const root = tmpDir();
     const tvRoot = path.join(root, 'TV');
-    const show = path.join(tvRoot, 'Ant-Man (2015)');
-    video(path.join(show, 'Season 1', 'Ant-Man - S01E01 - Pilot.mkv'));
-    video(path.join(show, 'Featurettes', 'Gag Reel.mkv'));
+    const show = path.join(tvRoot, 'Firefly (2002)');
+    videoFile(path.join(show, 'Season 1', 'Firefly - S01E01 - Serenity.mkv'), 4);
+    // Far smaller than the episode — the movie rule would discard it.
+    videoFile(path.join(show, 'Featurettes', 'Gag Reel.mkv'), 0.1);
 
     const db = new MediaDatabase(path.join(root, 'test.db'));
     const source = db.addSource({ name: 'TV', path: tvRoot, mediaKind: 'tvshow' });
@@ -153,7 +212,25 @@ describe('Movie scan', () => {
 
     const showRecord = db.listTvShows()[0];
     expect(db.listEpisodesForShow(showRecord.id)).toHaveLength(1);
-    // The extra is reported as unmatched rather than vanishing.
     expect(db.listUnmatchedVideoFiles().map((f) => f.fileName)).toContain('Gag Reel.mkv');
+  });
+});
+
+describe('Real sample library', () => {
+  it('finds every film and no extras', async () => {
+    // Guards the most common real layout: one video per release folder, with
+    // artwork and subtitles as siblings. Size selection must not disturb it.
+    const source = path.resolve(process.cwd(), 'sample-library', 'Movies');
+    if (!fs.existsSync(source)) return; // sample library not generated in this checkout
+
+    const root = tmpDir();
+    const db = new MediaDatabase(path.join(root, 'test.db'));
+    const src = db.addSource({ name: 'Movies', path: source, mediaKind: 'movie' });
+    await new LibraryScanner(db).scanSource(src);
+
+    const movies = db.listMovies();
+    expect(movies).toHaveLength(11);
+    // Each folder's single video is the feature.
+    for (const m of movies) expect(m.title).not.toMatch(/gag reel|sample|trailer/i);
   });
 });
