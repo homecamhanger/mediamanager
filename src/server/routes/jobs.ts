@@ -49,8 +49,12 @@ export function createJobsRouter(batchJobs: BatchJobManager, scanJobs?: ScanJobM
       ? (req.body.movieIds as unknown[]).filter((id): id is number => typeof id === 'number')
       : [];
 
+    const kinds = Array.isArray(req.body?.kinds)
+      ? (req.body.kinds as unknown[]).filter((k): k is string => typeof k === 'string')
+      : undefined;
+
     if (mode === 'all') {
-      movieIds = batchJobs.problemMovieIds();
+      movieIds = batchJobs.problemMovieIds(kinds as never);
     }
     if (movieIds.length === 0) {
       return res.status(400).json({ error: 'No films to rescan' });

@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import type {
   ActorEntry,
+  MediaSource,
   ArtworkKind,
   NfoValidationReport,
   TvEpisodeRecord,
@@ -42,6 +43,7 @@ import { ChipInput } from './ChipInput.js';
 import { EpisodeScrapeModal } from './EpisodeScrapeModal.js';
 import { FileDropZone } from './FileDropZone.js';
 import { FormField as Field } from './FormField.js';
+import { PathText } from './PathText.js';
 import { PosterImage } from './PosterImage.js';
 import { TechBadges } from './QualityBadges.js';
 import { SubtitleEditorModal, SubtitleSearchModal } from './SubtitleSearchModal.js';
@@ -65,6 +67,8 @@ function resolveEpisodeTab(tab?: EpisodeTab | InspectorFocusTab): EpisodeTab {
 export const EpisodeDetailPanel: React.FC<{
   showId: number;
   episodeId: number;
+  /** Source roots, so paths can be shortened from the left for display. */
+  sources?: MediaSource[];
   /**
    * What the list already knows about this episode. Painted immediately so clicking
    * an episode shows *that* episode, not the one selected before it.
@@ -76,7 +80,7 @@ export const EpisodeDetailPanel: React.FC<{
   onSelectShow: (showId: number, seasonNumber?: number | null) => void;
   onUpdated: () => void;
   onDeleted?: () => void;
-}> = ({ showId, episodeId, seed, initialTab, activeActor, onSelectActor, onSelectShow, onUpdated, onDeleted }) => {
+}> = ({ showId, episodeId, sources = [], seed, initialTab, activeActor, onSelectActor, onSelectShow, onUpdated, onDeleted }) => {
   const [show, setShow] = useState<TvShowRecord | null>(seed?.show ?? null);
   const [seasons, setSeasons] = useState<TvSeasonRecord[]>([]);
   const [episode, setEpisode] = useState<TvEpisodeRecord | null>(seed?.episode ?? null);
@@ -1027,7 +1031,9 @@ export const EpisodeDetailPanel: React.FC<{
             <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
               <div className="font-semibold text-slate-200">File &amp; Hash Details</div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-slate-400">
-                <div>Video File: <code className="text-slate-200 break-all">{episode.filePath}</code></div>
+                <div>
+                  Video File: <PathText as="code" path={episode.filePath} sources={sources} className="break-all" />
+                </div>
                 <div>File Size: <span className="text-slate-200">{formatBytes(episode.fileSizeBytes)}</span></div>
                 <div>OpenSubtitles Hash: <code className="text-sky-300">{episode.movieHash}</code></div>
                 <div>NFO Status: <span className="text-slate-200">{episode.hasNfo ? 'Present' : 'Missing'}</span></div>

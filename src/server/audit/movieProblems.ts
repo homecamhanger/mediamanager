@@ -6,16 +6,21 @@
  * the Audit page appears here, and vice versa. Re-implementing the rules a third time
  * is how a "fix everything flagged" button quietly misses things.
  *
- * Two very different kinds of problem live here, and the UI keeps them apart:
+ * Two very different kinds of problem live here:
  *
  *  - **Disk-side** problems — missing artwork, an NFO that is absent or invalid, a
  *    film that cannot own its folder. These are fixed by re-reading the file from
  *    disk, and that is what the rescan does.
- *  - **Metadata** problems — never scraped. A disk rescan cannot invent a plot; those
- *    need a re-scrape, which is offered as its own action.
+ *  - **Metadata** problems — never scraped. A disk rescan cannot invent a plot.
  *
- * Counting them together would make a rescan look broken when it legitimately leaves
- * an unscraped film unscraped.
+ * Only the disk-side kinds are actionable here. Scraping has its own home in the
+ * audit's Unscraped section, and duplicating that action on a "problems" panel made
+ * two buttons do the same job from different places. `needsScrape` is still reported
+ * because it is genuinely useful context — it explains why a film stays incomplete
+ * after a rescan — but nothing here acts on it.
+ *
+ * Callers may also narrow the set by kind, so the UI can offer per-type checkboxes
+ * rather than all-or-nothing.
  */
 
 import path from 'node:path';
@@ -54,8 +59,17 @@ export function buildMovieProblemReport(
     folderReport?: FolderProposalReport;
     /** Injecting the audit keeps this testable without a full database. */
     audit?: LibraryAuditReport;
+    /**
+     * Restrict the report to these kinds. Omitted means all of them.
+     *
+     * Filtering is applied to the collected problems rather than to the audit pass, so
+     * a narrowed report still costs the same to build — it is the *films returned* that
+     * narrow, which is what a rescan selection needs.
+     */
+    kinds?: MovieProblemKind[];
   } = {},
 ): MovieProblemReport {
+  const kindFilter = opts.kinds && opts.kinds.length > 0 ? new Set(opts.kinds) : null;
   const audit = opts.audit ?? buildAuditReport(db);
   const movies = db.listMovies();
   const byId = new Map<number, MovieProblem>();
@@ -104,6 +118,12 @@ export function buildMovieProblemReport(
   }
 
   const result = [...byId.values()]
+    .map((entry) => {
+      const problems = kindFilter ? entry.problems.filter((k) => kindFilter.has(k)) : entry.problems;
+      return { ...entry, problems };
+    })
+    // A film whose only problems were filtered out is not part of this report.
+    .filter((entry) => entry.problems.length > 0)
     .map((entry) => ({
       ...entry,
       rescanCanFix: entry.problems.some((k) => RESCAN_FIXABLE.has(k)),

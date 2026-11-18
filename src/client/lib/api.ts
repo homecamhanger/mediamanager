@@ -21,6 +21,7 @@ import type {
   RenamePatternsConfig,
   RenamePreviewItem,
   MovieProblemReport,
+  AuditJob,
   FolderProposalReport,
   ScrapedEpisodePart,
   ScrapedMetadataBundle,
@@ -93,6 +94,11 @@ export const api = {
   // Dashboard & Audit
   getDashboard: () => req<DashboardSummary>('/api/dashboard'),
   getAudit: () => req<LibraryAuditReport>('/api/audit'),
+  /** Starts an audit job and returns its initial state; poll `getAuditJob`. */
+  runAudit: () => req<{ job: AuditJob }>('/api/audit/run', { method: 'POST', body: '{}' }),
+  getAuditJob: (jobId: string) => req<{ job: AuditJob }>(`/api/audit/job/${jobId}`),
+  /** The most recent audit job, so a reload can reattach to one in flight. */
+  getLatestAuditJob: () => req<{ job: AuditJob | null }>('/api/audit/latest'),
   /** Films with problems, split into rescan-fixable and needs-a-scrape. */
   getMovieProblems: () => req<MovieProblemReport>('/api/movies/problems'),
   /** Bulk re-read of flagged films. `mode: 'all'` derives the list server-side. */
@@ -385,7 +391,13 @@ export const api = {
   listScanJobs: () => req<{ jobs: SourceScanJob[] }>('/api/settings/sources/jobs'),
   deleteSource: (id: number) => req<{ ok: boolean }>(`/api/settings/sources/${id}`, { method: 'DELETE' }),
   scanSources: (sourceId?: number, asyncScan = false) =>
-    req<{ moviesScanned?: number; showsScanned?: number; episodesScanned?: number; job?: SourceScanJob }>('/api/settings/sources/scan', {
+    req<{
+      moviesScanned?: number;
+      showsScanned?: number;
+      episodesScanned?: number;
+      job?: SourceScanJob;
+      jobs?: SourceScanJob[];
+    }>('/api/settings/sources/scan', {
       method: 'POST',
       body: JSON.stringify(sourceId ? { sourceId, asyncScan } : {}),
     }),

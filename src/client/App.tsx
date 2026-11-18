@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
+  MediaSource,
   BatchJob,
   DashboardSummary,
   MovieListEntry,
@@ -71,6 +72,7 @@ export const App: React.FC = () => {
 
   const [scanning, setScanning] = useState(false);
   const [backgroundScanning, setBackgroundScanning] = useState(false);
+  const [sources, setSources] = useState<MediaSource[]>([]);
   const [batchJobs, setBatchJobs] = useState<BatchJob[]>([]);
   const [scanJobs, setScanJobs] = useState<SourceScanJob[]>([]);
   const [busyAction, setBusyAction] = useState<string | null>(null);
@@ -96,13 +98,16 @@ export const App: React.FC = () => {
     // The audit is deliberately absent: it walks every movie, show, episode and
     // subtitle row, and nothing on the startup screen needs it. The badge uses
     // /counts, and the Audit page fetches its own report when opened.
-    const [d, m, stTree, st, counts, jobsRes] = await Promise.all([
+    const [d, m, stTree, st, counts, jobsRes, srcs] = await Promise.all([
       api.getDashboard(),
       api.listMovieEntries(),
       api.getShowsTree(),
       api.listSets(),
       api.getLibraryCounts().catch(() => null),
       api.listJobs().catch(() => ({ jobs: [] as BatchJob[], scanJobs: [] as SourceScanJob[] })),
+      // Source roots let every path in the UI be shortened to `../<below root>`
+      // rather than clipped from the right, which hides the filename.
+      api.listSources().catch(() => ({ sources: [] as MediaSource[] })),
     ]);
     // The cached detail payloads are revalidated on open, but dropping them here
     // keeps a scan or a metadata edit from ever being masked by a stale paint.
@@ -114,6 +119,7 @@ export const App: React.FC = () => {
     if (counts) setIssueCounts(counts.counts);
     setBatchJobs(jobsRes.jobs);
     setScanJobs(jobsRes.scanJobs);
+    setSources(srcs.sources);
     setBackgroundScanning(
       jobsRes.scanJobs.some((j) => j.status === 'running' || j.status === 'queued') ||
         jobsRes.jobs.some((j) => j.status === 'running')
@@ -229,12 +235,25 @@ export const App: React.FC = () => {
     return () => clearInterval(id);
   }, [batchJobs, scanJobs, refreshAll]);
 
+  /**
+   * Scans every source as background jobs.
+   *
+   * The synchronous version left the button reading "Scanning..." for the whole run
+   * with nothing else to go on. The jobs report per-source percent and current file in
+   * the ribbon strip, and completion arrives through the existing poll.
+   */
   const handleScanAll = async () => {
     setScanning(true);
     try {
-      const res = await api.scanSources();
-      await refreshAll();
-      showToast(`Scanned ${res.moviesScanned} movies, ${res.showsScanned} shows (${res.episodesScanned} episodes)`);
+      const res = await api.scanSources(undefined, true);
+      if (res.jobs?.length) {
+        setScanJobs((prev) => [...res.jobs!, ...prev.filter((j) => !res.jobs!.some((n) => n.jobId === j.jobId))]);
+        showToast(`Scanning ${res.jobs.length} source${res.jobs.length === 1 ? '' : 's'} — progress in the status strip`);
+      } else {
+        showToast('No sources to scan');
+      }
+    } catch (err) {
+      showToast((err as Error).message);
     } finally {
       setScanning(false);
     }
@@ -461,10 +480,11 @@ export const App: React.FC = () => {
                   onOpenLibraryTab={handleLeftTabChange}
                 />
               )}
-              {activeTool === 'renamer' && <RenamerPage onRefresh={refreshAll} />}
+              {activeTool === 'renamer' && <RenamerPage onRefresh={refreshAll} sources={sources} />}
               {activeTool === 'playlists' && <PlaylistsPage onRefresh={refreshAll} />}
               {activeTool === 'audit' && (
                 <AuditPage
+                  sources={sources}
                   onRefresh={refreshAll}
                   onOpenMovie={(movieId, focusTab) => handleSelectMedia({ kind: 'movie', movieId, focusTab })}
                   onOpenShow={(showId, focusTab) =>
@@ -482,6 +502,7 @@ export const App: React.FC = () => {
             </div>
           ) : selected?.kind === 'movie' ? (
             <MovieDetailPanel
+              sources={sources}
               movieId={selected.movieId}
               seed={selectedMovieEntry ? seedMovieFromList(selectedMovieEntry) : null}
               initialTab={selected.focusTab}
@@ -496,6 +517,7 @@ export const App: React.FC = () => {
             />
           ) : selected?.kind === 'show' ? (
             <TvShowDetailPanel
+              sources={sources}
               showId={selected.showId}
               seed={selectedShowNode ? seedShowFromTree(selectedShowNode) : null}
               selectedSeason={selected.seasonNumber ?? null}
@@ -512,6 +534,7 @@ export const App: React.FC = () => {
             />
           ) : selected?.kind === 'episode' ? (
             <EpisodeDetailPanel
+              sources={sources}
               showId={selected.showId}
               episodeId={selected.episodeId}
               seed={

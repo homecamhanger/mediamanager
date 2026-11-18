@@ -92,6 +92,14 @@ export function createSettingsRouter(db: MediaDatabase, sharedScanJobs?: ScanJob
     res.json({ ok: true });
   });
 
+  /**
+   * Scans one source, or every source.
+   *
+   * `asyncScan` enqueues real scan jobs and returns immediately. That is the path the
+   * UI uses: a whole-library scan is minutes of disk work, and a synchronous request
+   * that reports nothing until it finishes is the definition of looking hung. The
+   * synchronous form stays for scripts and tests that want a single answer.
+   */
   router.post('/sources/scan', async (req, res) => {
     const sourceId = req.body?.sourceId ? Number(req.body.sourceId) : null;
     const asyncScan = Boolean(req.body?.asyncScan);
@@ -104,6 +112,12 @@ export function createSettingsRouter(db: MediaDatabase, sharedScanJobs?: ScanJob
       }
       const result = await scanner.scanSource(src);
       return res.json(result);
+    }
+    if (asyncScan) {
+      // One job per source so each gets its own bar and its own counts.
+      const sources = db.listSources();
+      const jobs = sources.map((src) => startAsyncScan(src));
+      return res.json({ jobs });
     }
     const result = await scanner.scanAllSources();
     res.json(result);

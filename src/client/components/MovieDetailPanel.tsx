@@ -19,7 +19,7 @@ import {
   Tv,
   Users,
 } from 'lucide-react';
-import type { ActorEntry, ArtworkKind, MovieRecord, NfoValidationReport } from '../../shared/types.js';
+import type { ActorEntry, ArtworkKind, MediaSource, MovieRecord, NfoValidationReport } from '../../shared/types.js';
 import { api, formatBytes, getArtworkUrl } from '../lib/api.js';
 import { detailCache, movieKey } from '../lib/detailCache.js';
 import { fileOperations } from '../lib/fileOperations.js';
@@ -33,6 +33,7 @@ import { ChipInput } from './ChipInput.js';
 import { FileDropZone } from './FileDropZone.js';
 import { FormField as Field } from './FormField.js';
 import { PosterImage } from './PosterImage.js';
+import { PathText } from './PathText.js';
 import { TechBadges } from './QualityBadges.js';
 import { RatingBadges } from './RatingBadges.js';
 import { ScrapeModal } from './ScrapeModal.js';
@@ -58,6 +59,8 @@ function resolveMovieTab(tab?: DetailTab | InspectorFocusTab): DetailTab {
 
 export const MovieDetailPanel: React.FC<{
   movieId: number;
+  /** Source roots, so paths can be shortened from the left for display. */
+  sources?: MediaSource[];
   /** List-derived record so the panel paints immediately instead of showing the previous item. */
   seed?: MovieRecord | null;
   initialTab?: DetailTab | InspectorFocusTab;
@@ -66,7 +69,7 @@ export const MovieDetailPanel: React.FC<{
   onUpdated: () => void;
   onDeleted?: () => void;
   onClose?: () => void;
-}> = ({ movieId, seed, initialTab, activeActor, onSelectActor, onUpdated, onDeleted, onClose }) => {
+}> = ({ movieId, sources = [], seed, initialTab, activeActor, onSelectActor, onUpdated, onDeleted, onClose }) => {
   const [movie, setMovie] = useState<MovieRecord | null>(seed ?? null);
   // Distinguishes "not loaded yet" from "loaded and empty", and drives the
   // "updating" affordance so a cached paint is visibly being revalidated.
@@ -680,8 +683,12 @@ export const MovieDetailPanel: React.FC<{
             <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
               <div className="font-semibold text-slate-200">File Location & Identifiers</div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-slate-400">
-                <div>Video File: <code className="text-slate-200 break-all">{movie.filePath}</code></div>
-                <div>Folder: <code className="text-slate-200 break-all">{movie.folderPath}</code></div>
+                <div>
+                  Video File: <PathText as="code" path={movie.filePath} sources={sources} className="break-all" />
+                </div>
+                <div>
+                  Folder: <PathText as="code" path={movie.folderPath} sources={sources} className="break-all" />
+                </div>
                 <div>File Size: <span className="text-slate-200">{formatBytes(movie.fileSizeBytes)}</span></div>
                 <div>OpenSubtitles Hash: <code className="text-sky-300">{movie.movieHash}</code></div>
               </div>
@@ -783,7 +790,12 @@ export const MovieDetailPanel: React.FC<{
                             {s.cueCount ?? 0} cues • {formatBytes(s.sizeBytes)}
                           </span>
                         </div>
-                        <div className="text-xs font-mono text-slate-200 mt-1 truncate">{s.fileName}</div>
+                        <PathText
+                          path={s.filePath ?? s.fileName}
+                          sources={sources}
+                          className="text-xs font-mono mt-1"
+                          truncate
+                        />
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <button

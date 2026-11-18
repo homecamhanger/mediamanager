@@ -968,3 +968,21 @@ export interface FolderProposalReport {
   skipped: Array<{ movieId: number; title: string; reason: string }>;
   summary: { looseInRoot: number; sharedFolder: number; actionable: number };
 }
+
+/** A running or finished library audit, pollable while it works. */
+export interface AuditProgress {
+  phase: string;
+  completed: number;
+  total: number;
+  percent: number;
+}
+
+export interface AuditJob {
+  jobId: string;
+  status: 'running' | 'completed' | 'failed';
+  progress: AuditProgress;
+  report: LibraryAuditReport | null;
+  error: string | null;
+  startedAt: number;
+  finishedAt: number | null;
+}

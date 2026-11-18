@@ -59,11 +59,14 @@ type Listener = (ops: FileOperation[]) => void;
  * Completed operations are no longer thrown away after a few seconds.
  *
  * Auto-clearing made the queue unreadable in the way that matters: finish a batch,
- * look away, and the record of what happened was gone with no way to get it back. The
- * panel keeps completions (bounded, so a long session cannot grow without limit) and
- * the user clears them deliberately.
+ * look away, and the record of what happened was gone with no way to get it back.
+ *
+ * The cap is deliberately generous rather than tidy. A modest bound (it was 100) turns
+ * the history into a rolling window that silently discards the start of a long batch
+ * — exactly the part you scroll back for. Retention now runs to a full session's work,
+ * and is cleared explicitly, with a confirmation, by the user.
  */
-const MAX_RETAINED_FINISHED = 100;
+const MAX_RETAINED_FINISHED = 1000;
 
 let nextId = 1;
 

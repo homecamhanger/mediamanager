@@ -9,6 +9,7 @@ import { createRenamerRouter } from './routes/renamer.js';
 import { createScrapersRouter } from './routes/scrapers.js';
 import { createSettingsRouter } from './routes/settings.js';
 import { createSubtitlesRouter } from './routes/subtitles.js';
+import { AuditJobManager } from './audit/auditJobs.js';
 import { buildMovieProblemReport } from './audit/movieProblems.js';
 import { FolderProposalService } from './renamer/folderProposalService.js';
 import { BatchJobManager } from './scanner/batchJobManager.js';
@@ -21,14 +22,18 @@ export function createApiApp(db: MediaDatabase) {
   const scanJobs = new ScanJobManager();
   const batchJobs = new BatchJobManager(db);
   const folderProposals = new FolderProposalService(db);
+  const auditJobs = new AuditJobManager(db);
 
   // The bulk rescan needs "every film with a problem", which combines the audit rules
   // with folder ownership. Wiring it here keeps that graph out of the job manager.
-  batchJobs.setProblemIdsProvider(
-    () =>
-      buildMovieProblemReport(db, { folderReport: folderProposals.build() })
-        .movies.filter((m) => m.rescanCanFix)
-        .map((m) => m.movieId),
+  batchJobs.setProblemIdsProvider((kinds) =>
+    buildMovieProblemReport(db, {
+      folderReport: folderProposals.build(),
+      // Narrowing by kind is what the per-type checkboxes in the UI send.
+      kinds: kinds as never,
+    })
+      .movies.filter((m) => m.rescanCanFix)
+      .map((m) => m.movieId),
   );
 
   /** Films with problems, split into what a rescan fixes and what needs a scrape. */
@@ -36,6 +41,28 @@ export function createApiApp(db: MediaDatabase) {
     res.json(
       buildMovieProblemReport(db, { folderReport: folderProposals.build() }),
     );
+  });
+
+  /**
+   * Audit as a pollable job.
+   *
+   * The old single request could not report progress, which is exactly the complaint:
+   * a long audit and a hung one looked identical. The sync `/api/audit` route stays for
+   * callers that want one shot (and for the tests), but the UI polls these instead.
+   */
+  app.post('/api/audit/run', (_req, res) => {
+    res.json({ job: auditJobs.start() });
+  });
+
+  app.get('/api/audit/job/:jobId', (req, res) => {
+    const job = auditJobs.getJob(req.params.jobId);
+    if (!job) return res.status(404).json({ error: 'Audit job not found' });
+    res.json({ job });
+  });
+
+  /** Lets a reloaded page reattach to an audit that is already running. */
+  app.get('/api/audit/latest', (_req, res) => {
+    res.json({ job: auditJobs.latest() });
   });
 
   app.get('/api/health', (_req, res) => {

@@ -68,6 +68,9 @@ export const FileOperationsPanel: React.FC = () => {
   const { ops, activeCount, dismiss, retry, clearFinished } = useFileOperations();
   const [expanded, setExpanded] = useState(true);
   const [filter, setFilter] = useState<'all' | 'active' | 'failed' | 'done'>('all');
+  // Clearing is destructive to the record, so it asks first. A single misclick should
+  // not wipe the only account of what ran.
+  const [confirmClear, setConfirmClear] = useState(false);
 
   const counts = useMemo(
     () => ({
@@ -179,9 +182,9 @@ export const FileOperationsPanel: React.FC = () => {
               {counts.done > 0 && (
                 <button
                   type="button"
-                  onClick={clearFinished}
+                  onClick={() => setConfirmClear(true)}
                   className="ml-auto px-1.5 py-0.5 rounded text-[10px] text-slate-400 hover:text-slate-100 hover:bg-white/5 inline-flex items-center gap-1 cursor-pointer"
-                  title="Clear completed operations"
+                  title={`Clear ${counts.done} completed operation${counts.done === 1 ? '' : 's'}`}
                 >
                   <Trash2 className="w-2.5 h-2.5" />
                   Clear
@@ -214,6 +217,38 @@ export const FileOperationsPanel: React.FC = () => {
               <History className="w-2.5 h-2.5" />
               Kept until cleared
             </div>
+
+            {confirmClear && (
+              <div
+                className="px-3 py-2 border-t border-rose-500/30 bg-[#1b1116] space-y-2"
+                role="alertdialog"
+                aria-label="Confirm clearing completed operations"
+              >
+                <p className="text-[11px] text-slate-200">
+                  Clear {counts.done} completed operation{counts.done === 1 ? '' : 's'}? Failures are
+                  kept, but the record of what succeeded will be gone.
+                </p>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearFinished();
+                      setConfirmClear(false);
+                    }}
+                    className="px-2 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-200 text-[10px] font-semibold cursor-pointer"
+                  >
+                    Clear completed
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmClear(false)}
+                    className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] font-semibold text-slate-300 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>

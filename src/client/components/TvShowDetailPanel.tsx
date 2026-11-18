@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import type {
   ActorEntry,
+  MediaSource,
   ArtworkKind,
   MissingEpisodeRecord,
   UnmatchedVideoFile,
@@ -45,6 +46,7 @@ import { useLibraryVocabulary } from '../lib/useLibraryVocabulary.js';
 import { ChipInput } from './ChipInput.js';
 import { EpisodeScrapeModal } from './EpisodeScrapeModal.js';
 import { FormField as Field } from './FormField.js';
+import { PathText } from './PathText.js';
 import { PosterImage } from './PosterImage.js';
 import { episodeDisplay } from '../lib/episodeDisplay.js';
 import { detailCache, showKey, type ShowDetailPayload } from '../lib/detailCache.js';
@@ -87,6 +89,8 @@ function sortEpisodesEffective(eps: TvEpisodeRecord[]): TvEpisodeRecord[] {
 
 export const TvShowDetailPanel: React.FC<{
   showId: number;
+  /** Source roots, so paths can be shortened from the left for display. */
+  sources?: MediaSource[];
   /** List-derived record so the panel paints immediately instead of showing the previous show. */
   seed?: TvShowRecord | null;
   selectedSeason?: number | null;
@@ -97,7 +101,7 @@ export const TvShowDetailPanel: React.FC<{
   onSelectEpisode?: (episodeId: number) => void;
   onUpdated: () => void;
   onClose?: () => void;
-}> = ({ showId, seed, selectedSeason = null, initialTab, activeActor, onSelectActor, onSelectSeason, onSelectEpisode, onUpdated, onClose }) => {
+}> = ({ showId, sources = [], seed, selectedSeason = null, initialTab, activeActor, onSelectActor, onSelectSeason, onSelectEpisode, onUpdated, onClose }) => {
   const [show, setShow] = useState<TvShowRecord | null>(seed ?? null);
   const [refreshing, setRefreshing] = useState(false);
   const [seasons, setSeasons] = useState<TvSeasonRecord[]>([]);
@@ -839,11 +843,15 @@ export const TvShowDetailPanel: React.FC<{
                       <div key={f.id} className="px-3 py-1.5 flex items-center gap-2">
                         <FileWarning className="w-3.5 h-3.5 text-rose-400/80 shrink-0" />
                         <div className="min-w-0 flex-1">
-                          <div className="text-[11px] font-semibold text-slate-200 truncate">{f.fileName}</div>
+                          <PathText
+                            path={f.fileName}
+                            className="text-[11px] font-semibold truncate"
+                          />
                           <div className="text-[10px] text-slate-500 truncate">
                             {f.reason === 'non-episode-folder' ? 'In a non-episode folder' : 'No episode marker'}
                             {' · '}
-                            {f.folderPath.replace(/^.*[\\/]/, '')}
+                            {/* The folder the file sits in, shortened and tooltipped. */}
+                            <PathText path={f.folderPath} sources={sources} nameOnly />
                           </div>
                         </div>
                       </div>

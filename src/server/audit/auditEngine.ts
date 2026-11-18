@@ -6,7 +6,41 @@ import type {
 } from '../../shared/types.js';
 import { computeMissingEpisodesFromGuide, DEFAULT_PREFERENCES, MediaDatabase } from '../db/database.js';
 
-export function buildAuditReport(db: MediaDatabase): LibraryAuditReport {
+/** A stage of the audit, reported as it is reached. */
+export interface AuditProgress {
+  phase: string;
+  completed: number;
+  total: number;
+  percent: number;
+}
+
+export type AuditProgressReporter = (update: AuditProgress) => void;
+
+/**
+ * Builds the audit report.
+ *
+ * `onProgress` fires between phases. The audit is query- and CPU-bound, and on a large
+ * library it ran long enough that the UI looked hung. Reporting a phase name plus real
+ * counts — not a timer — is what lets the client say which stage it is on rather than
+ * showing an indistinguishable spinner.
+ *
+ * Phases are ordered by cost, with the per-show episode-guide walk last because it is
+ * the N+1 part: when the audit is slow, that is almost always where it is, and saying so
+ * is the most useful thing the indicator can do.
+ */
+export function buildAuditReport(
+  db: MediaDatabase,
+  onProgress?: AuditProgressReporter,
+): LibraryAuditReport {
+  // Five reported phases plus the episode-guide walk, which reports its own progress.
+  const total = 6;
+  let done = 0;
+  const step = (phase: string, advance = 1) => {
+    done = Math.min(total, done + advance);
+    onProgress?.({ phase, completed: done, total, percent: Math.round((done / total) * 100) });
+  };
+
+  step('Loading library');
   const prefs = db.getSetting('preferences', DEFAULT_PREFERENCES);
   const prefSubLangs = prefs.preferredSubtitleLanguages.length > 0 ? prefs.preferredSubtitleLanguages : ['en'];
 
@@ -15,6 +49,7 @@ export function buildAuditReport(db: MediaDatabase): LibraryAuditReport {
   const episodes = db.listAllEpisodes();
   const sets = db.listMovieSets();
   const subs = db.listAllSubtitles();
+  step('Checking metadata');
 
   const unscrapedMovies = movies.filter((m) => !m.scraped).map((m) => ({ id: m.id, title: m.title, filePath: m.filePath }));
   const unscrapedShows = shows.filter((s) => !s.scraped).map((s) => ({ id: s.id, title: s.title, folderPath: s.folderPath }));
@@ -106,6 +141,8 @@ export function buildAuditReport(db: MediaDatabase): LibraryAuditReport {
       items: list.map((e) => ({ id: e.id, title: e.title, filePath: e.filePath })),
     }));
 
+  step('Checking NFO validity');
+
   const invalidNfoFiles: LibraryAuditReport['issues']['invalidNfoFiles'] = [
     ...movies
       .filter((m) => m.hasNfo && (!m.nfoValid || m.nfoWarnings.length > 0))
@@ -134,6 +171,8 @@ export function buildAuditReport(db: MediaDatabase): LibraryAuditReport {
       })),
   ];
 
+  step('Checking video quality');
+
   const lowResolutionItems: LibraryAuditReport['issues']['lowResolutionItems'] = [];
   for (const m of movies) {
     const h = m.streamDetails.video[0]?.height ?? 1080;
@@ -149,7 +188,21 @@ export function buildAuditReport(db: MediaDatabase): LibraryAuditReport {
   }
 
   const missingEpisodes: MissingEpisodeRecord[] = [];
-  for (const show of shows) {
+  // The expensive pass: one season query plus guide computation per show. Reported as
+  // it goes, so a large library shows movement rather than a stalled bar.
+  for (let i = 0; i < shows.length; i++) {
+    const show = shows[i];
+    // Report on entry as well as every 25 shows, so a small library still names the
+    // phase it is in rather than skipping straight past it.
+    if (i === 0 || i % 25 === 0) {
+      onProgress?.({
+        phase: `Checking episode guides (${i}/${shows.length} series)`,
+        completed: 4,
+        total,
+        // Deliberately stops short of 100: the remaining phases still have to run.
+        percent: Math.round((4 / total) * 100),
+      });
+    }
     if (!show.episodeGuide?.length) continue;
     const showSeasons = db.listSeasonsForShow(show.id);
     const showEpisodes = episodes.filter((e) => e.showId === show.id);
@@ -157,6 +210,7 @@ export function buildAuditReport(db: MediaDatabase): LibraryAuditReport {
       ...computeMissingEpisodesFromGuide(show.id, show.title, show.episodeGuide, showEpisodes, showSeasons)
     );
   }
+  if (shows.length > 0) step('Episode guides checked', 0);
 
   // Compute health score (0-100)
   const totalItems = Math.max(1, movies.length + shows.length + episodes.length);
@@ -167,6 +221,8 @@ export function buildAuditReport(db: MediaDatabase): LibraryAuditReport {
     Math.round(missingSubtitles.length * 0.5),
   ];
   const penalty = checks.reduce((acc, c) => acc + c, 0);
+  step('Scoring health');
+
   const healthScore = Math.max(12, Math.min(100, Math.round(100 - (penalty / (totalItems * 2.5)) * 100)));
 
   return {

@@ -102,16 +102,16 @@ export class BatchJobManager {
    * NOTE: filled in by `app.ts` at construction, because the report needs the folder
    * analysis which needs the renamer. Injecting keeps this class free of that graph.
    */
-  private problemIdsProvider: () => number[] = () => [];
+  private problemIdsProvider: (kinds?: string[]) => number[] = () => [];
 
   /** Supplies the "everything flagged" list used by the bulk rescan. */
-  setProblemIdsProvider(provider: () => number[]): void {
+  setProblemIdsProvider(provider: (kinds?: string[]) => number[]): void {
     this.problemIdsProvider = provider;
   }
 
   /** Films currently eligible for a targeted rescan. */
-  problemMovieIds(): number[] {
-    return this.problemIdsProvider();
+  problemMovieIds(kinds?: string[]): number[] {
+    return this.problemIdsProvider(kinds);
   }
 
   /**

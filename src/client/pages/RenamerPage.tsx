@@ -15,8 +15,10 @@ import type {
   RenameHistoryBatch,
   RenamePatternsConfig,
   RenamePreviewItem,
+  MediaSource,
 } from '../../shared/types.js';
 import { api } from '../lib/api.js';
+import { PathText } from '../components/PathText.js';
 
 const MOVIE_TOKENS = [
   '{title}',
@@ -42,7 +44,11 @@ const EPISODE_TOKENS = [
   '{video_codec}',
 ];
 
-export const RenamerPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh }) => {
+export const RenamerPage: React.FC<{
+  onRefresh: () => void;
+  /** Source roots, so paths can be shortened from the left for display. */
+  sources?: MediaSource[];
+}> = ({ onRefresh, sources = [] }) => {
   const [patterns, setPatterns] = useState<RenamePatternsConfig | null>(null);
   const [previews, setPreviews] = useState<RenamePreviewItem[]>([]);
   const [history, setHistory] = useState<RenameHistoryBatch[]>([]);
@@ -262,11 +268,14 @@ export const RenamerPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh }) 
                           : `shares with ${p.filmsInFolder - 1}`}
                       </span>
                     </span>
-                    <span className="block text-[10px] font-mono text-slate-500 truncate mt-0.5">
-                      {p.filePath}
-                    </span>
-                    <span className="block text-[10px] font-mono text-emerald-300/80 truncate">
-                      → {p.targetFilePath}
+                    <PathText
+                      path={p.filePath}
+                      sources={sources}
+                      className="text-[10px] font-mono mt-0.5"
+                      truncate
+                    />
+                    <span className="block text-[10px] font-mono text-emerald-300/80 truncate" title={p.targetFilePath}>
+                      → <PathText path={p.targetFilePath} sources={sources} />
                     </span>
                     {p.sidecars.length > 0 && (
                       <span className="block text-[10px] text-slate-400 mt-0.5">

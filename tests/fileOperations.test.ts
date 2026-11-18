@@ -200,6 +200,41 @@ describe('File operation queue', () => {
     expect(labels).toEqual(['failed']);
   });
 
+  /**
+   * Retention.
+   *
+   * The cap used to be 100, which discarded the record of what had run far too eagerly.
+   * The user accepted a larger cap specifically because Clear exists, so the two have to
+   * work together: the history must grow well past 100, and clearing must still bound it.
+   */
+  it('retains far more than 100 completed operations', async () => {
+    const many = 250;
+    for (let i = 0; i < many; i++) {
+      queue.enqueue({ label: `op ${i}`, task: task(`k${i}`) });
+    }
+    await vi.waitFor(
+      () => expect(queue.snapshot().filter((o) => o.status === 'done').length).toBe(many),
+      { timeout: 10000 },
+    );
+    // A 100-entry cap would have dropped most of these.
+    expect(queue.snapshot().filter((o) => o.status === 'done').length).toBe(many);
+  });
+
+  it('still bounds the list at the retention cap', async () => {
+    // Pushing past the cap drops the oldest completions, not the newest.
+    const over = 1010;
+    for (let i = 0; i < over; i++) {
+      queue.enqueue({ label: `op ${i}`, task: task(`k${i}`) });
+    }
+    await vi.waitFor(
+      () => expect(queue.snapshot().filter((o) => o.status === 'done').length).toBe(1000),
+      { timeout: 20000 },
+    );
+    const labels = queue.snapshot().map((o) => o.label);
+    expect(labels).toContain(`op ${over - 1}`);
+    expect(labels).not.toContain('op 0');
+  }, 25000);
+
   it('exposes a shared singleton for the app', () => {
     expect(fileOperations).toBeInstanceOf(FileOperationQueue);
   });

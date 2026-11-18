@@ -14,19 +14,61 @@ import {
   Tag,
   Trash2,
 } from 'lucide-react';
-import type { LibraryAuditReport, MissingEpisodeRecord, MovieProblemReport } from '../../shared/types.js';
+import type {
+  LibraryAuditReport,
+  MediaSource,
+  MissingEpisodeRecord,
+  MovieProblemReport,
+} from '../../shared/types.js';
 import { api } from '../lib/api.js';
+import type { AuditProgress } from '../../shared/types.js';
 import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
+import { PathText } from '../components/PathText.js';
+import { ProgressBar } from '../components/ProgressBar.js';
+
+/**
+ * Problem kinds a rescan can act on.
+ *
+ * `unscraped` is deliberately absent: it is not a disk problem and has its own action
+ * in the Unscraped section. `low-resolution` is absent too — nothing a rescan reads
+ * will change a file's resolution.
+ */
+const RESCANNABLE_KINDS = [
+  'missing-artwork',
+  'missing-nfo',
+  'invalid-nfo',
+  'no-own-folder',
+] as const;
+
+type RescannableKind = (typeof RESCANNABLE_KINDS)[number];
+
+const KIND_LABELS: Record<string, string> = {
+  'missing-artwork': 'No artwork',
+  'missing-nfo': 'No NFO',
+  'invalid-nfo': 'Bad NFO',
+  'no-own-folder': 'No own folder',
+  unscraped: 'Unscraped',
+  'low-resolution': 'Low res',
+};
 
 export const AuditPage: React.FC<{
   onRefresh: () => void;
+  /** Source roots, so paths can be shortened from the left for display. */
+  sources?: MediaSource[];
   onOpenMovie?: (movieId: number, focusTab?: InspectorFocusTab) => void;
   onOpenShow?: (showId: number, focusTab?: InspectorFocusTab) => void;
   onOpenEpisode?: (showId: number, episodeId: number, focusTab?: InspectorFocusTab) => void;
-}> = ({ onRefresh, onOpenMovie, onOpenShow, onOpenEpisode }) => {
+}> = ({ onRefresh, sources = [], onOpenMovie, onOpenShow, onOpenEpisode }) => {
   const [audit, setAudit] = useState<LibraryAuditReport | null>(null);
   const [problems, setProblems] = useState<MovieProblemReport | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  // Which problem kinds are in scope, and which specific films are ticked. Kinds start
+  // all-on because that is the common intent; films start all-on for the same reason,
+  // and either can be narrowed.
+  const [enabledKinds, setEnabledKinds] = useState<Set<RescannableKind>>(
+    () => new Set(RESCANNABLE_KINDS),
+  );
+  const [deselectedMovies, setDeselectedMovies] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
   const [editionMovieId, setEditionMovieId] = useState<number | null>(null);
   const [editionInput, setEditionInput] = useState('');
@@ -36,14 +78,47 @@ export const AuditPage: React.FC<{
     deleteFiles: boolean;
   } | null>(null);
 
+  const [progress, setProgress] = useState<AuditProgress | null>(null);
+  // Scrape selection. Movies and shows are separately selectable because scraping a
+  // whole TV library is far slower than a film library, and a bad match on one type
+  // should not stop the other from being fixed. Item-level deselection rides on top.
+  const [scrapeTypes, setScrapeTypes] = useState<{ movies: boolean; shows: boolean }>({
+    movies: true,
+    shows: true,
+  });
+  const [deselectedScrapeMovies, setDeselectedScrapeMovies] = useState<Set<number>>(new Set());
+  const [deselectedScrapeShows, setDeselectedScrapeShows] = useState<Set<number>>(new Set());
+  const [batchProgress, setBatchProgress] = useState<{ phase: string; percent: number } | null>(null);
+
+  /**
+   * Runs the audit as a pollable job so the page can show which stage it is on.
+   *
+   * The audit used to be one blocking request whose only states were "spinning" and
+   * "done" — the complaint being that you could not tell a slow audit from a hung one.
+   * Now the server reports each phase with real counts, and this polls it.
+   */
   const load = async () => {
-    // The problem report is the same analysis the rescan acts on, so fetching them
-    // together keeps the buttons and the list in agreement.
-    const [a, p] = await Promise.all([
-      api.getAudit(),
-      api.getMovieProblems().catch(() => null),
-    ]);
-    setAudit(a);
+    try {
+      const { job } = await api.runAudit();
+      let current = job;
+      setProgress(current.progress);
+      while (current.status === 'running') {
+        await new Promise((r) => setTimeout(r, 250));
+        const polled = await api.getAuditJob(current.jobId);
+        current = polled.job;
+        setProgress(current.progress);
+      }
+      if (current.status === 'failed') throw new Error(current.error ?? 'Audit failed');
+      if (current.report) setAudit(current.report);
+      setProgress(null);
+    } catch (err) {
+      setProgress(null);
+      setStatusMsg(err instanceof Error ? err.message : 'Audit failed');
+      return;
+    }
+    // The problem report is the same analysis the rescan acts on, so fetching it after
+    // the audit keeps the buttons and the list in agreement.
+    const p = await api.getMovieProblems().catch(() => null);
     setProblems(p);
   };
 
@@ -51,23 +126,95 @@ export const AuditPage: React.FC<{
     void load();
   }, []);
 
-  if (!audit) return <div className="p-8 text-sm text-slate-400">Auditing library health...</div>;
+  if (!audit) {
+    return (
+      <div className="space-y-3 p-8">
+        <div className="text-sm text-slate-400">Auditing library health...</div>
+        {progress && (
+          <ProgressBar
+            phase={progress.phase}
+            percent={progress.percent}
+            completed={progress.completed}
+            total={progress.total}
+          />
+        )}
+      </div>
+    );
+  }
 
   const { summary, issues } = audit;
 
   /**
-   * Bulk re-read of every flagged film.
+   * Films in scope, given the enabled problem kinds.
    *
-   * Deliberately scoped server-side (`mode: 'all'`) rather than sending the ids from
-   * this render: the list can be stale by a second, and "everything flagged" should
-   * mean what the server can see when the button is pressed.
+   * A film is in scope when it has at least one enabled problem, and a rescan can act
+   * on that problem. Ticking "No artwork" therefore stops an NFO-only film from being
+   * dragged along.
    */
-  const rescanProblems = async () => {
+  const selectedFilms = (problems?.movies ?? []).filter(
+    (m) =>
+      m.rescanCanFix &&
+      m.problems.some(
+        (kind) =>
+          enabledKinds.has(kind as RescannableKind) &&
+          RESCANNABLE_KINDS.includes(kind as RescannableKind),
+      ),
+  );
+
+  /** Enabled-and-not-deselected films. This is exactly what the button will send. */
+  const selectedMovieIds = selectedFilms
+    .map((m) => m.movieId)
+    .filter((id) => !deselectedMovies.has(id));
+
+  const toggleKind = (kind: RescannableKind) => {
+    setEnabledKinds((prev) => {
+      const next = new Set(prev);
+      if (next.has(kind)) next.delete(kind);
+      else next.add(kind);
+      return next;
+    });
+  };
+
+  const toggleMovie = (movieId: number) => {
+    setDeselectedMovies((prev) => {
+      const next = new Set(prev);
+      if (next.has(movieId)) next.delete(movieId);
+      else next.add(movieId);
+      return next;
+    });
+  };
+
+  const selectAllFilms = () => setDeselectedMovies(new Set());
+  const clearSelection = () =>
+    setDeselectedMovies(new Set(selectedFilms.map((m) => m.movieId)));
+
+  /**
+   * Re-reads the chosen films from disk.
+   *
+   * The selection is sent explicitly rather than as "all", so what runs is what was
+   * ticked on screen — the one thing a per-film checkbox has to guarantee.
+   */
+  /**
+   * How many unscraped items the scrape button would act on.
+   *
+   * Ticked items are tracked by deselection, so a newly-scraped-then-unscraped item
+   * reappears ticked rather than hidden by stale positive state.
+   */
+  const unscrapedSelectedCount =
+    (scrapeTypes.movies
+      ? issues.unscrapedMovies.filter((m) => !deselectedScrapeMovies.has(m.id)).length
+      : 0) +
+    (scrapeTypes.shows
+      ? issues.unscrapedShows.filter((s) => !deselectedScrapeShows.has(s.id)).length
+      : 0);
+
+  const rescanProblems = async (movieIds: number[]) => {
+    if (movieIds.length === 0) return;
     setBusy('rescan');
     try {
-      const res = await api.rescanProblemMovies({ mode: 'all' });
+      const res = await api.rescanProblemMovies({ movieIds });
       setStatusMsg(
-        `Rescanning ${res.movieIds.length} flagged film${res.movieIds.length === 1 ? '' : 's'} — progress in the operations panel`,
+        `Rescanning ${res.movieIds.length} film${res.movieIds.length === 1 ? '' : 's'} — progress in the operations panel`,
       );
       await load();
       onRefresh();
@@ -78,14 +225,53 @@ export const AuditPage: React.FC<{
     }
   };
 
+  /**
+   * Scrapes the ticked unscraped items.
+   *
+   * Sends explicit ids rather than `onlyUnscraped` so unticking a single film or a whole
+   * type actually means something; the server batch endpoint already accepts id lists.
+   * The loop is chunked with a running count because a big TV scrape is slow enough that
+   * a bare "Scraping..." label was indistinguishable from a stall.
+   */
   const fixUnscraped = async () => {
+    const movieIds = (audit?.issues.unscrapedMovies ?? [])
+      .map((m) => m.id)
+      .filter((id) => !deselectedScrapeMovies.has(id));
+    const showIds = (audit?.issues.unscrapedShows ?? [])
+      .map((s) => s.id)
+      .filter((id) => !deselectedScrapeShows.has(id));
+    const targets: { kind: 'movies' | 'shows'; ids: number[] }[] = [];
+    if (scrapeTypes.movies && movieIds.length > 0) targets.push({ kind: 'movies', ids: movieIds });
+    if (scrapeTypes.shows && showIds.length > 0) targets.push({ kind: 'shows', ids: showIds });
+    if (targets.length === 0) {
+      setStatusMsg('Nothing selected to scrape.');
+      return;
+    }
+
     setBusy('scrape');
+    const total = targets.reduce((n, t) => n + t.ids.length, 0);
+    let done = 0;
     try {
-      await api.batchScrape({ onlyUnscraped: true });
+      for (const target of targets) {
+        for (const id of target.ids) {
+          setBatchProgress({
+            phase: `Scraping ${target.kind === 'movies' ? 'film' : 'series'} (${done + 1}/${total})`,
+            percent: Math.round((done / total) * 100),
+          });
+          await api.batchScrape(
+            target.kind === 'movies' ? { movieIds: [id] } : { showIds: [id] },
+          );
+          done += 1;
+        }
+      }
+      setBatchProgress({ phase: 'Refreshing audit', percent: 100 });
       await load();
       onRefresh();
+    } catch (err) {
+      setStatusMsg((err as Error).message);
     } finally {
       setBusy(null);
+      setBatchProgress(null);
     }
   };
 
@@ -172,38 +358,74 @@ export const AuditPage: React.FC<{
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        {/* Films with problems, with the two bulk fixes that actually apply to them. */}
+        {/*
+          Rescan only, by design.
+
+          This panel used to offer a scrape button as well, which duplicated the
+          Unscraped section below and left two places doing the same job. Scraping
+          lives there; this is purely "re-read these films from disk". Kind
+          checkboxes let one category be handled without dragging the rest along.
+        */}
         <AuditSection
-          title={`Films With Problems (${problems?.summary.total ?? 0})`}
-          emptyText="No film has a problem that a rescan or a scrape would fix."
+          title={`Rescan Films With Problems (${problems?.summary.rescanFixable ?? 0})`}
+          emptyText="No film needs re-reading from disk."
         >
-          {problems && problems.summary.total > 0 ? (
+          {problems && problems.summary.rescanFixable > 0 ? (
             <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {RESCANNABLE_KINDS.map((kind) => {
+                  const available = problems.summary.byKind[kind] ?? 0;
+                  const checked = enabledKinds.has(kind);
+                  return (
+                    <label
+                      key={kind}
+                      className={`px-1.5 py-0.5 rounded border text-[10px] font-semibold flex items-center gap-1 ${
+                        available === 0
+                          ? 'border-slate-800 text-slate-600 cursor-not-allowed'
+                          : checked
+                            ? 'border-sky-500/50 bg-sky-500/15 text-sky-200 cursor-pointer'
+                            : 'border-slate-700 text-slate-400 cursor-pointer'
+                      }`}
+                      title={
+                        available === 0
+                          ? 'No films have this problem'
+                          : `Include films flagged for ${KIND_LABELS[kind]}`
+                      }
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked && available > 0}
+                        disabled={available === 0}
+                        onChange={() => toggleKind(kind)}
+                        className="accent-sky-500 cursor-pointer disabled:cursor-not-allowed"
+                      />
+                      {KIND_LABELS[kind]} ({available})
+                    </label>
+                  );
+                })}
+              </div>
+
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  disabled={busy !== null || problems.summary.rescanFixable === 0}
-                  onClick={() => void rescanProblems()}
+                  disabled={busy !== null || selectedMovieIds.length === 0}
+                  onClick={() => void rescanProblems([...selectedMovieIds])}
                   className="px-2.5 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/40 text-sky-200 text-[11px] font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Re-read these films from disk: artwork, NFOs and sidecars"
+                  title="Re-read the selected films from disk: artwork, NFOs and sidecars"
                 >
                   {busy === 'rescan' ? (
                     <Loader2 className="w-3 h-3 animate-spin" />
                   ) : (
                     <RefreshCw className="w-3 h-3" />
                   )}
-                  Rescan {problems.summary.rescanFixable} film
-                  {problems.summary.rescanFixable === 1 ? '' : 's'} from disk
+                  Rescan {selectedMovieIds.length} film{selectedMovieIds.length === 1 ? '' : 's'}
                 </button>
                 <button
                   type="button"
-                  disabled={busy !== null || problems.summary.needingScrape === 0}
-                  onClick={() => void fixUnscraped()}
-                  className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-500/40 text-indigo-200 text-[11px] font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Fetch titles, plots and artwork from scrapers"
+                  onClick={selectedMovieIds.length === selectedFilms.length ? clearSelection : selectAllFilms}
+                  className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] font-semibold text-slate-300 cursor-pointer"
                 >
-                  <Sparkles className="w-3 h-3" />
-                  Scrape {problems.summary.needingScrape} unscraped
+                  {selectedMovieIds.length === selectedFilms.length ? 'None' : 'All'}
                 </button>
                 {problems.summary.byKind['no-own-folder'] > 0 && (
                   <span className="text-[11px] text-amber-300 inline-flex items-center gap-1">
@@ -213,22 +435,21 @@ export const AuditPage: React.FC<{
                 )}
               </div>
 
-              {/* Why two buttons: a rescan cannot invent a plot, and pretending it
-                  can is how a "fix everything" button looks broken. */}
-              <p className="text-[10px] leading-relaxed text-slate-500">
-                A rescan re-reads files already on disk (artwork, NFOs, sidecars). It cannot add
-                metadata that was never scraped — that needs a scrape. Films below list which they need.
-              </p>
-
               <div className="max-h-64 overflow-y-auto divide-y divide-slate-800/60">
-                {problems.movies.map((m) => (
-                  <button
-                    key={m.movieId}
-                    type="button"
-                    onClick={() => onOpenMovie?.(m.movieId)}
-                    className="w-full text-left py-1 flex items-start justify-between gap-2 cursor-pointer hover:bg-white/5"
-                  >
-                    <span className="min-w-0">
+                {selectedFilms.map((m) => (
+                  <div key={m.movieId} className="py-1 flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={!deselectedMovies.has(m.movieId)}
+                      onChange={() => toggleMovie(m.movieId)}
+                      className="mt-1 accent-sky-500 cursor-pointer shrink-0"
+                      title="Include this film in the rescan"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => onOpenMovie?.(m.movieId)}
+                      className="min-w-0 flex-1 text-left cursor-pointer hover:bg-white/5"
+                    >
                       <span className="text-xs font-semibold text-white block truncate">
                         {m.title}
                         {m.year ? <span className="text-slate-500 font-normal"> ({m.year})</span> : null}
@@ -238,60 +459,172 @@ export const AuditPage: React.FC<{
                           <span
                             key={kind}
                             className={`px-1 py-0 rounded text-[9px] font-semibold border ${
-                              kind === 'unscraped'
-                                ? 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30'
-                                : kind === 'no-own-folder'
-                                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-                                  : 'bg-slate-700/40 text-slate-300 border-slate-600/50'
+                              kind === 'no-own-folder'
+                                ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                                : 'bg-slate-700/40 text-slate-300 border-slate-600/50'
                             }`}
                           >
-                            {kind}
+                            {KIND_LABELS[kind] ?? kind}
                           </span>
                         ))}
                       </span>
-                    </span>
-                    <span className="text-[10px] text-slate-500 shrink-0 pt-0.5">
-                      {m.rescanCanFix && !m.needsScrape
-                        ? 'rescan fixes'
-                        : m.needsScrape && !m.rescanCanFix
-                          ? 'scrape fixes'
-                          : m.rescanCanFix && m.needsScrape
-                            ? 'rescan + scrape'
-                            : 'review'}
-                    </span>
-                  </button>
+                    </button>
+                    {m.needsScrape && (
+                      <span
+                        className="text-[10px] text-indigo-300/80 shrink-0 pt-0.5"
+                        title="A rescan cannot add metadata that was never scraped — use Auto-Scrape below"
+                      >
+                        + scrape
+                      </span>
+                    )}
+                  </div>
                 ))}
               </div>
+
+              <p className="text-[10px] leading-relaxed text-slate-500">
+                A rescan re-reads files already on disk: artwork, NFO XML and sidecars. It cannot
+                add metadata that was never scraped — films marked <span className="text-indigo-300/80">+ scrape</span>{' '}
+                also need the Auto-Scrape action in the Unscraped section below.
+              </p>
             </div>
           ) : null}
         </AuditSection>
 
         <AuditSection
-          title={`Unscraped Items (${issues.unscrapedMovies.length + issues.unscrapedShows.length})`}
+          title={`Unscraped Items (${unscrapedSelectedCount}/${issues.unscrapedMovies.length + issues.unscrapedShows.length} selected)`}
           emptyText="Every movie and TV show has been scraped!"
-          actionLabel={busy === 'scrape' ? 'Scraping...' : 'Auto-Scrape All'}
+          actionLabel={busy === 'scrape' ? 'Scraping...' : `Auto-Scrape Selected (${unscrapedSelectedCount})`}
           actionIcon={<Sparkles className="w-3.5 h-3.5" />}
-          onAction={issues.unscrapedMovies.length + issues.unscrapedShows.length > 0 ? fixUnscraped : undefined}
+          onAction={unscrapedSelectedCount > 0 && busy !== 'scrape' ? fixUnscraped : undefined}
+          headerExtra={
+            <div className="flex items-center gap-2 text-[11px] text-slate-400">
+              <label className="flex items-center gap-1 cursor-pointer hover:text-slate-200">
+                <input
+                  type="checkbox"
+                  className="accent-sky-500"
+                  checked={scrapeTypes.movies}
+                  onChange={(e) => setScrapeTypes((t) => ({ ...t, movies: e.target.checked }))}
+                />
+                Movies
+              </label>
+              <label className="flex items-center gap-1 cursor-pointer hover:text-slate-200">
+                <input
+                  type="checkbox"
+                  className="accent-sky-500"
+                  checked={scrapeTypes.shows}
+                  onChange={(e) => setScrapeTypes((t) => ({ ...t, shows: e.target.checked }))}
+                />
+                TV Shows
+              </label>
+            </div>
+          }
         >
+          {batchProgress && (
+            <ProgressBar phase={batchProgress.phase} percent={batchProgress.percent} />
+          )}
+          {issues.unscrapedMovies.length > 0 && (
+            <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wide text-slate-500">
+              <span>Movies ({issues.unscrapedMovies.filter((m) => !deselectedScrapeMovies.has(m.id)).length}/{issues.unscrapedMovies.length})</span>
+              <span className="flex gap-2">
+                <button
+                  type="button"
+                  className="normal-case font-normal text-sky-400 hover:text-sky-300 cursor-pointer"
+                  onClick={() => setDeselectedScrapeMovies(new Set())}
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  className="normal-case font-normal text-sky-400 hover:text-sky-300 cursor-pointer"
+                  onClick={() => setDeselectedScrapeMovies(new Set(issues.unscrapedMovies.map((m) => m.id)))}
+                >
+                  None
+                </button>
+              </span>
+            </div>
+          )}
           {issues.unscrapedMovies.map((m) => (
-            <button
+            <div
               key={`m-${m.id}`}
-              onClick={() => onOpenMovie?.(m.id)}
-              className="w-full text-left text-xs text-slate-300 hover:text-sky-300 flex justify-between gap-2 cursor-pointer"
+              className="w-full text-xs text-slate-300 flex items-center gap-2 hover:text-sky-300"
             >
-              <span className="font-semibold text-white">Movie: {m.title}</span>
-              <span className="font-mono text-[11px] text-slate-500 truncate max-w-xs">{m.filePath}</span>
-            </button>
+              <input
+                type="checkbox"
+                className="accent-sky-500 shrink-0"
+                checked={!deselectedScrapeMovies.has(m.id)}
+                onChange={(e) =>
+                  setDeselectedScrapeMovies((prev) => {
+                    const next = new Set(prev);
+                    if (e.target.checked) next.delete(m.id);
+                    else next.add(m.id);
+                    return next;
+                  })
+                }
+              />
+              <button
+                onClick={() => onOpenMovie?.(m.id)}
+                className="flex-1 min-w-0 text-left flex justify-between gap-2 cursor-pointer"
+              >
+                <span className="font-semibold text-white">Movie: {m.title}</span>
+                <PathText
+                  path={m.filePath}
+                  sources={sources}
+                  className="font-mono text-[11px] text-slate-500 truncate max-w-xs"
+                />
+              </button>
+            </div>
           ))}
+          {issues.unscrapedShows.length > 0 && (
+            <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wide text-slate-500 pt-1">
+              <span>TV Shows ({issues.unscrapedShows.filter((s) => !deselectedScrapeShows.has(s.id)).length}/{issues.unscrapedShows.length})</span>
+              <span className="flex gap-2">
+                <button
+                  type="button"
+                  className="normal-case font-normal text-sky-400 hover:text-sky-300 cursor-pointer"
+                  onClick={() => setDeselectedScrapeShows(new Set())}
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  className="normal-case font-normal text-sky-400 hover:text-sky-300 cursor-pointer"
+                  onClick={() => setDeselectedScrapeShows(new Set(issues.unscrapedShows.map((s) => s.id)))}
+                >
+                  None
+                </button>
+              </span>
+            </div>
+          )}
           {issues.unscrapedShows.map((s) => (
-            <button
+            <div
               key={`s-${s.id}`}
-              onClick={() => onOpenShow?.(s.id)}
-              className="w-full text-left text-xs text-slate-300 hover:text-sky-300 flex justify-between gap-2 cursor-pointer"
+              className="w-full text-xs text-slate-300 flex items-center gap-2 hover:text-sky-300"
             >
-              <span className="font-semibold text-white">TV Show: {s.title}</span>
-              <span className="font-mono text-[11px] text-slate-500 truncate max-w-xs">{s.folderPath}</span>
-            </button>
+              <input
+                type="checkbox"
+                className="accent-sky-500 shrink-0"
+                checked={!deselectedScrapeShows.has(s.id)}
+                onChange={(e) =>
+                  setDeselectedScrapeShows((prev) => {
+                    const next = new Set(prev);
+                    if (e.target.checked) next.delete(s.id);
+                    else next.add(s.id);
+                    return next;
+                  })
+                }
+              />
+              <button
+                onClick={() => onOpenShow?.(s.id)}
+                className="flex-1 min-w-0 text-left flex justify-between gap-2 cursor-pointer"
+              >
+                <span className="font-semibold text-white">TV Show: {s.title}</span>
+                <PathText
+                  path={s.folderPath}
+                  sources={sources}
+                  className="font-mono text-[11px] text-slate-500 truncate max-w-xs"
+                />
+              </button>
+            </div>
           ))}
         </AuditSection>
 
@@ -384,7 +717,7 @@ export const AuditPage: React.FC<{
                           className="min-w-0 flex-1 text-left text-[11px] font-mono text-slate-300 hover:text-sky-300 truncate cursor-pointer"
                         >
                           <span className="px-1.5 py-0.5 rounded bg-slate-800 text-sky-300 mr-1.5">{item.resolution || 'SD'}</span>
-                          {item.filePath}
+                          <PathText path={item.filePath} sources={sources} />
                         </button>
                         <div className="flex items-center gap-1 shrink-0">
                           <button
@@ -485,7 +818,11 @@ export const AuditPage: React.FC<{
                 return (
                   <div key={item.id} className="p-1.5 rounded bg-slate-950/70 border border-slate-800/80 space-y-1">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-[11px] font-mono text-slate-300 truncate">{item.filePath}</span>
+                      <PathText
+                        path={item.filePath}
+                        sources={sources}
+                        className="text-[11px] font-mono text-slate-300 truncate"
+                      />
                       <div className="flex items-center gap-1 shrink-0">
                         <button
                           type="button"
@@ -607,13 +944,17 @@ const AuditSection: React.FC<{
   actionLabel?: string;
   actionIcon?: React.ReactNode;
   onAction?: () => void;
+  /** Extra controls shown next to the action button (select-all, counts). */
+  headerExtra?: React.ReactNode;
   children: React.ReactNode;
-}> = ({ title, emptyText, actionLabel, actionIcon, onAction, children }) => {
+}> = ({ title, emptyText, actionLabel, actionIcon, onAction, headerExtra, children }) => {
   const hasChildren = React.Children.toArray(children).some(Boolean);
   return (
     <div className="p-5 rounded-2xl bg-[#111827] border border-slate-800 space-y-3">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-bold text-white">{title}</h3>
+        <div className="flex items-center gap-2">
+        {headerExtra}
         {onAction && actionLabel && (
           <button
             onClick={onAction}
@@ -623,6 +964,7 @@ const AuditSection: React.FC<{
             {actionLabel}
           </button>
         )}
+        </div>
       </div>
       {!hasChildren ? (
         <div className="text-xs text-emerald-400/90 flex items-center gap-1.5 py-2">

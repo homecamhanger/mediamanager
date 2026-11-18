@@ -166,17 +166,93 @@ describe('operations panel', () => {
     await mount();
 
     const clear = [...container.querySelectorAll('button')].find((b) =>
-      (b.textContent ?? '').trim().startsWith('Clear'),
+      (b.textContent ?? '').trim() === 'Clear',
     );
     expect(clear).toBeDefined();
 
     await act(async () => {
       clear!.click();
     });
+    // Clearing is the only thing that removes completions, so it asks first — the
+    // confirmation steps are covered in their own block below.
+    const confirm = Array.from(container.querySelectorAll('[role="alertdialog"] button')).find((b) =>
+      (b.textContent ?? '').trim().startsWith('Clear completed'),
+    ) as HTMLElement;
+    await act(async () => {
+      confirm.click();
+    });
     await act(async () => {
       await new Promise((r) => setTimeout(r, 10));
     });
-    // Clearing is the only thing that removes completions, and it is deliberate.
+    expect(text()).not.toContain('Write NFO: Dune');
+  });
+});
+
+/**
+ * Clearing is the one destructive action in the panel, and the history is the only
+ * record of what ran. These pin the confirmation: no single click may destroy it, and
+ * Cancel must return with everything intact.
+ */
+describe('clear confirmation', () => {
+  const clearButton = () =>
+    Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === 'Clear') as
+      | HTMLElement
+      | undefined;
+
+  async function queueOne() {
+    await act(async () => {
+      fileOperations.enqueue({ label: 'Write NFO: Dune', task: quickTask('a') });
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    await mount();
+  }
+
+  it('asks before clearing instead of clearing on one click', async () => {
+    await queueOne();
+    expect(text()).toContain('Write NFO: Dune');
+
+    await act(async () => {
+      clearButton()!.click();
+    });
+
+    // The dialog is present and nothing has been removed yet.
+    expect(container.querySelector('[role="alertdialog"]')).not.toBeNull();
+    expect(text()).toContain('Write NFO: Dune');
+  });
+
+  it('keeps the history when the confirmation is cancelled', async () => {
+    await queueOne();
+    await act(async () => {
+      clearButton()!.click();
+    });
+
+    const cancel = Array.from(container.querySelectorAll('[role="alertdialog"] button')).find(
+      (b) => b.textContent?.trim() === 'Cancel',
+    ) as HTMLElement;
+    await act(async () => {
+      cancel.click();
+    });
+
+    expect(container.querySelector('[role="alertdialog"]')).toBeNull();
+    // The record survived, which is the point of asking.
+    expect(text()).toContain('Write NFO: Dune');
+  });
+
+  it('clears completed work once confirmed', async () => {
+    await queueOne();
+    await act(async () => {
+      clearButton()!.click();
+    });
+
+    const confirm = Array.from(container.querySelectorAll('[role="alertdialog"] button')).find((b) =>
+      b.textContent?.trim().startsWith('Clear completed'),
+    ) as HTMLElement;
+    await act(async () => {
+      confirm.click();
+    });
+
     expect(text()).not.toContain('Write NFO: Dune');
   });
 });
