@@ -1133,7 +1133,13 @@ export const EpisodeDetailPanel: React.FC<{
                             {s.cueCount ?? 0} cues • {formatBytes(s.sizeBytes)}
                           </span>
                         </div>
-                        <div className="text-xs font-mono text-slate-200 mt-1 truncate">{s.fileName}</div>
+                        {/* Full path in the tooltip, matching the movie panel's subtitle
+                            rows — a bare filename cannot be found on disk. */}
+                        <PathText
+                          path={s.filePath}
+                          sources={sources}
+                          className="text-xs font-mono text-slate-200 mt-1 truncate block"
+                        />
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <button

@@ -929,13 +929,36 @@ export interface MovieProblem {
   needsScrape: boolean;
 }
 
+/**
+ * A TV show with problems a rescan can act on.
+ *
+ * Shows get their own record rather than being forced into `MovieProblem`: the fields
+ * that identify them differ (a folder, not a video file), and the audit reports their
+ * problems through different lists. Sharing one type would mean a row with half its
+ * fields permanently empty.
+ */
+export interface ShowProblem {
+  showId: number;
+  title: string;
+  year: number | null;
+  folderPath: string;
+  problems: MovieProblemKind[];
+  rescanCanFix: boolean;
+  needsScrape: boolean;
+}
+
 export interface MovieProblemReport {
   movies: MovieProblem[];
+  /** Shows with the same class of problems, so one panel can cover both. */
+  shows: ShowProblem[];
   summary: {
     total: number;
     rescanFixable: number;
     needingScrape: number;
     byKind: Record<MovieProblemKind, number>;
+    /** Split by media type, for the panel's per-type counts. */
+    movies: number;
+    shows: number;
   };
 }
 

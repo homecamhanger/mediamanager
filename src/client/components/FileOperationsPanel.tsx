@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useFileOperations } from '../lib/useFileOperations.js';
 import type { FileOperation, FileOperationStatus } from '../lib/fileOperations.js';
+import type { BatchJob, SourceScanJob } from '../../shared/types.js';
 
 /**
  * The background-operations panel.
@@ -64,50 +65,141 @@ function formatTime(ms: number | null): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-export const FileOperationsPanel: React.FC = () => {
+/**
+ * One row in the unified log: either a per-item write or a bulk job.
+ *
+ * They were two separate surfaces — a floating panel for item writes and a strip in the
+ * ribbon for batch jobs — which is why "where is the list of operations" had no single
+ * answer. Both are operations; they belong in one list.
+ */
+type LogEntry =
+  | { source: 'item'; id: string; label: string; status: FileOperationStatus; op: FileOperation }
+  | {
+      source: 'job';
+      id: string;
+      label: string;
+      status: 'queued' | 'running' | 'done' | 'failed';
+      job: BatchJob | SourceScanJob;
+      isScan: boolean;
+    };
+
+const jobStatusToLog = (s: string): 'queued' | 'running' | 'done' | 'failed' =>
+  s === 'queued' ? 'queued' : s === 'running' ? 'running' : s === 'completed' ? 'done' : 'failed';
+
+export const FileOperationsPanel: React.FC<{
+  /** Bulk jobs, so the panel is the one place that lists everything that ran. */
+  batchJobs?: BatchJob[];
+  scanJobs?: SourceScanJob[];
+  onCancelJob?: (jobId: string) => void;
+}> = ({ batchJobs = [], scanJobs = [], onCancelJob }) => {
   const { ops, activeCount, dismiss, retry, clearFinished } = useFileOperations();
-  const [expanded, setExpanded] = useState(true);
+  // Starts collapsed when there is nothing to show, so an idle app gets a quiet
+  // "Operations" pill rather than an empty panel; expands itself as soon as work exists.
+  const [expanded, setExpanded] = useState(false);
+  const [everHadWork, setEverHadWork] = useState(false);
   const [filter, setFilter] = useState<'all' | 'active' | 'failed' | 'done'>('all');
   // Clearing is destructive to the record, so it asks first. A single misclick should
   // not wipe the only account of what ran.
   const [confirmClear, setConfirmClear] = useState(false);
 
+  const entries: LogEntry[] = useMemo(() => {
+    const itemEntries: LogEntry[] = ops.map((o) => ({
+      source: 'item',
+      id: o.id,
+      label: o.label,
+      status: o.status,
+      op: o,
+    }));
+    const jobEntries: LogEntry[] = [
+      ...batchJobs.map((j) => ({
+        source: 'job' as const,
+        id: `batch-${j.jobId}`,
+        label: j.label,
+        status: jobStatusToLog(j.status),
+        job: j,
+        isScan: false,
+      })),
+      ...scanJobs.map((j) => ({
+        source: 'job' as const,
+        id: `scan-${j.jobId}`,
+        label: `Scan ${j.sourceName}`,
+        status: jobStatusToLog(j.status),
+        job: j,
+        isScan: true,
+      })),
+    ];
+    return [...itemEntries, ...jobEntries];
+  }, [ops, batchJobs, scanJobs]);
+
   const counts = useMemo(
     () => ({
-      queued: ops.filter((o) => o.status === 'queued').length,
-      running: ops.filter((o) => o.status === 'running').length,
-      done: ops.filter((o) => o.status === 'done').length,
-      error: ops.filter((o) => o.status === 'error').length,
+      queued: entries.filter((o) => o.status === 'queued').length,
+      running: entries.filter((o) => o.status === 'running').length,
+      done: entries.filter((o) => o.status === 'done').length,
+      error: entries.filter((o) => o.status === 'failed').length,
     }),
-    [ops],
+    [entries],
   );
 
-  // Nothing has ever been queued: render nothing at all rather than an empty launcher.
-  if (ops.length === 0) return null;
+  /*
+   * The launcher is always rendered, even with nothing in it.
+   *
+   * It used to disappear when empty — which is exactly why the user could not find it:
+   * a discoverable "operations" entry point has to exist before the first operation.
+   * Empty, it collapses to a quiet pill that opens on click.
+   */
+  // First work that ever appears opens the panel once, so a user who triggered
+  // something sees it without hunting for the pill.
+  if (entries.length > 0 && !everHadWork) {
+    setEverHadWork(true);
+    setExpanded(true);
+  }
+
+  if (entries.length === 0 && !expanded) {
+    return (
+      <button
+        type="button"
+        onClick={() => setExpanded(true)}
+        className="fixed bottom-4 right-4 z-[60] px-2.5 py-1.5 rounded-xl border border-slate-800 bg-[#111827]/95 text-slate-400 hover:text-slate-200 text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer shadow-lg"
+        title="Background operations and history"
+      >
+        <History className="w-3 h-3" />
+        Operations
+      </button>
+    );
+  }
 
   const visible =
     filter === 'all'
-      ? ops
+      ? entries
       : filter === 'active'
-        ? ops.filter((o) => o.status === 'queued' || o.status === 'running')
-        : ops.filter((o) => o.status === filter);
+        ? entries.filter((o) => o.status === 'queued' || o.status === 'running')
+        : entries.filter((o) => o.status === filter);
 
-  // Newest first: queued/running float to the top because that is what needs attention,
-  // then everything else by recency.
+  /** When an entry finished, for ordering. Jobs report ISO strings, items milliseconds. */
+  const finishedMs = (e: LogEntry): number => {
+    if (e.source === 'item') return e.op.finishedAt ?? e.op.queuedAt;
+    return e.job.finishedAt ? Date.parse(e.job.finishedAt) : Date.now();
+  };
+
+  // Live work floats to the top because that is what needs attention, then everything
+  // else by recency — the same order the strip used, now applied to both kinds.
   const ordered = [
     ...visible.filter((o) => o.status === 'running'),
     ...visible.filter((o) => o.status === 'queued'),
     ...visible
-      .filter((o) => o.status === 'done' || o.status === 'error')
-      .sort((a, b) => (b.finishedAt ?? b.queuedAt) - (a.finishedAt ?? a.queuedAt)),
+      .filter((o) => o.status === 'done' || o.status === 'failed')
+      .sort((a, b) => finishedMs(b) - finishedMs(a)),
   ];
 
   const headline =
-    activeCount > 0
-      ? `${activeCount} operation${activeCount === 1 ? '' : 's'} in progress`
-      : counts.error > 0
-        ? `${counts.error} failed`
-        : `${counts.done} completed`;
+    entries.length === 0
+      ? 'Operations'
+      : activeCount > 0
+        ? `${activeCount} operation${activeCount === 1 ? '' : 's'} in progress`
+        : counts.error > 0
+          ? `${counts.error} failed`
+          : `${counts.done} completed`;
 
   const tone =
     counts.error > 0
@@ -202,20 +294,29 @@ export const FileOperationsPanel: React.FC = () => {
                   No {filter === 'all' ? '' : filter} operations
                 </div>
               ) : (
-                ordered.map((op) => (
-                  <OperationRow
-                    key={op.id}
-                    op={op}
-                    onRetry={() => retry(op.id)}
-                    onDismiss={() => dismiss(op.id)}
-                  />
-                ))
+                ordered.map((entry) =>
+                  entry.source === 'item' ? (
+                    <OperationRow
+                      key={entry.id}
+                      op={entry.op}
+                      onRetry={() => retry(entry.id)}
+                      onDismiss={() => dismiss(entry.id)}
+                    />
+                  ) : (
+                    <JobRow
+                      key={entry.id}
+                      job={entry.job}
+                      isScan={entry.isScan}
+                      onCancel={onCancelJob}
+                    />
+                  ),
+                )
               )}
             </div>
 
             <div className="px-3 py-1.5 border-t border-white/10 flex items-center gap-1.5 text-[10px] text-slate-500">
               <History className="w-2.5 h-2.5" />
-              Kept until cleared
+              {entries.length === 0 ? 'Nothing has run yet' : 'Kept until cleared'}
             </div>
 
             {confirmClear && (
@@ -251,6 +352,69 @@ export const FileOperationsPanel: React.FC = () => {
             )}
           </>
         )}
+      </div>
+    </div>
+  );
+};
+
+/**
+ * A bulk job in the history list.
+ *
+ * These used to be visible only while running: the ribbon strip dropped them the
+ * moment they finished, so a completed scan or scrape left no trace anywhere. They
+ * are kept here with their final counts, which is the whole reason to have a history.
+ */
+const JobRow: React.FC<{
+  job: BatchJob | SourceScanJob;
+  isScan: boolean;
+  onCancel?: (jobId: string) => void;
+}> = ({ job, isScan, onCancel }) => {
+  const status = jobStatusToLog(job.status);
+  const meta = STATUS_META[status === 'done' ? 'done' : status === 'failed' ? 'error' : status];
+  const batch = isScan ? null : (job as BatchJob);
+  const scan = isScan ? (job as SourceScanJob) : null;
+  const percent = scan ? scan.overallPercent : (batch?.overallPercent ?? 0);
+  const label = scan ? `Scan ${scan.sourceName}` : (batch?.label ?? 'Job');
+
+  return (
+    <div className="px-3 py-1.5 space-y-1">
+      <div className="flex items-center gap-1.5">
+        {meta.icon}
+        <span className="text-[11px] font-semibold text-slate-100 flex-1 truncate" title={label}>
+          {label}
+        </span>
+        <span className={`px-1 py-0 rounded border text-[9px] font-bold uppercase ${meta.badge}`}>
+          {meta.label}
+        </span>
+        {status === 'running' && onCancel && (
+          <button
+            type="button"
+            onClick={() => onCancel(job.jobId)}
+            className="px-1 py-0 rounded text-[9px] text-rose-300 hover:bg-rose-500/20 border border-rose-500/40 cursor-pointer"
+            title="Cancel this job"
+          >
+            Cancel
+          </button>
+        )}
+      </div>
+      <div className="flex items-center gap-1.5">
+        <div className="flex-1 h-1 rounded-full bg-slate-800 overflow-hidden">
+          <div
+            className={`h-full ${status === 'failed' ? 'bg-rose-500' : status === 'done' ? 'bg-emerald-500' : 'bg-sky-500'}`}
+            style={{ width: `${Math.max(3, percent)}%` }}
+          />
+        </div>
+        <span className="font-mono text-[9px] text-slate-400 shrink-0">{percent}%</span>
+      </div>
+      <div className="text-[9px] text-slate-500 truncate">
+        {scan
+          ? `${scan.itemsProcessed}/${scan.itemsTotal} items · ${scan.moviesScanned} films, ${scan.showsScanned} shows`
+          : batch
+            ? `${batch.processedCount}/${batch.totalCount} · ${batch.succeededCount} ok${
+                batch.skippedCount ? `, ${batch.skippedCount} skipped` : ''
+              }${batch.failedCount ? `, ${batch.failedCount} failed` : ''}`
+            : ''}
+        {batch?.detail ? ` · ${batch.detail}` : ''}
       </div>
     </div>
   );

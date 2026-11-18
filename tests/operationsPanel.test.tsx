@@ -66,9 +66,12 @@ async function mount() {
 const text = () => container.textContent ?? '';
 
 describe('operations panel', () => {
-  it('renders nothing until something has been queued', async () => {
+  it('offers a launcher even before anything has been queued', async () => {
+    // The panel used to render nothing at all when empty, which is why the entry point
+    // could not be found. A quiet launcher must exist from the start.
     await mount();
-    expect(text()).toBe('');
+    expect(text()).toContain('Operations');
+    expect(container.querySelector('#file-operations-list')).toBeNull();
   });
 
   it('shows completed work with its status instead of discarding it', async () => {
@@ -254,5 +257,77 @@ describe('clear confirmation', () => {
     });
 
     expect(text()).not.toContain('Write NFO: Dune');
+  });
+});
+
+/**
+ * Bulk jobs belong in the same list as item writes.
+ *
+ * They used to be visible only while running, in a ribbon strip that dropped them on
+ * completion — so a finished scan or batch scrape left no record. These pin the merge:
+ * jobs appear in the panel, keep their final counts, and are not lost when they end.
+ */
+describe('bulk jobs in the history', () => {
+  const finishedJob = {
+    jobId: 'job-1',
+    kind: 'scrape' as const,
+    label: 'Batch Scrape Unscraped',
+    status: 'completed' as const,
+    overallPercent: 100,
+    processedCount: 12,
+    totalCount: 12,
+    succeededCount: 11,
+    skippedCount: 1,
+    failedCount: 0,
+    cancelRequested: false,
+    startedAt: new Date().toISOString(),
+    finishedAt: new Date().toISOString(),
+  };
+
+  it('lists a completed bulk job after it finishes', async () => {
+    await act(async () => {
+      root.render(<FileOperationsPanel batchJobs={[finishedJob]} />);
+    });
+    expect(text()).toContain('Batch Scrape Unscraped');
+    expect(text()).toContain('Done');
+    // Its counts survive, which is the point of keeping it.
+    expect(text()).toContain('11 ok');
+    expect(text()).toContain('1 skipped');
+  });
+
+  it('lists a completed scan with what it found', async () => {
+    const scan = {
+      jobId: 'scan-1',
+      sourceId: 1,
+      sourceName: 'Movies',
+      sourcePath: '/lib/Movies',
+      mediaKind: 'movie' as const,
+      status: 'completed' as const,
+      overallPercent: 100,
+      itemsProcessed: 11,
+      itemsTotal: 11,
+      moviesScanned: 11,
+      showsScanned: 0,
+      episodesScanned: 0,
+      steps: [],
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+    };
+    await act(async () => {
+      root.render(<FileOperationsPanel scanJobs={[scan]} />);
+    });
+    expect(text()).toContain('Scan Movies');
+    expect(text()).toContain('11 films');
+  });
+
+  it('offers cancel only for a job still running', async () => {
+    const running = { ...finishedJob, jobId: 'job-2', status: 'running' as const, finishedAt: null };
+    await act(async () => {
+      root.render(<FileOperationsPanel batchJobs={[running]} onCancelJob={() => {}} />);
+    });
+    const cancel = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent?.trim() === 'Cancel',
+    );
+    expect(cancel).toBeDefined();
   });
 });

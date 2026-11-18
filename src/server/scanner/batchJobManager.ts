@@ -102,15 +102,20 @@ export class BatchJobManager {
    * NOTE: filled in by `app.ts` at construction, because the report needs the folder
    * analysis which needs the renamer. Injecting keeps this class free of that graph.
    */
-  private problemIdsProvider: (kinds?: string[]) => number[] = () => [];
+  private problemIdsProvider: (kinds?: string[]) => { movieIds: number[]; showIds: number[] } = () => ({
+    movieIds: [],
+    showIds: [],
+  });
 
-  /** Supplies the "everything flagged" list used by the bulk rescan. */
-  setProblemIdsProvider(provider: (kinds?: string[]) => number[]): void {
+  /** Supplies the "everything flagged" lists used by the bulk rescan. */
+  setProblemIdsProvider(
+    provider: (kinds?: string[]) => { movieIds: number[]; showIds: number[] },
+  ): void {
     this.problemIdsProvider = provider;
   }
 
-  /** Films currently eligible for a targeted rescan. */
-  problemMovieIds(kinds?: string[]): number[] {
+  /** Films and shows currently eligible for a targeted rescan. */
+  problemIds(kinds?: string[]): { movieIds: number[]; showIds: number[] } {
     return this.problemIdsProvider(kinds);
   }
 
@@ -127,27 +132,34 @@ export class BatchJobManager {
    * contain the requested films are rescanned, deduplicated, and the job reports how
    * many films were involved.
    */
-  startTargetedRescan(movieIds: number[], sourceIds?: number[]): BatchJob {
+  startTargetedRescan(movieIds: number[], sourceIds?: number[], showIds: number[] = []): BatchJob {
     const movies = movieIds
       .map((id) => this.db.getMovie(id))
       .filter((m): m is NonNullable<typeof m> => Boolean(m));
+    const shows = showIds
+      .map((id) => this.db.getTvShow(id))
+      .filter((s): s is NonNullable<typeof s> => Boolean(s));
 
-    // Sources come from the films themselves; an explicit list is only a fallback for
-    // callers acting on sources rather than films.
+    // Sources come from the items themselves; an explicit list is only a fallback for
+    // callers acting on sources rather than individual items.
     const sources = [
       ...new Set([
         ...movies.map((m) => m.sourceId),
+        ...shows.map((s) => s.sourceId),
         ...(sourceIds ?? []),
       ]),
     ]
       .map((id) => this.db.getSource(id))
       .filter((s): s is NonNullable<typeof s> => Boolean(s));
 
+    // The label names both counts when both are in play, so a mixed rescan cannot be
+    // mistaken for a films-only one.
+    const parts: string[] = [];
+    if (movies.length > 0) parts.push(`${movies.length} film${movies.length === 1 ? '' : 's'}`);
+    if (shows.length > 0) parts.push(`${shows.length} series`);
     const job = this.registerJob(
       'rescan',
-      movies.length > 0
-        ? `Rescan ${movies.length} flagged film${movies.length === 1 ? '' : 's'}`
-        : 'Rescan Flagged Sources',
+      parts.length > 0 ? `Rescan ${parts.join(' + ')}` : 'Rescan Flagged Sources',
       sources.length,
     );
 

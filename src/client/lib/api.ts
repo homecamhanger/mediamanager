@@ -102,8 +102,13 @@ export const api = {
   /** Films with problems, split into rescan-fixable and needs-a-scrape. */
   getMovieProblems: () => req<MovieProblemReport>('/api/movies/problems'),
   /** Bulk re-read of flagged films. `mode: 'all'` derives the list server-side. */
-  rescanProblemMovies: (params: { mode: 'all' } | { movieIds: number[] }) =>
-    req<{ job: BatchJob; movieIds: number[] }>('/api/jobs/rescan', {
+  rescanProblems: (params: {
+    mode: 'all';
+    kinds?: string[];
+    includeMovies?: boolean;
+    includeShows?: boolean;
+  } | { movieIds?: number[]; showIds?: number[] }) =>
+    req<{ job: BatchJob; movieIds: number[]; showIds: number[] }>('/api/jobs/rescan', {
       method: 'POST',
       body: JSON.stringify(params),
     }),

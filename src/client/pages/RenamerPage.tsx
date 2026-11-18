@@ -274,7 +274,7 @@ export const RenamerPage: React.FC<{
                       className="text-[10px] font-mono mt-0.5"
                       truncate
                     />
-                    <span className="block text-[10px] font-mono text-emerald-300/80 truncate" title={p.targetFilePath}>
+                    <span className="block text-[10px] font-mono text-emerald-300/80 truncate">
                       → <PathText path={p.targetFilePath} sources={sources} />
                     </span>
                     {p.sidecars.length > 0 && (
@@ -460,10 +460,15 @@ export const RenamerPage: React.FC<{
                       </span>
                     )}
                   </div>
-                  <div className="font-mono text-[11px] space-y-0.5">
-                    <div className="text-slate-500 truncate">- {item.oldPath}</div>
+                  {/* Dry-run paths: same shortening and full-path tooltips as everywhere
+                      else. These were the most conspicuous miss — a rename plan is
+                      nothing but paths, and they were shown raw. */}
+                  <div className="font-mono text-[11px] space-y-0.5 min-w-0">
+                    <div className="text-slate-500 truncate">
+                      - <PathText path={item.oldPath} sources={sources} />
+                    </div>
                     <div className={item.hasChanges ? 'text-emerald-300 truncate' : 'text-slate-400 truncate'}>
-                      + {item.newPath}
+                      + <PathText path={item.newPath} sources={sources} />
                     </div>
                   </div>
                   {item.sidecars.length > 0 && (

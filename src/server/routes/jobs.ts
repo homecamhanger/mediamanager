@@ -45,22 +45,29 @@ export function createJobsRouter(batchJobs: BatchJobManager, scanJobs?: ScanJobM
    */
   router.post('/rescan', (req, res) => {
     const mode = req.body?.mode === 'all' ? 'all' : 'ids';
-    let movieIds: number[] = Array.isArray(req.body?.movieIds)
-      ? (req.body.movieIds as unknown[]).filter((id): id is number => typeof id === 'number')
-      : [];
+    const numeric = (value: unknown): number[] =>
+      Array.isArray(value) ? value.filter((id): id is number => typeof id === 'number') : [];
+    let movieIds = numeric(req.body?.movieIds);
+    let showIds = numeric(req.body?.showIds);
 
     const kinds = Array.isArray(req.body?.kinds)
       ? (req.body.kinds as unknown[]).filter((k): k is string => typeof k === 'string')
       : undefined;
 
     if (mode === 'all') {
-      movieIds = batchJobs.problemMovieIds(kinds as never);
+      // The panel's two type checkboxes map to `includeMovies` / `includeShows`. Both
+      // default to on, so a caller that sends neither gets both.
+      const all = batchJobs.problemIds(kinds as never);
+      const wantsMovies = req.body?.includeMovies !== false;
+      const wantsShows = req.body?.includeShows !== false;
+      movieIds = wantsMovies ? all.movieIds : [];
+      showIds = wantsShows ? all.showIds : [];
     }
-    if (movieIds.length === 0) {
-      return res.status(400).json({ error: 'No films to rescan' });
+    if (movieIds.length === 0 && showIds.length === 0) {
+      return res.status(400).json({ error: 'No items to rescan' });
     }
-    const job = batchJobs.startTargetedRescan(movieIds);
-    res.json({ job, movieIds });
+    const job = batchJobs.startTargetedRescan(movieIds, undefined, showIds);
+    res.json({ job, movieIds, showIds });
   });
 
   router.post('/:jobId/cancel', (req, res) => {

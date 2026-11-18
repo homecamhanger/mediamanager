@@ -31,6 +31,8 @@ import type {
   MovieProblemKind,
   MovieProblemReport,
   MovieRecord,
+  ShowProblem,
+  TvShowRecord,
 } from '../../shared/types.js';
 import { buildAuditReport } from './auditEngine.js';
 import { MediaDatabase } from '../db/database.js';
@@ -72,7 +74,9 @@ export function buildMovieProblemReport(
   const kindFilter = opts.kinds && opts.kinds.length > 0 ? new Set(opts.kinds) : null;
   const audit = opts.audit ?? buildAuditReport(db);
   const movies = db.listMovies();
+  const shows = db.listTvShows();
   const byId = new Map<number, MovieProblem>();
+  const showsById = new Map<number, ShowProblem>();
 
   const ensure = (m: MovieRecord): MovieProblem => {
     let entry = byId.get(m.id);
@@ -117,6 +121,58 @@ export function buildMovieProblemReport(
     for (const p of folderReport.proposals) add(p.movieId, 'no-own-folder');
   }
 
+  /* ---- TV shows: same kinds, different identifying fields ---- */
+
+  const ensureShow = (s: TvShowRecord): ShowProblem => {
+    let entry = showsById.get(s.id);
+    if (!entry) {
+      entry = {
+        showId: s.id,
+        title: s.title,
+        year: s.year,
+        folderPath: s.folderPath,
+        problems: [],
+        rescanCanFix: false,
+        needsScrape: false,
+      };
+      showsById.set(s.id, entry);
+    }
+    return entry;
+  };
+
+  const addShow = (showId: number, kind: MovieProblemKind) => {
+    const s = shows.find((x) => x.id === showId);
+    if (!s) return;
+    const entry = ensureShow(s);
+    if (!entry.problems.includes(kind)) entry.problems.push(kind);
+  };
+
+  for (const item of audit.issues.unscrapedShows) addShow(item.id, 'unscraped');
+  for (const item of audit.issues.missingArtwork) {
+    if (item.mediaType === 'tvshow') addShow(item.id, 'missing-artwork');
+  }
+  for (const item of audit.issues.invalidNfoFiles) {
+    if (item.mediaType === 'tvshow') addShow(item.id, 'invalid-nfo');
+  }
+  // Series NFO presence is tracked on the record rather than in an audit list, so it is
+  // read directly; a show with no tvshow.nfo is the same problem as a film with none.
+  for (const s of shows) {
+    if (!s.hasNfo) addShow(s.id, 'missing-nfo');
+  }
+
+  const showResult = [...showsById.values()]
+    .map((entry) => ({
+      ...entry,
+      problems: kindFilter ? entry.problems.filter((k) => kindFilter.has(k)) : entry.problems,
+    }))
+    .filter((entry) => entry.problems.length > 0)
+    .map((entry) => ({
+      ...entry,
+      rescanCanFix: entry.problems.some((k) => RESCAN_FIXABLE.has(k)),
+      needsScrape: entry.problems.includes('unscraped'),
+    }))
+    .sort((a, b) => a.title.localeCompare(b.title));
+
   const result = [...byId.values()]
     .map((entry) => {
       const problems = kindFilter ? entry.problems.filter((k) => kindFilter.has(k)) : entry.problems;
@@ -134,13 +190,23 @@ export function buildMovieProblemReport(
   const byKind = { ...EMPTY_BY_KIND };
   for (const entry of result) for (const kind of entry.problems) byKind[kind] += 1;
 
+  const showByKind = { ...EMPTY_BY_KIND };
+  for (const entry of showResult) for (const kind of entry.problems) showByKind[kind] += 1;
+
   return {
     movies: result,
+    shows: showResult,
     summary: {
-      total: result.length,
-      rescanFixable: result.filter((m) => m.rescanCanFix).length,
-      needingScrape: result.filter((m) => m.needsScrape).length,
-      byKind,
+      total: result.length + showResult.length,
+      rescanFixable:
+        result.filter((m) => m.rescanCanFix).length + showResult.filter((s) => s.rescanCanFix).length,
+      needingScrape:
+        result.filter((m) => m.needsScrape).length + showResult.filter((s) => s.needsScrape).length,
+      byKind: Object.fromEntries(
+        (Object.keys(EMPTY_BY_KIND) as MovieProblemKind[]).map((k) => [k, byKind[k] + showByKind[k]]),
+      ) as Record<MovieProblemKind, number>,
+      movies: result.length,
+      shows: showResult.length,
     },
   };
 }

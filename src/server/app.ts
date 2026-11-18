@@ -26,15 +26,17 @@ export function createApiApp(db: MediaDatabase) {
 
   // The bulk rescan needs "every film with a problem", which combines the audit rules
   // with folder ownership. Wiring it here keeps that graph out of the job manager.
-  batchJobs.setProblemIdsProvider((kinds) =>
-    buildMovieProblemReport(db, {
+  batchJobs.setProblemIdsProvider((kinds) => {
+    const report = buildMovieProblemReport(db, {
       folderReport: folderProposals.build(),
       // Narrowing by kind is what the per-type checkboxes in the UI send.
       kinds: kinds as never,
-    })
-      .movies.filter((m) => m.rescanCanFix)
-      .map((m) => m.movieId),
-  );
+    });
+    return {
+      movieIds: report.movies.filter((m) => m.rescanCanFix).map((m) => m.movieId),
+      showIds: report.shows.filter((s) => s.rescanCanFix).map((s) => s.showId),
+    };
+  });
 
   /** Films with problems, split into what a rescan fixes and what needs a scrape. */
   app.get('/api/movies/problems', (_req, res) => {

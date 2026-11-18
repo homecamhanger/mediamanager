@@ -362,7 +362,11 @@ export const SettingsPage: React.FC<{ onRefresh: () => void; onOpenPlaylists?: (
                       </span>
                     )}
                   </div>
-                  <div className="font-mono text-slate-400 mt-0.5">{s.path}</div>
+                  {/* A source IS a root, so shortenPath has nothing to cut here; the
+                      tooltip still carries the full value for the long ones. */}
+                  <div className="font-mono text-slate-400 mt-0.5 truncate" title={s.path}>
+                    {s.path}
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <button

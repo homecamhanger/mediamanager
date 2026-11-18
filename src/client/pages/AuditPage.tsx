@@ -69,6 +69,13 @@ export const AuditPage: React.FC<{
     () => new Set(RESCANNABLE_KINDS),
   );
   const [deselectedMovies, setDeselectedMovies] = useState<Set<number>>(new Set());
+  // Type checkboxes for the rescan, mirroring the scrape panel: a mixed library should
+  // not force films and series to be rescanned together.
+  const [rescanTypes, setRescanTypes] = useState<{ movies: boolean; shows: boolean }>({
+    movies: true,
+    shows: true,
+  });
+  const [deselectedShows, setDeselectedShows] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
   const [editionMovieId, setEditionMovieId] = useState<number | null>(null);
   const [editionInput, setEditionInput] = useState('');
@@ -145,26 +152,46 @@ export const AuditPage: React.FC<{
   const { summary, issues } = audit;
 
   /**
-   * Films in scope, given the enabled problem kinds.
+   * Items in scope, given the enabled problem kinds.
    *
-   * A film is in scope when it has at least one enabled problem, and a rescan can act
-   * on that problem. Ticking "No artwork" therefore stops an NFO-only film from being
-   * dragged along.
+   * An item is in scope when it has at least one enabled problem that a rescan can act
+   * on. Ticking "No artwork" therefore stops an NFO-only item from being dragged along.
+   * The per-type checkbox gates the group on top of that, so unticking "TV Shows" is
+   * enough to keep a whole media type out of the run.
    */
-  const selectedFilms = (problems?.movies ?? []).filter(
-    (m) =>
-      m.rescanCanFix &&
-      m.problems.some(
-        (kind) =>
-          enabledKinds.has(kind as RescannableKind) &&
-          RESCANNABLE_KINDS.includes(kind as RescannableKind),
-      ),
-  );
+  const rescanSelectedMovies = rescanTypes.movies
+    ? (problems?.movies ?? []).filter(
+        (m) =>
+          m.rescanCanFix &&
+          m.problems.some(
+            (kind) =>
+              enabledKinds.has(kind as RescannableKind) &&
+              RESCANNABLE_KINDS.includes(kind as RescannableKind),
+          ),
+      )
+    : [];
+  const rescanSelectedShows = rescanTypes.shows
+    ? (problems?.shows ?? []).filter(
+        (sh) =>
+          sh.rescanCanFix &&
+          sh.problems.some(
+            (kind) =>
+              enabledKinds.has(kind as RescannableKind) &&
+              RESCANNABLE_KINDS.includes(kind as RescannableKind),
+          ),
+      )
+    : [];
 
-  /** Enabled-and-not-deselected films. This is exactly what the button will send. */
-  const selectedMovieIds = selectedFilms
+  /** Ticked items. This is exactly what the button will send. */
+  const selectedMovieIds = rescanSelectedMovies
     .map((m) => m.movieId)
     .filter((id) => !deselectedMovies.has(id));
+  const selectedShowIds = rescanSelectedShows
+    .map((sh) => sh.showId)
+    .filter((id) => !deselectedShows.has(id));
+
+  const rescanTotalCount = rescanSelectedMovies.length + rescanSelectedShows.length;
+  const rescanSelectedCount = selectedMovieIds.length + selectedShowIds.length;
 
   const toggleKind = (kind: RescannableKind) => {
     setEnabledKinds((prev) => {
@@ -184,16 +211,15 @@ export const AuditPage: React.FC<{
     });
   };
 
-  const selectAllFilms = () => setDeselectedMovies(new Set());
-  const clearSelection = () =>
-    setDeselectedMovies(new Set(selectedFilms.map((m) => m.movieId)));
+  const toggleShow = (showId: number) => {
+    setDeselectedShows((prev) => {
+      const next = new Set(prev);
+      if (next.has(showId)) next.delete(showId);
+      else next.add(showId);
+      return next;
+    });
+  };
 
-  /**
-   * Re-reads the chosen films from disk.
-   *
-   * The selection is sent explicitly rather than as "all", so what runs is what was
-   * ticked on screen — the one thing a per-film checkbox has to guarantee.
-   */
   /**
    * How many unscraped items the scrape button would act on.
    *
@@ -208,14 +234,21 @@ export const AuditPage: React.FC<{
       ? issues.unscrapedShows.filter((s) => !deselectedScrapeShows.has(s.id)).length
       : 0);
 
-  const rescanProblems = async (movieIds: number[]) => {
-    if (movieIds.length === 0) return;
+  /**
+   * Re-reads the ticked items from disk.
+   *
+   * The selection is sent explicitly rather than as "all", so what runs is what was
+   * ticked on screen — the one thing a per-item checkbox has to guarantee.
+   */
+  const rescanProblems = async () => {
+    if (selectedMovieIds.length === 0 && selectedShowIds.length === 0) return;
     setBusy('rescan');
     try {
-      const res = await api.rescanProblemMovies({ movieIds });
-      setStatusMsg(
-        `Rescanning ${res.movieIds.length} film${res.movieIds.length === 1 ? '' : 's'} — progress in the operations panel`,
-      );
+      const res = await api.rescanProblems({ movieIds: selectedMovieIds, showIds: selectedShowIds });
+      const parts: string[] = [];
+      if (res.movieIds.length > 0) parts.push(`${res.movieIds.length} film${res.movieIds.length === 1 ? '' : 's'}`);
+      if (res.showIds.length > 0) parts.push(`${res.showIds.length} series`);
+      setStatusMsg(`Rescanning ${parts.join(' + ')} — progress in the status strip`);
       await load();
       onRefresh();
     } catch (err) {
@@ -363,15 +396,48 @@ export const AuditPage: React.FC<{
 
           This panel used to offer a scrape button as well, which duplicated the
           Unscraped section below and left two places doing the same job. Scraping
-          lives there; this is purely "re-read these films from disk". Kind
-          checkboxes let one category be handled without dragging the rest along.
+          lives there; this is purely "re-read these items from disk".
+
+          It mirrors the Unscraped section's controls on purpose: a type checkbox per
+          media type, then per-item checkboxes inside each group. Two panels that look
+          the same behave the same, which is the whole point of having both.
         */}
         <AuditSection
-          title={`Rescan Films With Problems (${problems?.summary.rescanFixable ?? 0})`}
-          emptyText="No film needs re-reading from disk."
+          title={`Rescan Problem Items (${rescanSelectedCount}/${rescanTotalCount} selected)`}
+          emptyText="Nothing needs re-reading from disk."
+          actionLabel={
+            busy === 'rescan' ? 'Rescanning...' : `Rescan Selected (${rescanSelectedCount})`
+          }
+          actionIcon={
+            busy === 'rescan' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />
+          }
+          onAction={rescanSelectedCount > 0 && busy !== 'rescan' ? () => void rescanProblems() : undefined}
+          headerExtra={
+            <div className="flex items-center gap-2 text-[11px] text-slate-400">
+              <label className="flex items-center gap-1 cursor-pointer hover:text-slate-200">
+                <input
+                  type="checkbox"
+                  className="accent-sky-500"
+                  checked={rescanTypes.movies}
+                  onChange={(e) => setRescanTypes((t) => ({ ...t, movies: e.target.checked }))}
+                />
+                Movies
+              </label>
+              <label className="flex items-center gap-1 cursor-pointer hover:text-slate-200">
+                <input
+                  type="checkbox"
+                  className="accent-sky-500"
+                  checked={rescanTypes.shows}
+                  onChange={(e) => setRescanTypes((t) => ({ ...t, shows: e.target.checked }))}
+                />
+                TV Shows
+              </label>
+            </div>
+          }
         >
-          {problems && problems.summary.rescanFixable > 0 ? (
-            <div className="space-y-3">
+          {problems && rescanTotalCount > 0 ? (
+            <div className="space-y-2">
+              {/* Problem kinds still narrow the list, but they no longer replace it. */}
               <div className="flex flex-wrap items-center gap-1.5">
                 {RESCANNABLE_KINDS.map((kind) => {
                   const available = problems.summary.byKind[kind] ?? 0;
@@ -388,8 +454,8 @@ export const AuditPage: React.FC<{
                       }`}
                       title={
                         available === 0
-                          ? 'No films have this problem'
-                          : `Include films flagged for ${KIND_LABELS[kind]}`
+                          ? 'No items have this problem'
+                          : `Include items flagged for ${KIND_LABELS[kind]}`
                       }
                     >
                       <input
@@ -405,86 +471,157 @@ export const AuditPage: React.FC<{
                 })}
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  disabled={busy !== null || selectedMovieIds.length === 0}
-                  onClick={() => void rescanProblems([...selectedMovieIds])}
-                  className="px-2.5 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/40 text-sky-200 text-[11px] font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Re-read the selected films from disk: artwork, NFOs and sidecars"
-                >
-                  {busy === 'rescan' ? (
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                  ) : (
-                    <RefreshCw className="w-3 h-3" />
-                  )}
-                  Rescan {selectedMovieIds.length} film{selectedMovieIds.length === 1 ? '' : 's'}
-                </button>
-                <button
-                  type="button"
-                  onClick={selectedMovieIds.length === selectedFilms.length ? clearSelection : selectAllFilms}
-                  className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] font-semibold text-slate-300 cursor-pointer"
-                >
-                  {selectedMovieIds.length === selectedFilms.length ? 'None' : 'All'}
-                </button>
-                {problems.summary.byKind['no-own-folder'] > 0 && (
-                  <span className="text-[11px] text-amber-300 inline-flex items-center gap-1">
-                    <FolderInput className="w-3 h-3" />
-                    {problems.summary.byKind['no-own-folder']} without their own folder — see the Renamer
+              {rescanSelectedMovies.length > 0 && (
+                <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wide text-slate-500 pt-1">
+                  <span>
+                    Movies ({rescanSelectedMovies.filter((m) => !deselectedMovies.has(m.movieId)).length}/
+                    {rescanSelectedMovies.length})
                   </span>
-                )}
-              </div>
-
-              <div className="max-h-64 overflow-y-auto divide-y divide-slate-800/60">
-                {selectedFilms.map((m) => (
-                  <div key={m.movieId} className="py-1 flex items-start gap-2">
-                    <input
-                      type="checkbox"
-                      checked={!deselectedMovies.has(m.movieId)}
-                      onChange={() => toggleMovie(m.movieId)}
-                      className="mt-1 accent-sky-500 cursor-pointer shrink-0"
-                      title="Include this film in the rescan"
-                    />
+                  <span className="flex gap-2">
                     <button
                       type="button"
-                      onClick={() => onOpenMovie?.(m.movieId)}
-                      className="min-w-0 flex-1 text-left cursor-pointer hover:bg-white/5"
+                      className="normal-case font-normal text-sky-400 hover:text-sky-300 cursor-pointer"
+                      onClick={() => setDeselectedMovies(new Set())}
                     >
-                      <span className="text-xs font-semibold text-white block truncate">
-                        {m.title}
-                        {m.year ? <span className="text-slate-500 font-normal"> ({m.year})</span> : null}
-                      </span>
-                      <span className="flex flex-wrap gap-1 mt-0.5">
-                        {m.problems.map((kind) => (
-                          <span
-                            key={kind}
-                            className={`px-1 py-0 rounded text-[9px] font-semibold border ${
-                              kind === 'no-own-folder'
-                                ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-                                : 'bg-slate-700/40 text-slate-300 border-slate-600/50'
-                            }`}
-                          >
-                            {KIND_LABELS[kind] ?? kind}
-                          </span>
-                        ))}
-                      </span>
+                      All
                     </button>
-                    {m.needsScrape && (
-                      <span
-                        className="text-[10px] text-indigo-300/80 shrink-0 pt-0.5"
-                        title="A rescan cannot add metadata that was never scraped — use Auto-Scrape below"
-                      >
-                        + scrape
+                    <button
+                      type="button"
+                      className="normal-case font-normal text-sky-400 hover:text-sky-300 cursor-pointer"
+                      onClick={() => setDeselectedMovies(new Set(rescanSelectedMovies.map((m) => m.movieId)))}
+                    >
+                      None
+                    </button>
+                  </span>
+                </div>
+              )}
+              {rescanSelectedMovies.map((m) => (
+                <div key={`rm-${m.movieId}`} className="py-0.5 flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    checked={!deselectedMovies.has(m.movieId)}
+                    onChange={() => toggleMovie(m.movieId)}
+                    className="mt-1 accent-sky-500 cursor-pointer shrink-0"
+                    title="Include this film in the rescan"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => onOpenMovie?.(m.movieId)}
+                    className="min-w-0 flex-1 text-left cursor-pointer hover:bg-white/5"
+                  >
+                    <span className="text-xs font-semibold text-white block truncate">
+                      {m.title}
+                      {m.year ? <span className="text-slate-500 font-normal"> ({m.year})</span> : null}
+                    </span>
+                    <span className="flex flex-wrap gap-1 mt-0.5">
+                      {m.problems.map((kind) => (
+                        <span
+                          key={kind}
+                          className={`px-1 py-0 rounded text-[9px] font-semibold border ${
+                            kind === 'no-own-folder'
+                              ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                              : 'bg-slate-700/40 text-slate-300 border-slate-600/50'
+                          }`}
+                        >
+                          {KIND_LABELS[kind] ?? kind}
+                        </span>
+                      ))}
+                      {m.needsScrape && (
+                        <span
+                          className="px-1 py-0 rounded text-[9px] font-semibold border bg-indigo-500/15 text-indigo-300 border-indigo-500/30"
+                          title="A rescan cannot add metadata that was never scraped — use Auto-Scrape"
+                        >
+                          + scrape
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                </div>
+              ))}
+
+              {rescanSelectedShows.length > 0 && (
+                <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wide text-slate-500 pt-1">
+                  <span>
+                    TV Shows ({rescanSelectedShows.filter((s) => !deselectedShows.has(s.showId)).length}/
+                    {rescanSelectedShows.length})
+                  </span>
+                  <span className="flex gap-2">
+                    <button
+                      type="button"
+                      className="normal-case font-normal text-sky-400 hover:text-sky-300 cursor-pointer"
+                      onClick={() => setDeselectedShows(new Set())}
+                    >
+                      All
+                    </button>
+                    <button
+                      type="button"
+                      className="normal-case font-normal text-sky-400 hover:text-sky-300 cursor-pointer"
+                      onClick={() => setDeselectedShows(new Set(rescanSelectedShows.map((s) => s.showId)))}
+                    >
+                      None
+                    </button>
+                  </span>
+                </div>
+              )}
+              {rescanSelectedShows.map((sh) => (
+                <div key={`rs-${sh.showId}`} className="py-0.5 flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    checked={!deselectedShows.has(sh.showId)}
+                    onChange={() => toggleShow(sh.showId)}
+                    className="mt-1 accent-sky-500 cursor-pointer shrink-0"
+                    title="Include this series in the rescan"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => onOpenShow?.(sh.showId)}
+                    className="min-w-0 flex-1 text-left cursor-pointer hover:bg-white/5"
+                  >
+                    <span className="flex items-baseline justify-between gap-2">
+                      <span className="text-xs font-semibold text-white truncate">
+                        {sh.title}
+                        {sh.year ? <span className="text-slate-500 font-normal"> ({sh.year})</span> : null}
                       </span>
-                    )}
-                  </div>
-                ))}
-              </div>
+                      <PathText
+                        path={sh.folderPath}
+                        sources={sources}
+                        className="font-mono text-[10px] text-slate-500 truncate max-w-[40%] shrink-0"
+                      />
+                    </span>
+                    <span className="flex flex-wrap gap-1 mt-0.5">
+                      {sh.problems.map((kind) => (
+                        <span
+                          key={kind}
+                          className="px-1 py-0 rounded text-[9px] font-semibold border bg-slate-700/40 text-slate-300 border-slate-600/50"
+                        >
+                          {KIND_LABELS[kind] ?? kind}
+                        </span>
+                      ))}
+                      {sh.needsScrape && (
+                        <span
+                          className="px-1 py-0 rounded text-[9px] font-semibold border bg-indigo-500/15 text-indigo-300 border-indigo-500/30"
+                          title="A rescan cannot add metadata that was never scraped — use Auto-Scrape"
+                        >
+                          + scrape
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                </div>
+              ))}
+
+              {problems.summary.byKind['no-own-folder'] > 0 && (
+                <p className="text-[11px] text-amber-300 inline-flex items-center gap-1 pt-1">
+                  <FolderInput className="w-3 h-3" />
+                  {problems.summary.byKind['no-own-folder']} without their own folder — see the Renamer
+                </p>
+              )}
 
               <p className="text-[10px] leading-relaxed text-slate-500">
                 A rescan re-reads files already on disk: artwork, NFO XML and sidecars. It cannot
-                add metadata that was never scraped — films marked <span className="text-indigo-300/80">+ scrape</span>{' '}
-                also need the Auto-Scrape action in the Unscraped section below.
+                add metadata that was never scraped — items marked{' '}
+                <span className="text-indigo-300/80">+ scrape</span> also need the Auto-Scrape
+                action in the Unscraped section below.
               </p>
             </div>
           ) : null}

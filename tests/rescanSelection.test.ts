@@ -50,8 +50,8 @@ function auditWithMixedProblems(): LibraryAuditReport {
   } as unknown as LibraryAuditReport;
 }
 
-function dbWith(films = FILMS) {
-  return { listMovies: () => films } as unknown as MediaDatabase;
+function dbWith(films = FILMS, shows: unknown[] = []) {
+  return { listMovies: () => films, listTvShows: () => shows } as unknown as MediaDatabase;
 }
 
 
@@ -113,5 +113,82 @@ describe('rescan kinds filter', () => {
     const r = build(['unscraped']);
     expect(r.movies[0].needsScrape).toBe(true);
     expect(r.movies[0].rescanCanFix).toBe(false);
+  });
+});
+
+/**
+ * Shows are part of the same report.
+ *
+ * The panel rescan uses has movies and TV shows checkboxes, so the report has to carry
+ * both. Shows identify by folder, not video file, and are flagged by different audit
+ * lists — which is exactly the sort of mismatch that would silently leave a whole media
+ * type out of a rescan.
+ */
+describe('show problems', () => {
+  const show = (id: number, title: string, hasNfo = true) => ({
+    id,
+    sourceId: 1,
+    folderPath: `/lib/TV/${title}`,
+    hasNfo,
+    nfoValid: true,
+    nfoWarnings: [] as string[],
+    scraped: true,
+    title,
+    year: 2022,
+    episodeGuide: [],
+    artwork: { poster: 'p.jpg', fanart: 'f.jpg', banner: 'b.jpg' },
+    uniqueIds: {},
+  });
+
+  const shows = [show(101, 'Andor', false), show(102, 'Foundation', true)];
+
+  function auditWithShowProblems(): LibraryAuditReport {
+    return {
+      issues: {
+        unscrapedMovies: [],
+        unscrapedShows: [{ id: 102, title: 'Foundation', folderPath: '/lib/TV/Foundation' }],
+        missingMovieNfo: [],
+        missingEpisodeNfo: [],
+        missingArtwork: [
+          { mediaType: 'tvshow', id: 101, title: 'Andor', missing: ['poster'] },
+        ],
+        invalidNfoFiles: [],
+        lowResolutionItems: [],
+      },
+    } as unknown as LibraryAuditReport;
+  }
+
+  const buildShows = (kinds?: ('unscraped' | 'missing-nfo' | 'missing-artwork' | 'invalid-nfo' | 'no-own-folder' | 'low-resolution')[]) =>
+    buildMovieProblemReport(dbWith([], shows), {
+      audit: auditWithShowProblems(),
+      ...(kinds ? { kinds } : {}),
+    });
+
+  it('reports shows alongside films', () => {
+    const r = buildShows();
+    expect(r.shows.map((s) => s.title).sort()).toEqual(['Andor', 'Foundation']);
+    expect(r.summary.shows).toBe(2);
+    expect(r.summary.movies).toBe(0);
+  });
+
+  it('flags a show with no tvshow.nfo', () => {
+    const r = buildShows(['missing-nfo']);
+    expect(r.shows.map((s) => s.title)).toEqual(['Andor']);
+    expect(r.shows[0].problems).toEqual(['missing-nfo']);
+  });
+
+  it('identifies shows by folder path, not a video file', () => {
+    const r = buildShows(['missing-artwork']);
+    expect(r.shows[0].folderPath).toBe('/lib/TV/Andor');
+  });
+
+  it('narrows shows by kind the same way it narrows films', () => {
+    expect(buildShows(['missing-artwork']).shows.map((s) => s.title)).toEqual(['Andor']);
+    expect(buildShows(['unscraped']).shows.map((s) => s.title)).toEqual(['Foundation']);
+  });
+
+  it('counts total across both media types', () => {
+    const r = buildShows();
+    expect(r.summary.total).toBe(r.movies.length + r.shows.length);
   });
 });
