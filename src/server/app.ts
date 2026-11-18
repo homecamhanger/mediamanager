@@ -9,6 +9,8 @@ import { createRenamerRouter } from './routes/renamer.js';
 import { createScrapersRouter } from './routes/scrapers.js';
 import { createSettingsRouter } from './routes/settings.js';
 import { createSubtitlesRouter } from './routes/subtitles.js';
+import { buildMovieProblemReport } from './audit/movieProblems.js';
+import { FolderProposalService } from './renamer/folderProposalService.js';
 import { BatchJobManager } from './scanner/batchJobManager.js';
 import { ScanJobManager } from './scanner/scanJobManager.js';
 
@@ -18,6 +20,23 @@ export function createApiApp(db: MediaDatabase) {
 
   const scanJobs = new ScanJobManager();
   const batchJobs = new BatchJobManager(db);
+  const folderProposals = new FolderProposalService(db);
+
+  // The bulk rescan needs "every film with a problem", which combines the audit rules
+  // with folder ownership. Wiring it here keeps that graph out of the job manager.
+  batchJobs.setProblemIdsProvider(
+    () =>
+      buildMovieProblemReport(db, { folderReport: folderProposals.build() })
+        .movies.filter((m) => m.rescanCanFix)
+        .map((m) => m.movieId),
+  );
+
+  /** Films with problems, split into what a rescan fixes and what needs a scrape. */
+  app.get('/api/movies/problems', (_req, res) => {
+    res.json(
+      buildMovieProblemReport(db, { folderReport: folderProposals.build() }),
+    );
+  });
 
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true, service: 'KodiVault', dbPath: db.dbPath });

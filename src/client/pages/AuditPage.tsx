@@ -5,13 +5,16 @@ import {
   CheckCircle2,
   Copy,
   FileCode2,
+  FolderInput,
   Languages,
+  Loader2,
+  RefreshCw,
   ShieldAlert,
   Sparkles,
   Tag,
   Trash2,
 } from 'lucide-react';
-import type { LibraryAuditReport, MissingEpisodeRecord } from '../../shared/types.js';
+import type { LibraryAuditReport, MissingEpisodeRecord, MovieProblemReport } from '../../shared/types.js';
 import { api } from '../lib/api.js';
 import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 
@@ -22,6 +25,8 @@ export const AuditPage: React.FC<{
   onOpenEpisode?: (showId: number, episodeId: number, focusTab?: InspectorFocusTab) => void;
 }> = ({ onRefresh, onOpenMovie, onOpenShow, onOpenEpisode }) => {
   const [audit, setAudit] = useState<LibraryAuditReport | null>(null);
+  const [problems, setProblems] = useState<MovieProblemReport | null>(null);
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [editionMovieId, setEditionMovieId] = useState<number | null>(null);
   const [editionInput, setEditionInput] = useState('');
@@ -32,7 +37,14 @@ export const AuditPage: React.FC<{
   } | null>(null);
 
   const load = async () => {
-    setAudit(await api.getAudit());
+    // The problem report is the same analysis the rescan acts on, so fetching them
+    // together keeps the buttons and the list in agreement.
+    const [a, p] = await Promise.all([
+      api.getAudit(),
+      api.getMovieProblems().catch(() => null),
+    ]);
+    setAudit(a);
+    setProblems(p);
   };
 
   useEffect(() => {
@@ -42,6 +54,29 @@ export const AuditPage: React.FC<{
   if (!audit) return <div className="p-8 text-sm text-slate-400">Auditing library health...</div>;
 
   const { summary, issues } = audit;
+
+  /**
+   * Bulk re-read of every flagged film.
+   *
+   * Deliberately scoped server-side (`mode: 'all'`) rather than sending the ids from
+   * this render: the list can be stale by a second, and "everything flagged" should
+   * mean what the server can see when the button is pressed.
+   */
+  const rescanProblems = async () => {
+    setBusy('rescan');
+    try {
+      const res = await api.rescanProblemMovies({ mode: 'all' });
+      setStatusMsg(
+        `Rescanning ${res.movieIds.length} flagged film${res.movieIds.length === 1 ? '' : 's'} — progress in the operations panel`,
+      );
+      await load();
+      onRefresh();
+    } catch (err) {
+      setStatusMsg((err as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const fixUnscraped = async () => {
     setBusy('scrape');
@@ -123,7 +158,114 @@ export const AuditPage: React.FC<{
         </div>
       </div>
 
+      {statusMsg && (
+        <div className="px-3 py-2 rounded-xl bg-sky-500/10 border border-sky-500/30 text-[11px] text-sky-200 flex items-center justify-between gap-3">
+          <span>{statusMsg}</span>
+          <button
+            type="button"
+            onClick={() => setStatusMsg(null)}
+            className="text-slate-400 hover:text-slate-100 cursor-pointer shrink-0"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        {/* Films with problems, with the two bulk fixes that actually apply to them. */}
+        <AuditSection
+          title={`Films With Problems (${problems?.summary.total ?? 0})`}
+          emptyText="No film has a problem that a rescan or a scrape would fix."
+        >
+          {problems && problems.summary.total > 0 ? (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={busy !== null || problems.summary.rescanFixable === 0}
+                  onClick={() => void rescanProblems()}
+                  className="px-2.5 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/40 text-sky-200 text-[11px] font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Re-read these films from disk: artwork, NFOs and sidecars"
+                >
+                  {busy === 'rescan' ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-3 h-3" />
+                  )}
+                  Rescan {problems.summary.rescanFixable} film
+                  {problems.summary.rescanFixable === 1 ? '' : 's'} from disk
+                </button>
+                <button
+                  type="button"
+                  disabled={busy !== null || problems.summary.needingScrape === 0}
+                  onClick={() => void fixUnscraped()}
+                  className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-500/40 text-indigo-200 text-[11px] font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Fetch titles, plots and artwork from scrapers"
+                >
+                  <Sparkles className="w-3 h-3" />
+                  Scrape {problems.summary.needingScrape} unscraped
+                </button>
+                {problems.summary.byKind['no-own-folder'] > 0 && (
+                  <span className="text-[11px] text-amber-300 inline-flex items-center gap-1">
+                    <FolderInput className="w-3 h-3" />
+                    {problems.summary.byKind['no-own-folder']} without their own folder — see the Renamer
+                  </span>
+                )}
+              </div>
+
+              {/* Why two buttons: a rescan cannot invent a plot, and pretending it
+                  can is how a "fix everything" button looks broken. */}
+              <p className="text-[10px] leading-relaxed text-slate-500">
+                A rescan re-reads files already on disk (artwork, NFOs, sidecars). It cannot add
+                metadata that was never scraped — that needs a scrape. Films below list which they need.
+              </p>
+
+              <div className="max-h-64 overflow-y-auto divide-y divide-slate-800/60">
+                {problems.movies.map((m) => (
+                  <button
+                    key={m.movieId}
+                    type="button"
+                    onClick={() => onOpenMovie?.(m.movieId)}
+                    className="w-full text-left py-1 flex items-start justify-between gap-2 cursor-pointer hover:bg-white/5"
+                  >
+                    <span className="min-w-0">
+                      <span className="text-xs font-semibold text-white block truncate">
+                        {m.title}
+                        {m.year ? <span className="text-slate-500 font-normal"> ({m.year})</span> : null}
+                      </span>
+                      <span className="flex flex-wrap gap-1 mt-0.5">
+                        {m.problems.map((kind) => (
+                          <span
+                            key={kind}
+                            className={`px-1 py-0 rounded text-[9px] font-semibold border ${
+                              kind === 'unscraped'
+                                ? 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30'
+                                : kind === 'no-own-folder'
+                                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                                  : 'bg-slate-700/40 text-slate-300 border-slate-600/50'
+                            }`}
+                          >
+                            {kind}
+                          </span>
+                        ))}
+                      </span>
+                    </span>
+                    <span className="text-[10px] text-slate-500 shrink-0 pt-0.5">
+                      {m.rescanCanFix && !m.needsScrape
+                        ? 'rescan fixes'
+                        : m.needsScrape && !m.rescanCanFix
+                          ? 'scrape fixes'
+                          : m.rescanCanFix && m.needsScrape
+                            ? 'rescan + scrape'
+                            : 'review'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </AuditSection>
+
         <AuditSection
           title={`Unscraped Items (${issues.unscrapedMovies.length + issues.unscrapedShows.length})`}
           emptyText="Every movie and TV show has been scraped!"

@@ -1,6 +1,21 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, Check, FolderSync, Play, RotateCcw, Save } from 'lucide-react';
-import type { RenameHistoryBatch, RenamePatternsConfig, RenamePreviewItem } from '../../shared/types.js';
+import {
+  AlertTriangle,
+  Check,
+  FolderInput,
+  FolderSync,
+  Loader2,
+  Play,
+  RotateCcw,
+  Save,
+} from 'lucide-react';
+import type {
+  FolderProposal,
+  FolderProposalReport,
+  RenameHistoryBatch,
+  RenamePatternsConfig,
+  RenamePreviewItem,
+} from '../../shared/types.js';
 import { api } from '../lib/api.js';
 
 const MOVIE_TOKENS = [
@@ -34,12 +49,58 @@ export const RenamerPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh }) 
   const [selectedIndexes, setSelectedIndexes] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [folderReport, setFolderReport] = useState<FolderProposalReport | null>(null);
+  // Approvals are per film and start empty: nothing is selected on the user's behalf,
+  // because every one of these moves a file.
+  const [approved, setApproved] = useState<Set<number>>(new Set());
+  const [applyingFolders, setApplyingFolders] = useState(false);
 
   const loadAll = async () => {
-    const [pat, hist] = await Promise.all([api.getRenamePatterns(), api.listRenameHistory()]);
+    const [pat, hist, folders] = await Promise.all([
+      api.getRenamePatterns(),
+      api.listRenameHistory(),
+      api.getFolderProposals().catch(() => null),
+    ]);
     setPatterns(pat);
     setHistory(hist.batches);
+    setFolderReport(folders);
+    setApproved(new Set());
     await runPreview(pat);
+  };
+
+  const toggleApproved = (movieId: number) => {
+    setApproved((prev) => {
+      const next = new Set(prev);
+      if (next.has(movieId)) next.delete(movieId);
+      else next.add(movieId);
+      return next;
+    });
+  };
+
+  /**
+   * Applies only the approved proposals, then refreshes.
+   *
+   * Applying one at a time rather than as a batch is deliberate: a failure partway
+   * through must leave the already-moved films moved and recorded, not roll the whole
+   * set back, so the user can see exactly which ones still need attention.
+   */
+  const applyApprovedFolders = async () => {
+    if (approved.size === 0) return;
+    setApplyingFolders(true);
+    try {
+      const res = await api.applyFolderProposals([...approved]);
+      const failed = res.errors.length;
+      setStatusMsg(
+        `Moved ${res.movedCount} film${res.movedCount === 1 ? '' : 's'} into their own folder` +
+          (failed > 0 ? ` — ${failed} failed: ${res.errors[0]}` : ''),
+      );
+      await loadAll();
+      onRefresh();
+    } catch (err) {
+      setStatusMsg((err as Error).message);
+    } finally {
+      setApplyingFolders(false);
+    }
   };
 
   const runPreview = async (pat?: RenamePatternsConfig) => {
@@ -130,6 +191,111 @@ export const RenamerPage: React.FC<{ onRefresh: () => void }> = ({ onRefresh }) 
       {statusMsg && (
         <div className="p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-xs text-emerald-300 flex items-center gap-2">
           <Check className="w-4 h-4" /> {statusMsg}
+        </div>
+      )}
+
+      {/* Films without their own folder */}
+      {folderReport && folderReport.proposals.length > 0 && (
+        <div className="p-5 rounded-2xl bg-[#111827] border border-amber-500/30 space-y-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <FolderInput className="w-4 h-4 text-amber-400" />
+                Films Without Their Own Folder ({folderReport.proposals.length})
+              </h3>
+              <p className="text-[11px] text-slate-400 mt-1 max-w-3xl leading-relaxed">
+                These films sit loose in the source root, or share a folder with another film. Kodi
+                artwork names like <code className="font-mono text-slate-300">poster.jpg</code> and{' '}
+                <code className="font-mono text-slate-300">movie.nfo</code> only mean one thing when a
+                folder holds a single film — in a shared folder they are ambiguous, which is how two
+                films end up showing each other's artwork. Each proposal below gives the film its own
+                folder, moving only files that are clearly its own.
+              </p>
+            </div>
+            <button
+              onClick={() => void applyApprovedFolders()}
+              disabled={applyingFolders || approved.size === 0}
+              className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-40 shrink-0"
+            >
+              {applyingFolders ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Check className="w-3.5 h-3.5" />
+              )}
+              Move {approved.size} approved
+            </button>
+          </div>
+
+          <div className="divide-y divide-slate-800/60 max-h-80 overflow-y-auto">
+            {folderReport.proposals.map((p: FolderProposal) => {
+              const actionable = !p.conflict && !p.blockedReason;
+              const checked = approved.has(p.movieId);
+              return (
+                <label
+                  key={p.movieId}
+                  className={`py-2 flex items-start gap-2.5 ${
+                    actionable ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={!actionable}
+                    onChange={() => toggleApproved(p.movieId)}
+                    className="mt-1 accent-amber-500 cursor-pointer"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-xs font-semibold text-white truncate">
+                        {p.title}
+                        {p.year ? <span className="text-slate-500 font-normal"> ({p.year})</span> : null}
+                      </span>
+                      <span
+                        className={`px-1 py-0 rounded text-[9px] font-bold uppercase border ${
+                          p.problem === 'loose-in-root'
+                            ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                            : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                        }`}
+                      >
+                        {p.problem === 'loose-in-root'
+                          ? 'no folder'
+                          : `shares with ${p.filmsInFolder - 1}`}
+                      </span>
+                    </span>
+                    <span className="block text-[10px] font-mono text-slate-500 truncate mt-0.5">
+                      {p.filePath}
+                    </span>
+                    <span className="block text-[10px] font-mono text-emerald-300/80 truncate">
+                      → {p.targetFilePath}
+                    </span>
+                    {p.sidecars.length > 0 && (
+                      <span className="block text-[10px] text-slate-400 mt-0.5">
+                        also moves {p.sidecars.map((s) => s.kind).join(', ')}
+                      </span>
+                    )}
+                    {p.conflict && (
+                      <span className="block text-[10px] text-amber-300 mt-0.5">
+                        <AlertTriangle className="w-2.5 h-2.5 inline -mt-px mr-1" />
+                        {p.conflict} — cannot be applied automatically
+                      </span>
+                    )}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+
+          {folderReport.skipped.length > 0 && (
+            <p className="text-[10px] text-slate-500">
+              {folderReport.skipped.length} film
+              {folderReport.skipped.length === 1 ? '' : 's'} could not be given a destination:{' '}
+              {folderReport.skipped.map((s) => `${s.title} (${s.reason})`).join('; ')}
+            </p>
+          )}
+
+          <p className="text-[10px] text-slate-500">
+            Moves are recorded in the rename history below and can be undone from there.
+          </p>
         </div>
       )}
 

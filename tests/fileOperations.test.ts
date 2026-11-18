@@ -161,15 +161,21 @@ describe('File operation queue', () => {
     expect(seen.length).toBe(before);
   });
 
-  it('auto-clears a completed operation', async () => {
+  it('keeps a completed operation until it is cleared deliberately', async () => {
+    // Completions used to vanish after six seconds, which made the queue useless as a
+    // record of what happened. They are retained now; the panel shows them in a
+    // scrollable list and the user clears them.
     vi.useFakeTimers();
     try {
       impl = async () => ({ detail: 'ok' });
       queue.enqueue({ label: 'quick', task: task('a') });
       await vi.waitFor(() => expect(queue.snapshot()[0]?.status).toBe('done'));
       expect(queue.snapshot()).toHaveLength(1);
-      vi.advanceTimersByTime(6000);
-      expect(queue.snapshot()).toHaveLength(0);
+
+      vi.advanceTimersByTime(60_000);
+      const [op] = queue.snapshot();
+      expect(op?.status).toBe('done');
+      expect(op?.detail).toBe('ok');
     } finally {
       vi.useRealTimers();
     }

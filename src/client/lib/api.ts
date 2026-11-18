@@ -20,6 +20,8 @@ import type {
   RenameHistoryBatch,
   RenamePatternsConfig,
   RenamePreviewItem,
+  MovieProblemReport,
+  FolderProposalReport,
   ScrapedEpisodePart,
   ScrapedMetadataBundle,
   ScraperFieldMapping,
@@ -91,6 +93,14 @@ export const api = {
   // Dashboard & Audit
   getDashboard: () => req<DashboardSummary>('/api/dashboard'),
   getAudit: () => req<LibraryAuditReport>('/api/audit'),
+  /** Films with problems, split into rescan-fixable and needs-a-scrape. */
+  getMovieProblems: () => req<MovieProblemReport>('/api/movies/problems'),
+  /** Bulk re-read of flagged films. `mode: 'all'` derives the list server-side. */
+  rescanProblemMovies: (params: { mode: 'all' } | { movieIds: number[] }) =>
+    req<{ job: BatchJob; movieIds: number[] }>('/api/jobs/rescan', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
 
   // Movies
   /** Slim list for the sidebar — see shared/movieListEntry.ts for the projection. */
@@ -346,6 +356,20 @@ export const api = {
       body: JSON.stringify({ items, cleanupEmptyFolders }),
     }),
   listRenameHistory: () => req<{ batches: RenameHistoryBatch[] }>('/api/renamer/history'),
+  /** Films that cannot own a folder, each with a proposed destination. */
+  getFolderProposals: () => req<FolderProposalReport>('/api/renamer/folder-proposals'),
+  /** Applies only the proposals the user approved. */
+  applyFolderProposals: (movieIds: number[]) =>
+    req<{
+      batchId: string | null;
+      movedCount: number;
+      skippedCount: number;
+      errors: string[];
+      applied: Array<{ movieId: number; title: string; targetFolder: string }>;
+    }>('/api/renamer/folder-proposals/apply', {
+      method: 'POST',
+      body: JSON.stringify({ movieIds }),
+    }),
   undoRenameBatch: (batchId: string) => req<{ revertedFiles: number; errors: string[] }>(`/api/renamer/undo/${batchId}`, { method: 'POST' }),
 
   // Sources, Settings & Kodi

@@ -9,6 +9,7 @@ import {
   serializeTvShowNfo,
   validateKodiNfoXml,
 } from '../nfo/kodiNfo.js';
+import { LibraryScanner } from './libraryScanner.js';
 import { ScraperEngine } from '../scrapers/scraperEngine.js';
 import { SubtitleEngine } from '../subtitles/subtitleEngine.js';
 
@@ -74,7 +75,13 @@ export class BatchJobManager {
     job.finishedAt = new Date().toISOString();
     job.currentItem = 'Cancelled';
     this.db.logActivity(
-      job.kind === 'subtitles' ? 'subtitle' : job.kind === 'nfo' ? 'nfo' : 'scrape',
+      job.kind === 'subtitles'
+        ? 'subtitle'
+        : job.kind === 'nfo'
+          ? 'nfo'
+          : job.kind === 'rescan'
+            ? 'scan'
+            : 'scrape',
       `${job.label} Cancelled`,
       `Cancelled after ${job.processedCount}/${job.totalCount} items (${job.succeededCount} succeeded)`,
       'warning'
@@ -87,6 +94,121 @@ export class BatchJobManager {
     job.currentItem = undefined;
     job.detail = summaryDetail;
     job.finishedAt = new Date().toISOString();
+  }
+
+  /**
+   * Film ids the problem report flags as needing a disk re-read.
+   *
+   * NOTE: filled in by `app.ts` at construction, because the report needs the folder
+   * analysis which needs the renamer. Injecting keeps this class free of that graph.
+   */
+  private problemIdsProvider: () => number[] = () => [];
+
+  /** Supplies the "everything flagged" list used by the bulk rescan. */
+  setProblemIdsProvider(provider: () => number[]): void {
+    this.problemIdsProvider = provider;
+  }
+
+  /** Films currently eligible for a targeted rescan. */
+  problemMovieIds(): number[] {
+    return this.problemIdsProvider();
+  }
+
+  /**
+   * Re-reads specific films from disk.
+   *
+   * Scanning was all-or-nothing: a single film whose artwork or NFO changed could
+   * only be picked up by rescanning its whole source, which on a network share is
+   * minutes of work and re-probes everything else in the process.
+   *
+   * The unit of work is still the *source scan*, because that is what owns file
+   * discovery and artwork attribution — rescanning one film in isolation would have
+   * to duplicate those rules and could disagree with a real scan. So the sources that
+   * contain the requested films are rescanned, deduplicated, and the job reports how
+   * many films were involved.
+   */
+  startTargetedRescan(movieIds: number[], sourceIds?: number[]): BatchJob {
+    const movies = movieIds
+      .map((id) => this.db.getMovie(id))
+      .filter((m): m is NonNullable<typeof m> => Boolean(m));
+
+    // Sources come from the films themselves; an explicit list is only a fallback for
+    // callers acting on sources rather than films.
+    const sources = [
+      ...new Set([
+        ...movies.map((m) => m.sourceId),
+        ...(sourceIds ?? []),
+      ]),
+    ]
+      .map((id) => this.db.getSource(id))
+      .filter((s): s is NonNullable<typeof s> => Boolean(s));
+
+    const job = this.registerJob(
+      'rescan',
+      movies.length > 0
+        ? `Rescan ${movies.length} flagged film${movies.length === 1 ? '' : 's'}`
+        : 'Rescan Flagged Sources',
+      sources.length,
+    );
+
+    if (sources.length === 0) {
+      const stored = this.jobs.get(job.jobId)!;
+      this.finalizeCompleted(stored, 'Nothing to rescan');
+      return { ...stored };
+    }
+
+    setImmediate(() => {
+      void (async () => {
+        const stored = this.jobs.get(job.jobId)!;
+        const scanner = new LibraryScanner(this.db);
+        try {
+          for (const src of sources) {
+            if (stored.cancelRequested) {
+              this.finalizeCancelled(stored);
+              return;
+            }
+            stored.currentItem = `Scanning ${src.name}`;
+            try {
+              const res = await scanner.scanSource(src);
+              stored.succeededCount++;
+              stored.detail = `Re-read ${res.moviesScanned} film${res.moviesScanned === 1 ? '' : 's'} from disk`;
+              this.db.logActivity(
+                'scan',
+                'Targeted Rescan',
+                `Rescanned "${src.name}" for flagged films (${res.moviesScanned} films re-indexed)`,
+                'success',
+              );
+            } catch (err) {
+              stored.failedCount++;
+              this.db.logActivity(
+                'scan',
+                'Targeted Rescan Failed',
+                `"${src.name}": ${(err as Error).message}`,
+                'error',
+              );
+            }
+            stored.processedCount++;
+            stored.overallPercent = Math.round((stored.processedCount / Math.max(1, stored.totalCount)) * 100);
+            await yieldTurn();
+          }
+
+          if (!stored.cancelRequested) {
+            this.finalizeCompleted(
+              stored,
+              stored.failedCount > 0
+                ? `Re-read ${stored.succeededCount}/${stored.totalCount} source(s); ${stored.failedCount} failed`
+                : `Re-read ${stored.succeededCount} source${stored.succeededCount === 1 ? '' : 's'} from disk`,
+            );
+          }
+        } catch (err) {
+          stored.status = 'failed';
+          stored.error = (err as Error).message;
+          stored.finishedAt = new Date().toISOString();
+        }
+      })();
+    });
+
+    return { ...job };
   }
 
   startBatchScrape(opts: { scope?: 'unscraped' | 'all' } = {}): BatchJob {

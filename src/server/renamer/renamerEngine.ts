@@ -102,7 +102,7 @@ export class RenamerEngine {
     return this.db.getSetting<RenamePatternsConfig>('rename_patterns', DEFAULT_RENAME_PATTERNS);
   }
 
-  private buildMovieTokens(m: MovieRecord): Record<string, string | number | null | undefined> {
+  buildMovieTokens(m: MovieRecord): Record<string, string | number | null | undefined> {
     const v0 = m.streamDetails.video[0];
     const a0 = m.streamDetails.audio[0];
     const res =

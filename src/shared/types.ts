@@ -714,7 +714,7 @@ export interface SourceScanJob {
   finishedAt: string | null;
 }
 
-export type BatchJobKind = 'scrape' | 'subtitles' | 'nfo' | 'scan';
+export type BatchJobKind = 'scrape' | 'subtitles' | 'nfo' | 'scan' | 'rescan';
 
 export interface BatchJob {
   jobId: string;
@@ -901,3 +901,70 @@ export interface LibraryVocabulary {
 import type { SetMovieRef } from './movieListEntry.js';
 
 export type { ListableMovie, MovieListEntry, SetMovieRef } from './movieListEntry.js';
+
+// ---------------------------------------------------------------------------
+// Targeted rescan (films with problems) and folder proposals.
+//
+// These describe API payloads the client renders directly, so they live with the
+// other shared contracts rather than in the server modules that compute them.
+// ---------------------------------------------------------------------------
+
+export type MovieProblemKind =
+  | 'unscraped'
+  | 'missing-nfo'
+  | 'invalid-nfo'
+  | 'missing-artwork'
+  | 'no-own-folder'
+  | 'low-resolution';
+
+export interface MovieProblem {
+  movieId: number;
+  title: string;
+  year: number | null;
+  filePath: string;
+  problems: MovieProblemKind[];
+  /** Problems a disk re-read can realistically resolve. */
+  rescanCanFix: boolean;
+  /** Problems that need a re-scrape rather than a rescan. */
+  needsScrape: boolean;
+}
+
+export interface MovieProblemReport {
+  movies: MovieProblem[];
+  summary: {
+    total: number;
+    rescanFixable: number;
+    needingScrape: number;
+    byKind: Record<MovieProblemKind, number>;
+  };
+}
+
+export type FolderProblemKind = 'loose-in-root' | 'shared-folder';
+
+export interface FolderProposal {
+  movieId: number;
+  title: string;
+  year: number | null;
+  filePath: string;
+  currentFolder: string;
+  sourceId: number;
+  sourceName: string;
+  problem: FolderProblemKind;
+  filmsInFolder: number;
+  targetFolder: string;
+  targetFilePath: string;
+  conflict: string | null;
+  /** Files that travel with the video; only ones clearly named after it. */
+  sidecars: Array<{
+    kind: 'nfo' | 'subtitle' | 'artwork';
+    oldPath: string;
+    newPath: string;
+  }>;
+  blockedReason: string | null;
+}
+
+export interface FolderProposalReport {
+  proposals: FolderProposal[];
+  skipped: Array<{ movieId: number; title: string; reason: string }>;
+  summary: { looseInRoot: number; sharedFolder: number; actionable: number };
+}

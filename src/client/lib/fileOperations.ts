@@ -55,7 +55,15 @@ export interface FileOperationInput {
 
 type Listener = (ops: FileOperation[]) => void;
 
-const AUTO_CLEAR_SUCCESS_MS = 6000;
+/**
+ * Completed operations are no longer thrown away after a few seconds.
+ *
+ * Auto-clearing made the queue unreadable in the way that matters: finish a batch,
+ * look away, and the record of what happened was gone with no way to get it back. The
+ * panel keeps completions (bounded, so a long session cannot grow without limit) and
+ * the user clears them deliberately.
+ */
+const MAX_RETAINED_FINISHED = 100;
 
 let nextId = 1;
 
@@ -130,7 +138,7 @@ export class FileOperationQueue {
     this.persist();
   }
 
-  /** Remove all finished operations (used by "Clear" in the toast). */
+  /** Remove all finished operations (used by "Clear completed" in the panel). */
   clearFinished(): void {
     for (const op of this.ops) {
       if (op.status === 'done') {
@@ -174,7 +182,7 @@ export class FileOperationQueue {
             finishedAt: Date.now(),
             detail: result?.detail ?? null,
           });
-          this.scheduleAutoClear(id);
+          this.trimFinished();
         } catch (err) {
           this.update(id, {
             status: 'error',
@@ -267,16 +275,31 @@ export class FileOperationQueue {
     this.emit();
   }
 
-  private scheduleAutoClear(id: string): void {
-    clearTimeout(this.timers.get(id));
-    this.timers.set(
-      id,
-      setTimeout(() => {
-        this.timers.delete(id);
-        this.ops = this.ops.filter((o) => !(o.id === id && o.status === 'done'));
-        this.emit();
-      }, AUTO_CLEAR_SUCCESS_MS)
+  /**
+   * Keeps at most `MAX_RETAINED_FINISHED` finished operations, oldest first out.
+   *
+   * Bounded because the alternative — an unbounded history in memory — is a slow leak
+   * in a long-lived tab, and the panel only ever shows a scrollable list.
+   */
+  private trimFinished(): void {
+    const finished = this.ops.filter((o) => o.status === 'done' || o.status === 'error');
+    if (finished.length <= MAX_RETAINED_FINISHED) return;
+    const doomed = new Set(
+      finished
+        .slice(0, finished.length - MAX_RETAINED_FINISHED)
+        .map((o) => o.id),
     );
+    this.ops = this.ops.filter((o) => !doomed.has(o.id));
+    for (const id of doomed) {
+      this.tasks.delete(id);
+      this.hooks.delete(id);
+    }
+    this.emit();
+  }
+
+  /** Newest first, for a reverse-chronological activity list. */
+  history(): FileOperation[] {
+    return this.snapshot().sort((a, b) => b.queuedAt - a.queuedAt);
   }
 
   private emit(): void {
