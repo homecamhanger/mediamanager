@@ -254,6 +254,15 @@ export class LibraryScanner {
       },
     });
 
+    // How many films share each folder. A folder holding more than one film cannot
+    // own the bare artwork names (`poster.jpg`); those belong to whichever film, so
+    // attributing them to all of them is how two films ended up showing each other's
+    // posters. Counting once here keeps the decision out of the per-item loop.
+    const filmsPerFolder = new Map<string, number>();
+    for (const item of probedItems) {
+      filmsPerFolder.set(item.folderPath, (filmsPerFolder.get(item.folderPath) ?? 0) + 1);
+    }
+
     const seenPaths = new Set<string>();
     for (let i = 0; i < probedItems.length; i++) {
       const item = probedItems[i];
@@ -269,7 +278,11 @@ export class LibraryScanner {
         nfoWarnings = [...report.errors, ...report.warnings];
       }
 
-      const artwork = discoverMovieArtwork(item.folderPath, item.base, item.folderPath !== source.path);
+      // A folder is "owned" by a film when it holds exactly one film and is not the
+      // source root, where a bare poster.jpg would be arbitrary by definition.
+      const ownsFolder =
+        item.folderPath !== source.path && (filmsPerFolder.get(item.folderPath) ?? 1) === 1;
+      const artwork = discoverMovieArtwork(item.folderPath, item.base, ownsFolder);
 
       let setId: number | null = null;
       if (nfoData?.setName) {
@@ -906,12 +919,30 @@ function findArtFile(dir: string, candidates: string[]): string | null {
   return null;
 }
 
-function discoverMovieArtwork(dir: string, videoBase: string, isDedicatedFolder: boolean): Record<ArtworkKind, string | null> {
+/**
+ * Finds the artwork belonging to one film in a folder.
+ *
+ * `ownsFolder` must mean "this folder exists for this film alone", not merely "this
+ * is a subfolder of the source". The distinction matters because the bare names
+ * (`poster.jpg`, `fanart.jpg`) are only unambiguous when a folder holds one film:
+ * in a folder with two, every film resolved to the *same* file, so the list showed
+ * one film's poster under the other and each detail panel reported the other's
+ * artwork.
+ *
+ * So a shared folder only ever offers filename-scoped art (`<video>-poster.jpg`).
+ * A folder dedicated to a single film additionally accepts bare names, which is the
+ * conventional Kodi layout and by far the common case.
+ */
+export function discoverMovieArtwork(
+  dir: string,
+  videoBase: string,
+  ownsFolder: boolean,
+): Record<ArtworkKind, string | null> {
   const kinds: ArtworkKind[] = ['poster', 'fanart', 'banner', 'clearlogo', 'clearart', 'disc', 'landscape', 'thumb'];
   const out = {} as Record<ArtworkKind, string | null>;
   for (const kind of kinds) {
-    const names = isDedicatedFolder ? [`${videoBase}-${kind}`, kind] : [`${videoBase}-${kind}`];
-    if (kind === 'disc' && isDedicatedFolder) names.push('discart', `${videoBase}-discart`);
+    const names = ownsFolder ? [`${videoBase}-${kind}`, kind] : [`${videoBase}-${kind}`];
+    if (kind === 'disc' && ownsFolder) names.push('discart', `${videoBase}-discart`);
     out[kind] = findArtFile(dir, names);
   }
   return out;
