@@ -40,12 +40,14 @@ import type { InspectorFocusTab } from '../lib/workspaceTypes.js';
 import { ArtworkPickerModal, ArtworkPickerTarget, ClickableArtCard } from './ArtworkPickerModal.js';
 import { CastListColumn } from './CastListColumn.js';
 import { DetailHero, HeroChip, HeroTab, HeroTitle } from './DetailHero.js';
+import { RefreshIndicator } from './RefreshIndicator.js';
 import { useLibraryVocabulary } from '../lib/useLibraryVocabulary.js';
 import { ChipInput } from './ChipInput.js';
 import { EpisodeScrapeModal } from './EpisodeScrapeModal.js';
 import { FormField as Field } from './FormField.js';
 import { PosterImage } from './PosterImage.js';
 import { episodeDisplay } from '../lib/episodeDisplay.js';
+import { detailCache, showKey, type ShowDetailPayload } from '../lib/detailCache.js';
 import { fileOperations } from '../lib/fileOperations.js';
 import { TechBadges } from './QualityBadges.js';
 import { RatingBadges } from './RatingBadges.js';
@@ -85,6 +87,8 @@ function sortEpisodesEffective(eps: TvEpisodeRecord[]): TvEpisodeRecord[] {
 
 export const TvShowDetailPanel: React.FC<{
   showId: number;
+  /** List-derived record so the panel paints immediately instead of showing the previous show. */
+  seed?: TvShowRecord | null;
   selectedSeason?: number | null;
   initialTab?: TvTab | InspectorFocusTab;
   activeActor?: string | null;
@@ -93,8 +97,9 @@ export const TvShowDetailPanel: React.FC<{
   onSelectEpisode?: (episodeId: number) => void;
   onUpdated: () => void;
   onClose?: () => void;
-}> = ({ showId, selectedSeason = null, initialTab, activeActor, onSelectActor, onSelectSeason, onSelectEpisode, onUpdated, onClose }) => {
-  const [show, setShow] = useState<TvShowRecord | null>(null);
+}> = ({ showId, seed, selectedSeason = null, initialTab, activeActor, onSelectActor, onSelectSeason, onSelectEpisode, onUpdated, onClose }) => {
+  const [show, setShow] = useState<TvShowRecord | null>(seed ?? null);
+  const [refreshing, setRefreshing] = useState(false);
   const [seasons, setSeasons] = useState<TvSeasonRecord[]>([]);
   const [episodes, setEpisodes] = useState<TvEpisodeRecord[]>([]);
   const [missingEpisodes, setMissingEpisodes] = useState<MissingEpisodeRecord[]>([]);
@@ -115,6 +120,8 @@ export const TvShowDetailPanel: React.FC<{
   const [toast, setToast] = useState<string | null>(null);
   // Queued file writes outlive the panel; only touch state while it is mounted.
   const mountedRef = useRef(true);
+  /** Monotonic per-load token; stale responses are dropped. See MovieDetailPanel. */
+  const loadTokenRef = useRef(0);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -130,24 +137,73 @@ export const TvShowDetailPanel: React.FC<{
 
   const vocabulary = useLibraryVocabulary();
 
-    const load = async () => {
-    const res = await api.getShow(showId);
-    // A queued write can finish after the panel is closed; skip state updates then.
-    if (!mountedRef.current) return;
-    setShow(res.show);
-    setForm(res.show);
-    setSeasons(res.seasons);
-    setEpisodes(res.episodes);
-    setMissingEpisodes(res.missingEpisodes ?? []);
-    setUnmatchedFiles(res.unmatchedFiles ?? []);
-    setArtCacheKey((k) => k + 1);
-    const nfo = await api.readNfo('tvshow', showId);
-    setNfoXml(nfo.xml);
-    setNfoVal(nfo.validation);
+  /** Paints from cache/seed first, then revalidates. See MovieDetailPanel. */
+  const load = async (opts: { force?: boolean } = {}) => {
+    const cacheKey = showKey(showId);
+    // See MovieDetailPanel: a late response for a show the user already left is dropped.
+    const token = ++loadTokenRef.current;
+    const isCurrent = () => mountedRef.current && token === loadTokenRef.current;
+
+    if (!opts.force) {
+      const cached = detailCache.peek<ShowDetailPayload>(cacheKey);
+      const initial = cached?.show ?? seed ?? null;
+      if (initial) {
+        setShow(initial);
+        setForm(initial);
+        setArtCacheKey((k) => k + 1);
+        if (cached) {
+          setSeasons(cached.seasons);
+          setEpisodes(cached.episodes);
+          setMissingEpisodes(cached.missingEpisodes);
+          setUnmatchedFiles(cached.unmatchedFiles);
+        }
+      }
+    }
+
+    setRefreshing(true);
+    try {
+      // Cache hit paints instantly; the refresh still runs so metadata stays current.
+      const res = await detailCache.refresh<ShowDetailPayload>(cacheKey, async () => {
+        const r = await api.getShow(showId);
+        return {
+          show: r.show,
+          seasons: r.seasons,
+          episodes: r.episodes,
+          missingEpisodes: r.missingEpisodes ?? [],
+          unmatchedFiles: r.unmatchedFiles ?? [],
+        };
+      });
+      if (!isCurrent()) return;
+      setShow(res.show);
+      setForm(res.show);
+      setSeasons(res.seasons);
+      setEpisodes(res.episodes);
+      setMissingEpisodes(res.missingEpisodes);
+      setUnmatchedFiles(res.unmatchedFiles);
+      setArtCacheKey((k) => k + 1);
+      setRefreshing(false);
+
+      const nfo = await api.readNfo('tvshow', showId);
+      if (!isCurrent()) return;
+      setNfoXml(nfo.xml);
+      setNfoVal(nfo.validation);
+    } finally {
+      if (mountedRef.current) setRefreshing(false);
+    }
   };
 
   useEffect(() => {
     setTab(resolveTvTab(initialTab));
+    // Clear per-item state so the previous show's NFO and artwork never show under
+    // the newly selected one while its record loads.
+    setNfoXml('');
+    setNfoVal(null);
+    setForm(seed ?? {});
+    setShow(seed ?? null);
+    setSeasons([]);
+    setEpisodes([]);
+    setMissingEpisodes([]);
+    setUnmatchedFiles([]);
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showId, initialTab]);
@@ -498,6 +554,7 @@ export const TvShowDetailPanel: React.FC<{
             {show.title}
             {show.year && <span className="ml-2 font-semibold text-slate-400">({show.year})</span>}
             {show.status && <HeroChip tone="sky">{show.status}</HeroChip>}
+            <RefreshIndicator active={refreshing} />
             {activeSeason !== 'all' && <HeroChip tone="amber">Season {activeSeason}</HeroChip>}
           </HeroTitle>
         }

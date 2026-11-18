@@ -7,6 +7,8 @@ import type {
   SourceScanJob,
 } from '../shared/types.js';
 import { bootstrapCache } from './lib/bootstrapCache.js';
+import { detailCache } from './lib/detailCache.js';
+import { seedEpisodeFromTree, seedMovieFromList, seedShowFromTree } from './lib/detailSeed.js';
 import { EpisodeDetailPanel } from './components/EpisodeDetailPanel.js';
 import { MediaTreeSidebar } from './components/MediaTreeSidebar.js';
 import { MovieDetailPanel } from './components/MovieDetailPanel.js';
@@ -102,6 +104,9 @@ export const App: React.FC = () => {
       api.getLibraryCounts().catch(() => null),
       api.listJobs().catch(() => ({ jobs: [] as BatchJob[], scanJobs: [] as SourceScanJob[] })),
     ]);
+    // The cached detail payloads are revalidated on open, but dropping them here
+    // keeps a scan or a metadata edit from ever being masked by a stale paint.
+    detailCache.clear();
     setSummary(d);
     setMovies(m.movies);
     setShowTree(stTree.tree);
@@ -374,6 +379,14 @@ export const App: React.FC = () => {
   const issueCount = issueCounts ? issueCounts.unscrapedMovies + issueCounts.unscrapedShows : 0;
 
   const selectedSet = selected?.kind === 'set' ? sets.find((s) => s.id === selected.setId) ?? null : null;
+  // Detail panels seed from the tree/list they were opened from, so the new
+  // selection paints immediately instead of the previous one lingering.
+  const selectedShowNode =
+    selected && 'showId' in selected
+      ? showTree.find((n) => n.show.id === selected.showId) ?? null
+      : null;
+  const selectedMovieEntry =
+    selected?.kind === 'movie' ? movies.find((m) => m.id === selected.movieId) ?? null : null;
 
   return (
     <div className="h-screen bg-[#0b0f17] text-slate-100 flex flex-col overflow-hidden">
@@ -470,6 +483,7 @@ export const App: React.FC = () => {
           ) : selected?.kind === 'movie' ? (
             <MovieDetailPanel
               movieId={selected.movieId}
+              seed={selectedMovieEntry ? seedMovieFromList(selectedMovieEntry) : null}
               initialTab={selected.focusTab}
               activeActor={actorFilter}
               onSelectActor={handleFilterByActor}
@@ -483,6 +497,7 @@ export const App: React.FC = () => {
           ) : selected?.kind === 'show' ? (
             <TvShowDetailPanel
               showId={selected.showId}
+              seed={selectedShowNode ? seedShowFromTree(selectedShowNode) : null}
               selectedSeason={selected.seasonNumber ?? null}
               initialTab={selected.focusTab}
               activeActor={actorFilter}
@@ -499,6 +514,11 @@ export const App: React.FC = () => {
             <EpisodeDetailPanel
               showId={selected.showId}
               episodeId={selected.episodeId}
+              seed={
+                selectedShowNode
+                  ? seedEpisodeFromTree(selectedShowNode, selected.episodeId)
+                  : null
+              }
               initialTab={selected.focusTab}
               activeActor={actorFilter}
               onSelectActor={handleFilterByActor}
